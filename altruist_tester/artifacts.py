@@ -61,7 +61,7 @@ class RunArtifacts:
         self.summary_json = self.run_dir / "summary.json"
         self.report_txt = self.run_dir / "report.txt"
 
-    def append_event(self, event_type: str, **payload: Any) -> None:
+    def append_event(self, event_type: str, **payload: Any) -> dict[str, Any]:
         """Append one structured event to events.jsonl."""
 
         event = {
@@ -71,6 +71,7 @@ class RunArtifacts:
         }
         with self.events_jsonl.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
+        return event
 
     def write_summary(
         self,

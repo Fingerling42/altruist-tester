@@ -1,6 +1,7 @@
 from altruist_tester.parsers.dev_metrics import (
     DevMetrics,
     DevMetricsErrors,
+    DevMetricsStreamParser,
     parse_dev_metrics_block,
     parse_dev_metrics_blocks,
 )
@@ -119,3 +120,28 @@ def test_parse_dev_metrics_blocks_from_line_stream():
 
     assert [item.uptime_sec for item in metrics] == [121, 124]
     assert [item.boot for item in metrics] == [7, 7]
+
+
+def test_dev_metrics_stream_parser_returns_blocks_as_they_close():
+    parser = DevMetricsStreamParser()
+
+    assert parser.feed("not metrics") is None
+    assert parser.feed("=== [URBAN] METRICS ===") is None
+    assert parser.feed("Uptime: 2m 1s (121s total)") is None
+    metrics = parser.feed("==========================")
+
+    assert metrics is not None
+    assert metrics.model == "URBAN"
+    assert metrics.uptime_sec == 121
+    assert parser.finish() is None
+
+
+def test_dev_metrics_stream_parser_returns_trailing_block_on_finish():
+    parser = DevMetricsStreamParser()
+
+    parser.feed("=== [URBAN] METRICS ===")
+    parser.feed("Uptime: 2m 4s (124s total)")
+    metrics = parser.finish()
+
+    assert metrics is not None
+    assert metrics.uptime_sec == 124

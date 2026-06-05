@@ -217,6 +217,7 @@ def run(
         extra={
             "serial_lines_read": stats.lines_read,
             "serial_bytes_read": stats.bytes_read,
+            **stats.dev_metrics.as_dict(),
         },
     )
     artifacts.write_report("completed", message=message, finished_at=finished_at)

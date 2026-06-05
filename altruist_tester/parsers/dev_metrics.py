@@ -182,3 +182,41 @@ def parse_dev_metrics_blocks(lines: Iterable[str]) -> list[DevMetrics]:
             metrics.append(parsed)
 
     return metrics
+
+
+class DevMetricsStreamParser:
+    """Incrementally parse metrics blocks from serial lines."""
+
+    def __init__(self) -> None:
+        self._current_block: list[str] | None = None
+
+    def feed(self, line: str) -> DevMetrics | None:
+        """Feed one decoded serial line and return metrics when a block closes."""
+
+        line = line.rstrip("\r\n")
+        if _HEADER_RE.match(line):
+            parsed: DevMetrics | None = None
+            if self._current_block:
+                parsed = parse_dev_metrics_block(self._current_block)
+            self._current_block = [line]
+            return parsed
+
+        if self._current_block is None:
+            return None
+
+        self._current_block.append(line)
+        if line.startswith(_FOOTER_PREFIX):
+            parsed = parse_dev_metrics_block(self._current_block)
+            self._current_block = None
+            return parsed
+        return None
+
+    def finish(self) -> DevMetrics | None:
+        """Return metrics from a trailing block without a footer, if present."""
+
+        if not self._current_block:
+            return None
+
+        parsed = parse_dev_metrics_block(self._current_block)
+        self._current_block = None
+        return parsed

@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 from altruist_tester import __version__
 from altruist_tester.cli import app
 from altruist_tester.ports import SerialPortInfo
-from altruist_tester.serial_logger import SerialLogStats
+from altruist_tester.serial_logger import DevMetricsSummary, SerialLogStats
 
 
 def test_package_version_is_available():
@@ -172,7 +172,19 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
         captured["serial_port"] = serial_port
         captured["duration_seconds"] = duration_seconds
         artifacts.serial_log.write_bytes(b"hello from device\n")
-        return SerialLogStats(lines_read=1, bytes_read=18)
+        return SerialLogStats(
+            lines_read=1,
+            bytes_read=18,
+            dev_metrics=DevMetricsSummary(
+                count=1,
+                first_seen="2026-06-05T12:00:00.000Z",
+                last_seen="2026-06-05T12:00:00.000Z",
+                max_boot=7,
+                min_uptime_sec=121,
+                max_uptime_sec=121,
+                max_errors={"wifi": 0, "sensor": 0, "sd": 0},
+            ),
+        )
 
     monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
     monkeypatch.setattr(
@@ -211,6 +223,14 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["duration_sec"] == 600
     assert summary["serial_lines_read"] == 1
     assert summary["serial_bytes_read"] == 18
+    assert summary["dev_metrics_seen"] is True
+    assert summary["dev_metrics_count"] == 1
+    assert summary["first_dev_metrics_at"] == "2026-06-05T12:00:00.000Z"
+    assert summary["last_dev_metrics_at"] == "2026-06-05T12:00:00.000Z"
+    assert summary["max_boot"] == 7
+    assert summary["min_uptime_sec"] == 121
+    assert summary["max_uptime_sec"] == 121
+    assert summary["max_errors"] == {"wifi": 0, "sensor": 0, "sd": 0}
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()
