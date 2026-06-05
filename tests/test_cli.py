@@ -92,7 +92,6 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
         captured["serial_port"] = serial_port
         captured["duration_seconds"] = duration_seconds
         artifacts.serial_log.write_bytes(b"hello from device\n")
-        artifacts.append_event("serial_line", line="hello from device")
         return SerialLogStats(lines_read=1, bytes_read=18)
 
     monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
@@ -134,6 +133,9 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["serial_bytes_read"] == 18
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
-    assert "serial_opened" in (run_dir / "events.jsonl").read_text()
-    assert "serial_line" in (run_dir / "events.jsonl").read_text()
+    events_text = (run_dir / "events.jsonl").read_text()
+    assert "serial_opened" in events_text
+    assert "serial_capture_started" in events_text
+    assert "serial_capture_completed" in events_text
+    assert "serial_line" not in events_text
     assert "Captured 1 serial lines" in (run_dir / "report.txt").read_text()

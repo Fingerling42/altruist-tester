@@ -117,6 +117,7 @@ def run(
     try:
         with serial.Serial(str(port), baudrate=baud, timeout=1) as serial_port:
             artifacts.append_event("serial_opened", port=str(port), baud=baud)
+            artifacts.append_event("serial_capture_started")
             stats = capture_raw_serial(serial_port, artifacts, duration_seconds)
     except serial.SerialException as exc:
         message = f"Could not open serial port {port}: {exc}"
@@ -135,10 +136,11 @@ def run(
         f"({stats.bytes_read} bytes) from {port}."
     )
     artifacts.append_event(
-        "run_completed",
+        "serial_capture_completed",
         lines_read=stats.lines_read,
         bytes_read=stats.bytes_read,
     )
+    artifacts.append_event("run_completed")
     artifacts.write_summary(
         "completed",
         message=message,

@@ -29,7 +29,7 @@ class FakeClock:
         self.current += seconds
 
 
-def test_capture_raw_serial_writes_raw_log_and_events(tmp_path):
+def test_capture_raw_serial_writes_raw_log_without_line_events_by_default(tmp_path):
     clock = FakeClock()
     artifacts = create_run_artifacts(
         tmp_path,
@@ -55,6 +55,44 @@ def test_capture_raw_serial_writes_raw_log_and_events(tmp_path):
     assert artifacts.serial_log.read_bytes() == (
         b"first line\r\nsecond line\nbad utf8: \xff\n"
     )
+
+    events = [
+        json.loads(line)
+        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
+    ]
+    serial_events = [event for event in events if event["type"] == "serial_line"]
+    assert serial_events == []
+
+
+def test_capture_raw_serial_can_mirror_lines_to_events(tmp_path):
+    clock = FakeClock()
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="1s",
+        duration_seconds=1,
+        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+    )
+    serial = FakeSerial(
+        [
+            b"first line\r\n",
+            b"second line\n",
+            b"bad utf8: \xff\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(
+        serial,
+        artifacts,
+        1,
+        clock=clock,
+        mirror_lines_to_events=True,
+    )
+
+    assert stats.lines_read == 3
+    assert stats.bytes_read == 36
 
     events = [
         json.loads(line)

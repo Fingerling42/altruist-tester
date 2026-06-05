@@ -35,6 +35,7 @@ def capture_raw_serial(
     duration_seconds: int,
     *,
     clock: Callable[[], float] = time.monotonic,
+    mirror_lines_to_events: bool = False,
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses."""
 
@@ -52,6 +53,7 @@ def capture_raw_serial(
             raw_log.flush()
             lines_read += 1
             bytes_read += len(line)
-            artifacts.append_event("serial_line", line=_decode_serial_line(line))
+            if mirror_lines_to_events:
+                artifacts.append_event("serial_line", line=_decode_serial_line(line))
 
     return SerialLogStats(lines_read=lines_read, bytes_read=bytes_read)
