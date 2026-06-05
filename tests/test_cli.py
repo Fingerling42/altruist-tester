@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from altruist_tester import __version__
 from altruist_tester.cli import app
+from altruist_tester.serial_logger import SerialLogStats
 
 
 def test_package_version_is_available():
@@ -85,7 +86,19 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, traceback):
             return False
 
+    captured = {}
+
+    def fake_capture_raw_serial(serial_port, artifacts, duration_seconds):
+        captured["serial_port"] = serial_port
+        captured["duration_seconds"] = duration_seconds
+        artifacts.serial_log.write_bytes(b"hello from device\n")
+        artifacts.append_event("serial_line", line="hello from device")
+        return SerialLogStats(lines_read=1, bytes_read=18)
+
     monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
 
     result = CliRunner().invoke(
         app,
@@ -104,7 +117,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert opened == {"path": str(port), "baudrate": 9600, "timeout": 1}
-    assert f"Ready to run for 600s on {port} at 9600 baud" in result.output
+    assert captured["duration_seconds"] == 600
+    assert f"Captured serial output for 600s on {port} at 9600 baud" in result.output
     assert "Artifacts were written under" in result.output
     run_dirs = list(output_dir.iterdir())
     assert len(run_dirs) == 1
@@ -116,7 +130,10 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["baud"] == 9600
     assert summary["duration"] == "10m"
     assert summary["duration_sec"] == 600
-    assert (run_dir / "serial.log").read_text() == ""
+    assert summary["serial_lines_read"] == 1
+    assert summary["serial_bytes_read"] == 18
+    assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     assert "serial_opened" in (run_dir / "events.jsonl").read_text()
-    assert "Serial port opened successfully" in (run_dir / "report.txt").read_text()
+    assert "serial_line" in (run_dir / "events.jsonl").read_text()
+    assert "Captured 1 serial lines" in (run_dir / "report.txt").read_text()

@@ -78,6 +78,7 @@ class RunArtifacts:
         *,
         message: str | None = None,
         finished_at: datetime | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         """Write the current machine-readable run summary."""
 
@@ -102,6 +103,8 @@ class RunArtifacts:
             summary["finished_at"] = format_timestamp(finished_at)
         if message is not None:
             summary["message"] = message
+        if extra is not None:
+            summary.update(extra)
 
         self.summary_json.write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",

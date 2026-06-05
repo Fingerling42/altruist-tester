@@ -9,6 +9,7 @@ import typer
 from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
+from altruist_tester.serial_logger import capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
 
@@ -114,8 +115,9 @@ def run(
         raise typer.Exit(code=2)
 
     try:
-        with serial.Serial(str(port), baudrate=baud, timeout=1):
-            pass
+        with serial.Serial(str(port), baudrate=baud, timeout=1) as serial_port:
+            artifacts.append_event("serial_opened", port=str(port), baud=baud)
+            stats = capture_raw_serial(serial_port, artifacts, duration_seconds)
     except serial.SerialException as exc:
         message = f"Could not open serial port {port}: {exc}"
         artifacts.append_event(
@@ -127,13 +129,28 @@ def run(
         typer.secho(message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
-    artifacts.append_event("serial_opened", port=str(port), baud=baud)
     finished_at = utc_now()
-    message = "Serial port opened successfully; raw serial logging will be added next."
-    artifacts.write_summary("completed", message=message, finished_at=finished_at)
+    message = (
+        f"Captured {stats.lines_read} serial lines "
+        f"({stats.bytes_read} bytes) from {port}."
+    )
+    artifacts.append_event(
+        "run_completed",
+        lines_read=stats.lines_read,
+        bytes_read=stats.bytes_read,
+    )
+    artifacts.write_summary(
+        "completed",
+        message=message,
+        finished_at=finished_at,
+        extra={
+            "serial_lines_read": stats.lines_read,
+            "serial_bytes_read": stats.bytes_read,
+        },
+    )
     artifacts.write_report("completed", message=message, finished_at=finished_at)
     typer.echo(
-        f"Ready to run for {duration_seconds}s on {port} at {baud} baud. "
+        f"Captured serial output for {duration_seconds}s on {port} at {baud} baud. "
         f"Artifacts were written under {artifacts.run_dir}."
     )
 
