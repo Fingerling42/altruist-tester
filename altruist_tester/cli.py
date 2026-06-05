@@ -7,6 +7,7 @@ import serial
 import typer
 
 from altruist_tester import __version__
+from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 
 DEFAULT_OUTPUT_DIR = Path("runs")
@@ -89,9 +90,26 @@ def run(
     except DurationParseError as exc:
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
 
+    artifacts = create_run_artifacts(
+        output_dir,
+        port=port,
+        baud=baud,
+        duration_input=duration,
+        duration_seconds=duration_seconds,
+    )
+
     if not port.exists():
+        message = f"Serial port does not exist: {port}"
+        artifacts.append_event(
+            "run_failed", reason="missing_serial_port", message=message
+        )
+        finished_at = utc_now()
+        artifacts.write_summary("failed", message=message, finished_at=finished_at)
+        artifacts.write_report("failed", message=message, finished_at=finished_at)
         typer.secho(
-            f"Serial port does not exist: {port}", fg=typer.colors.RED, err=True
+            message,
+            fg=typer.colors.RED,
+            err=True,
         )
         raise typer.Exit(code=2)
 
@@ -99,14 +117,24 @@ def run(
         with serial.Serial(str(port), baudrate=baud, timeout=1):
             pass
     except serial.SerialException as exc:
-        typer.secho(
-            f"Could not open serial port {port}: {exc}", fg=typer.colors.RED, err=True
+        message = f"Could not open serial port {port}: {exc}"
+        artifacts.append_event(
+            "run_failed", reason="serial_open_failed", message=message
         )
+        finished_at = utc_now()
+        artifacts.write_summary("failed", message=message, finished_at=finished_at)
+        artifacts.write_report("failed", message=message, finished_at=finished_at)
+        typer.secho(message, fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
+    artifacts.append_event("serial_opened", port=str(port), baud=baud)
+    finished_at = utc_now()
+    message = "Serial port opened successfully; raw serial logging will be added next."
+    artifacts.write_summary("completed", message=message, finished_at=finished_at)
+    artifacts.write_report("completed", message=message, finished_at=finished_at)
     typer.echo(
         f"Ready to run for {duration_seconds}s on {port} at {baud} baud. "
-        f"Artifacts will be written under {output_dir}."
+        f"Artifacts were written under {artifacts.run_dir}."
     )
 
 
