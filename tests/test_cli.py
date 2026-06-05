@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from altruist_tester import __version__
 from altruist_tester.cli import app
+from altruist_tester.ports import SerialPortInfo
 from altruist_tester.serial_logger import SerialLogStats
 
 
@@ -24,6 +25,39 @@ def test_cli_version_runs():
 
     assert result.exit_code == 0
     assert "altruist-tester" in result.output
+
+
+def test_ports_lists_detected_serial_ports(monkeypatch):
+    monkeypatch.setattr(
+        "altruist_tester.cli.list_serial_ports",
+        lambda: [
+            SerialPortInfo(
+                device="/dev/ttyACM0",
+                description="USB JTAG/serial debug unit",
+                hwid="USB VID:PID=303A:1001",
+                vid=0x303A,
+                pid=0x1001,
+                manufacturer="Espressif",
+            )
+        ],
+    )
+
+    result = CliRunner().invoke(app, ["ports"])
+
+    assert result.exit_code == 0
+    assert "/dev/ttyACM0" in result.output
+    assert "USB JTAG/serial debug unit" in result.output
+    assert "Espressif" in result.output
+    assert "VID:PID=303A:1001" in result.output
+
+
+def test_ports_handles_empty_list(monkeypatch):
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+
+    result = CliRunner().invoke(app, ["ports"])
+
+    assert result.exit_code == 0
+    assert "No serial ports found." in result.output
 
 
 def test_run_rejects_missing_serial_port(tmp_path):
@@ -66,6 +100,52 @@ def test_run_rejects_invalid_duration_before_opening_port():
 
     assert result.exit_code == 2
     assert "Duration must be a positive integer" in result.output
+
+
+def test_run_requires_port_or_auto():
+    result = CliRunner().invoke(app, ["run", "--duration", "5s"])
+
+    assert result.exit_code == 2
+    assert "Specify --port or --auto" in result.output
+
+
+def test_run_rejects_port_with_auto(tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+
+    result = CliRunner().invoke(
+        app,
+        ["run", "--port", str(port), "--auto", "--duration", "5s"],
+    )
+
+    assert result.exit_code == 2
+    assert "Use either --port or --auto" in result.output
+
+
+def test_run_auto_rejects_missing_detected_ports(monkeypatch):
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+
+    result = CliRunner().invoke(app, ["run", "--auto", "--duration", "5s"])
+
+    assert result.exit_code == 2
+    assert "No serial ports found" in result.output
+
+
+def test_run_auto_rejects_multiple_detected_ports(monkeypatch):
+    monkeypatch.setattr(
+        "altruist_tester.cli.list_serial_ports",
+        lambda: [
+            SerialPortInfo(device="/dev/ttyACM0", description="first"),
+            SerialPortInfo(device="/dev/ttyUSB0", description="second"),
+        ],
+    )
+
+    result = CliRunner().invoke(app, ["run", "--auto", "--duration", "5s"])
+
+    assert result.exit_code == 2
+    assert "Multiple serial ports found" in result.output
+    assert "/dev/ttyACM0" in result.output
+    assert "/dev/ttyUSB0" in result.output
 
 
 def test_run_accepts_valid_options(monkeypatch, tmp_path):
@@ -139,3 +219,52 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "serial_capture_completed" in events_text
     assert "serial_line" not in events_text
     assert "Captured 1 serial lines" in (run_dir / "report.txt").read_text()
+
+
+def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    opened = {}
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            opened["path"] = path
+            opened["baudrate"] = baudrate
+            opened["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(serial_port, artifacts, duration_seconds):
+        return SerialLogStats(lines_read=0, bytes_read=0)
+
+    monkeypatch.setattr(
+        "altruist_tester.cli.list_serial_ports",
+        lambda: [SerialPortInfo(device=str(port), description="only port")],
+    )
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--auto",
+            "--duration",
+            "5s",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert opened["path"] == str(port)
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["port"] == str(port)
