@@ -106,6 +106,43 @@ def test_capture_raw_serial_can_mirror_lines_to_events(tmp_path):
     ]
 
 
+def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
+    clock = FakeClock()
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="1s",
+        duration_seconds=1,
+        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+    )
+    serial = FakeSerial(
+        [
+            b"normal boot line\n",
+            b"Guru Meditation Error: Core 0 panic'ed\n",
+            b"[ERROR] [Map] FAILED: WiFi disconnected\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    events = [
+        json.loads(line)
+        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
+    ]
+    alert_events = [event for event in events if event["type"] == "keyword_alert"]
+    assert [event["code"] for event in alert_events] == [
+        "PANIC",
+        "GURU_MEDITATION",
+    ]
+    assert stats.keyword_alerts_count == 2
+    assert [alert["code"] for alert in stats.keyword_alerts] == [
+        "PANIC",
+        "GURU_MEDITATION",
+    ]
+
+
 def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     clock = FakeClock()
     artifacts = create_run_artifacts(

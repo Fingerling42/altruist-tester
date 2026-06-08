@@ -218,6 +218,8 @@ def run(
             "serial_lines_read": stats.lines_read,
             "serial_bytes_read": stats.bytes_read,
             **stats.dev_metrics.as_dict(),
+            "keyword_alerts_count": stats.keyword_alerts_count,
+            "keyword_alerts": list(stats.keyword_alerts),
         },
     )
     artifacts.write_report("completed", message=message, finished_at=finished_at)

@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from altruist_tester.artifacts import RunArtifacts
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
+from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 
 
 class SerialReader(Protocol):
@@ -70,6 +71,8 @@ class SerialLogStats:
     lines_read: int
     bytes_read: int
     dev_metrics: DevMetricsSummary = field(default_factory=DevMetricsSummary)
+    keyword_alerts_count: int = 0
+    keyword_alerts: tuple[dict[str, str], ...] = ()
 
 
 def _decode_serial_line(line: bytes) -> str:
@@ -125,6 +128,18 @@ def _update_dev_metrics_summary(
     )
 
 
+def _append_keyword_alerts(
+    artifacts: RunArtifacts,
+    alerts: list[KeywordAlert],
+) -> tuple[dict[str, str], ...]:
+    appended_alerts = []
+    for alert in alerts:
+        payload = alert.as_event_payload()
+        artifacts.append_event("keyword_alert", **payload)
+        appended_alerts.append(payload)
+    return tuple(appended_alerts)
+
+
 def capture_raw_serial(
     serial_port: SerialReader,
     artifacts: RunArtifacts,
@@ -140,6 +155,7 @@ def capture_raw_serial(
     bytes_read = 0
     metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
+    keyword_alerts: list[dict[str, str]] = []
 
     with artifacts.serial_log.open("ab") as raw_log:
         while clock() < deadline:
@@ -154,6 +170,13 @@ def capture_raw_serial(
             decoded_line = _decode_serial_line(line)
             if mirror_lines_to_events:
                 artifacts.append_event("serial_line", line=decoded_line)
+
+            keyword_alerts.extend(
+                _append_keyword_alerts(
+                    artifacts,
+                    detect_keyword_alerts(decoded_line),
+                )
+            )
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
@@ -181,4 +204,6 @@ def capture_raw_serial(
         lines_read=lines_read,
         bytes_read=bytes_read,
         dev_metrics=metrics_summary,
+        keyword_alerts_count=len(keyword_alerts),
+        keyword_alerts=tuple(keyword_alerts),
     )
