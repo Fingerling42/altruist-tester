@@ -5,11 +5,28 @@ from typer.testing import CliRunner
 from altruist_tester import __version__
 from altruist_tester.cli import _format_run_progress, app
 from altruist_tester.ports import SerialPortInfo
+from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
 from altruist_tester.serial_logger import (
     DevMetricsSummary,
     SerialLogProgress,
     SerialLogStats,
 )
+
+
+def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
+    series = SensorSampleSeries()
+    for index, metric in enumerate(metrics):
+        series.append(
+            SensorSampleRecord(
+                ts=f"2026-06-05T12:00:{index:02d}.000Z",
+                sensor="sensor",
+                metric=metric,
+                value=float(index),
+                unit=None,
+                source="serial",
+            )
+        )
+    return series
 
 
 def test_package_version_is_available():
@@ -211,6 +228,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
                 max_errors={"wifi": 0, "sensor": 0, "sd": 0},
             ),
             sensor_samples_count=2,
+            sensor_series=_series_with_metrics("temperature", "humidity"),
         )
 
     monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
@@ -259,6 +277,11 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["max_uptime_sec"] == 121
     assert summary["max_errors"] == {"wifi": 0, "sensor": 0, "sd": 0}
     assert summary["sensor_samples_count"] == 2
+    assert summary["sensor_presence"]["status"] == "warn"
+    assert summary["sensor_presence"]["observed_metrics"] == [
+        "humidity",
+        "temperature",
+    ]
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()
@@ -321,3 +344,226 @@ def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["port"] == str(port)
+
+
+def test_run_passes_when_expected_metrics_are_seen(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=4,
+            sensor_series=_series_with_metrics("temperature", "humidity", "P1", "P2"),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-metric",
+            "temperature",
+            "--expect-metric",
+            "humidity",
+            "--expect-metric",
+            "pm10",
+            "--expect-metric",
+            "pm25",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["sensor_presence"]["status"] == "ok"
+    assert summary["sensor_presence"]["missing_metrics"] == []
+
+
+def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=7,
+            sensor_series=_series_with_metrics(
+                "temperature",
+                "humidity",
+                "pressure",
+                "P1",
+                "P2",
+                "noiseAvg",
+                "noiseMax",
+            ),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-sensor",
+            "bme280",
+            "--expect-sensor",
+            "sds",
+            "--expect-sensor",
+            "ics-43434",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["sensor_presence"]["expected_sensors"] == [
+        "bme280",
+        "ics43434",
+        "sds",
+    ]
+    assert summary["sensor_presence"]["missing_metrics"] == []
+
+
+def test_run_rejects_unknown_expected_sensor_before_creating_artifacts(tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-sensor",
+            "not-a-sensor",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Unknown expected sensor 'not-a-sensor'" in result.output
+    assert not output_dir.exists()
+
+
+def test_run_fails_when_expected_metric_is_missing(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=3,
+            sensor_series=_series_with_metrics("temperature", "humidity", "P1"),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-metric",
+            "temperature",
+            "--expect-metric",
+            "humidity",
+            "--expect-metric",
+            "pm10",
+            "--expect-metric",
+            "pm25",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Missing expected sensor metrics: pm25" in result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["sensor_presence"]["status"] == "fail"
+    assert summary["sensor_presence"]["missing_metrics"] == ["pm25"]
+    assert "run_failed" in (run_dir / "events.jsonl").read_text()

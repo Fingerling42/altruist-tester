@@ -10,6 +10,11 @@ from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
+from altruist_tester.rules.presence import (
+    UnknownExpectedSensorError,
+    check_sensor_presence,
+    expected_metrics_for_sensors,
+)
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
@@ -184,6 +189,26 @@ def run(
             resolve_path=False,
         ),
     ] = DEFAULT_OUTPUT_DIR,
+    expected_sensor: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--expect-sensor",
+            help=(
+                "Sensor preset that must produce data. "
+                "Repeat the option for multiple sensors."
+            ),
+        ),
+    ] = None,
+    expected_metric: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--expect-metric",
+            help=(
+                "Sensor metric that must appear at least once. "
+                "Repeat the option for multiple metrics."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run a USB-C serial burn-in test for one device."""
 
@@ -196,6 +221,12 @@ def run(
         resolved_port = _resolve_run_port(port, auto)
     except typer.BadParameter as exc:
         raise typer.BadParameter(str(exc), param_hint="--port") from exc
+
+    expected_sensors = tuple(expected_sensor or ())
+    try:
+        expected_metrics_for_sensors(expected_sensors)
+    except UnknownExpectedSensorError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--expect-sensor") from exc
 
     artifacts = create_run_artifacts(
         output_dir,
@@ -242,18 +273,34 @@ def run(
         raise typer.Exit(code=2) from exc
 
     finished_at = utc_now()
+    sensor_presence = check_sensor_presence(
+        stats.sensor_series,
+        expected_metrics=tuple(expected_metric or ()),
+        expected_sensors=expected_sensors,
+    )
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
     )
+    if sensor_presence.status == "fail":
+        message = f"{message} {sensor_presence.message}."
     artifacts.append_event(
         "serial_capture_completed",
         lines_read=stats.lines_read,
         bytes_read=stats.bytes_read,
     )
-    artifacts.append_event("run_completed")
+    artifacts.append_event("sensor_presence_checked", **sensor_presence.as_dict())
+    run_status = "failed" if sensor_presence.status == "fail" else "completed"
+    if run_status == "failed":
+        artifacts.append_event(
+            "run_failed",
+            reason="sensor_presence",
+            message=sensor_presence.message,
+        )
+    else:
+        artifacts.append_event("run_completed")
     artifacts.write_summary(
-        "completed",
+        run_status,
         message=message,
         finished_at=finished_at,
         extra={
@@ -263,9 +310,19 @@ def run(
             "keyword_alerts_count": stats.keyword_alerts_count,
             "keyword_alerts": list(stats.keyword_alerts),
             "sensor_samples_count": stats.sensor_samples_count,
+            "sensor_presence": sensor_presence.as_dict(),
         },
     )
-    artifacts.write_report("completed", message=message, finished_at=finished_at)
+    artifacts.write_report(run_status, message=message, finished_at=finished_at)
+    if sensor_presence.status == "warn":
+        typer.secho(
+            f"Warning: {sensor_presence.message}",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+    if sensor_presence.status == "fail":
+        typer.secho(sensor_presence.message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     typer.echo(
         f"Captured serial output for {duration_seconds}s on {resolved_port} at {baud} "
         f"baud. "
