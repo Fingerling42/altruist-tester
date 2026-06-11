@@ -1,0 +1,1 @@
+"""Sensor sanity rules."""
