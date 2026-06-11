@@ -7,6 +7,7 @@ from altruist_tester.artifacts import (
     device_hint_from_port,
     format_timestamp,
 )
+from altruist_tester.samples import SensorSample
 
 
 def test_device_hint_from_port():
@@ -50,3 +51,36 @@ def test_create_run_artifacts_initializes_files(tmp_path):
     event = json.loads(artifacts.events_jsonl.read_text().splitlines()[0])
     assert event["type"] == "run_started"
     assert event["port"] == "/dev/ttyACM0"
+
+
+def test_append_sample_writes_timestamped_sensor_sample(tmp_path):
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="10m",
+        duration_seconds=600,
+        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+    )
+
+    record = artifacts.append_sample(
+        SensorSample(
+            sensor="BME280",
+            metric="temperature",
+            value=24.5,
+            unit="C",
+        )
+    )
+
+    samples = [
+        json.loads(line)
+        for line in artifacts.samples_jsonl.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(samples) == 1
+    assert samples[0] == record.as_dict()
+    assert samples[0]["ts"].endswith("Z")
+    assert samples[0]["sensor"] == "BME280"
+    assert samples[0]["metric"] == "temperature"
+    assert samples[0]["value"] == 24.5
+    assert samples[0]["unit"] == "C"
+    assert samples[0]["source"] == "serial"

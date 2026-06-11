@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from altruist_tester.samples import SensorSample, SensorSampleRecord
+
 ARTIFACT_FILENAMES = ("serial.log", "events.jsonl", "samples.jsonl")
 _RUN_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -72,6 +74,17 @@ class RunArtifacts:
         with self.events_jsonl.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
         return event
+
+    def append_sample(self, sample: SensorSample) -> SensorSampleRecord:
+        """Append one timestamped sensor sample to samples.jsonl."""
+
+        record = {
+            "ts": format_timestamp(utc_now()),
+            **sample.as_payload(),
+        }
+        with self.samples_jsonl.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        return SensorSampleRecord.from_mapping(record)
 
     def write_summary(
         self,
