@@ -10,6 +10,7 @@ from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
+from altruist_tester.rules.flatline import check_sensor_flatlines
 from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
     check_sensor_presence,
@@ -18,6 +19,7 @@ from altruist_tester.rules.presence import (
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
+RUN_CHECK_FAILURE_STATUSES = frozenset({"fail"})
 
 app = typer.Typer(
     help=(
@@ -133,6 +135,14 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
         for port_info in port_infos:
             typer.echo(f"  {_format_port_info(port_info)}", err=True)
     raise typer.Exit(code=2)
+
+
+def _run_checks_failed(*statuses: str) -> bool:
+    return any(status in RUN_CHECK_FAILURE_STATUSES for status in statuses)
+
+
+def _append_check_message(message: str, check_message: str) -> str:
+    return f"{message} {check_message}."
 
 
 @app.command()
@@ -278,24 +288,48 @@ def run(
         expected_metrics=tuple(expected_metric or ()),
         expected_sensors=expected_sensors,
     )
+    sensor_flatlines = check_sensor_flatlines(stats.sensor_series)
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
     )
     if sensor_presence.status == "fail":
-        message = f"{message} {sensor_presence.message}."
+        message = _append_check_message(message, sensor_presence.message)
+    if sensor_flatlines.status == "fail":
+        message = _append_check_message(message, sensor_flatlines.message)
     artifacts.append_event(
         "serial_capture_completed",
         lines_read=stats.lines_read,
         bytes_read=stats.bytes_read,
     )
     artifacts.append_event("sensor_presence_checked", **sensor_presence.as_dict())
-    run_status = "failed" if sensor_presence.status == "fail" else "completed"
+    artifacts.append_event("sensor_flatlines_checked", **sensor_flatlines.as_dict())
+    run_status = (
+        "failed"
+        if _run_checks_failed(sensor_presence.status, sensor_flatlines.status)
+        else "completed"
+    )
     if run_status == "failed":
+        failed_checks = [
+            name
+            for name, status in (
+                ("sensor_presence", sensor_presence.status),
+                ("sensor_flatlines", sensor_flatlines.status),
+            )
+            if status == "fail"
+        ]
         artifacts.append_event(
             "run_failed",
-            reason="sensor_presence",
-            message=sensor_presence.message,
+            reason="sensor_checks",
+            failed_checks=failed_checks,
+            message="; ".join(
+                check_message
+                for check_message, status in (
+                    (sensor_presence.message, sensor_presence.status),
+                    (sensor_flatlines.message, sensor_flatlines.status),
+                )
+                if status == "fail"
+            ),
         )
     else:
         artifacts.append_event("run_completed")
@@ -311,6 +345,7 @@ def run(
             "keyword_alerts": list(stats.keyword_alerts),
             "sensor_samples_count": stats.sensor_samples_count,
             "sensor_presence": sensor_presence.as_dict(),
+            "sensor_flatlines": sensor_flatlines.as_dict(),
         },
     )
     artifacts.write_report(run_status, message=message, finished_at=finished_at)
@@ -320,8 +355,17 @@ def run(
             fg=typer.colors.YELLOW,
             err=True,
         )
+    if sensor_flatlines.status == "warn":
+        typer.secho(
+            f"Warning: {sensor_flatlines.message}",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
     if sensor_presence.status == "fail":
         typer.secho(sensor_presence.message, fg=typer.colors.RED, err=True)
+    if sensor_flatlines.status == "fail":
+        typer.secho(sensor_flatlines.message, fg=typer.colors.RED, err=True)
+    if run_status == "failed":
         raise typer.Exit(code=1)
     typer.echo(
         f"Captured serial output for {duration_seconds}s on {resolved_port} at {baud} "

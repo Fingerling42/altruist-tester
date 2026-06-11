@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 from typer.testing import CliRunner
 
@@ -26,6 +27,30 @@ def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
                 source="serial",
             )
         )
+    return series
+
+
+def _sample_record(
+    sensor: str,
+    metric: str,
+    value: float,
+    offset_seconds: int,
+) -> SensorSampleRecord:
+    ts = datetime(2026, 6, 5, 12, 0, tzinfo=UTC) + timedelta(seconds=offset_seconds)
+    return SensorSampleRecord(
+        ts=ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        sensor=sensor,
+        metric=metric,
+        value=value,
+        unit=None,
+        source="serial",
+    )
+
+
+def _series_with_records(*records: SensorSampleRecord) -> SensorSampleSeries:
+    series = SensorSampleSeries()
+    for record in records:
+        series.append(record)
     return series
 
 
@@ -282,6 +307,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
         "humidity",
         "temperature",
     ]
+    assert summary["sensor_flatlines"]["status"] == "warn"
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()
@@ -567,3 +593,65 @@ def test_run_fails_when_expected_metric_is_missing(monkeypatch, tmp_path):
     assert summary["sensor_presence"]["status"] == "fail"
     assert summary["sensor_presence"]["missing_metrics"] == ["pm25"]
     assert "run_failed" in (run_dir / "events.jsonl").read_text()
+
+
+def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=2,
+            sensor_series=_series_with_records(
+                _sample_record("SCD4x", "co2", 612.0, 0),
+                _sample_record("SCD4x", "co2", 612.0, 60 * 60),
+            ),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "1h",
+            "--expect-metric",
+            "co2",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "sensor metric series failed flatline checks" in result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["sensor_presence"]["status"] == "ok"
+    assert summary["sensor_flatlines"]["status"] == "fail"
+    assert summary["sensor_flatlines"]["failure_count"] == 1
+    assert "sensor_flatlines_checked" in (run_dir / "events.jsonl").read_text()

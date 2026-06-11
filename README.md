@@ -85,6 +85,12 @@ configured, the run is still completed, but `summary.json` records a warning
 because the tester cannot know which sensors are mandatory for that device
 build.
 
+The tester also checks whether parsed sensor values are stuck:
+
+- each `(sensor, metric)` series should have at least two distinct values;
+- one value or a short flatline is reported as a warning;
+- a flatline lasting 60 minutes or longer fails the run.
+
 ## Run Artifacts
 
 Each run creates a directory under `runs/` by default:
@@ -107,6 +113,10 @@ Important files:
 - `samples.jsonl` contains parsed sensor values.
 - `summary.json` contains the machine-readable run result.
 - `report.txt` contains a short human-readable summary.
+
+`summary.json` includes `sensor_presence` and `sensor_flatlines` sections with
+observed metrics, missing metrics, warning counts, failure counts, and detailed
+per-series findings.
 
 While a run is active, the CLI prints live progress with elapsed time and
 counters for serial lines, bytes, dev metrics, sensor samples, and keyword
