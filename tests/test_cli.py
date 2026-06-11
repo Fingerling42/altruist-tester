@@ -308,6 +308,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
         "temperature",
     ]
     assert summary["sensor_flatlines"]["status"] == "warn"
+    assert summary["sensor_cadence"]["status"] == "warn"
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()
@@ -655,3 +656,66 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
     assert summary["sensor_flatlines"]["status"] == "fail"
     assert summary["sensor_flatlines"]["failure_count"] == 1
     assert "sensor_flatlines_checked" in (run_dir / "events.jsonl").read_text()
+
+
+def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=2,
+            sensor_series=_series_with_records(
+                _sample_record("BME280", "temperature", 24.0, 0),
+                _sample_record("BME280", "temperature", 24.5, 25 * 60),
+            ),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "30m",
+            "--expect-metric",
+            "temperature",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "sensor metric series missed too many updates" in result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["sensor_presence"]["status"] == "ok"
+    assert summary["sensor_flatlines"]["status"] == "ok"
+    assert summary["sensor_cadence"]["status"] == "fail"
+    assert summary["sensor_cadence"]["failure_count"] == 1
+    assert "sensor_cadence_checked" in (run_dir / "events.jsonl").read_text()

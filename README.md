@@ -91,6 +91,12 @@ The tester also checks whether parsed sensor values are stuck:
 - one value or a short flatline is reported as a warning;
 - a flatline lasting 60 minutes or longer fails the run.
 
+The tester checks sensor update cadence as well:
+
+- the default expected update interval is 5 minutes;
+- a gap of 10 minutes or more is reported as a warning;
+- a gap of 20 minutes or more fails the run.
+
 ## Run Artifacts
 
 Each run creates a directory under `runs/` by default:
@@ -114,9 +120,9 @@ Important files:
 - `summary.json` contains the machine-readable run result.
 - `report.txt` contains a short human-readable summary.
 
-`summary.json` includes `sensor_presence` and `sensor_flatlines` sections with
-observed metrics, missing metrics, warning counts, failure counts, and detailed
-per-series findings.
+`summary.json` includes `sensor_presence`, `sensor_flatlines`, and
+`sensor_cadence` sections with observed metrics, missing metrics, warning
+counts, failure counts, and detailed per-series findings.
 
 While a run is active, the CLI prints live progress with elapsed time and
 counters for serial lines, bytes, dev metrics, sensor samples, and keyword
