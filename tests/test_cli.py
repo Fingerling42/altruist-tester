@@ -184,6 +184,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
                 max_uptime_sec=121,
                 max_errors={"wifi": 0, "sensor": 0, "sd": 0},
             ),
+            sensor_samples_count=2,
         )
 
     monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
@@ -231,6 +232,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["min_uptime_sec"] == 121
     assert summary["max_uptime_sec"] == 121
     assert summary["max_errors"] == {"wifi": 0, "sensor": 0, "sd": 0}
+    assert summary["sensor_samples_count"] == 2
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()

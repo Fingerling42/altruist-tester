@@ -143,6 +143,48 @@ def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
     ]
 
 
+def test_capture_raw_serial_writes_sensor_samples(tmp_path):
+    clock = FakeClock()
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="1s",
+        duration_seconds=1,
+        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+    )
+    serial = FakeSerial(
+        [
+            (
+                b'{"service_data":{"signal_strength":-38},'
+                b'"BME280":{"temperature":{"value":25.5,"units":"C"}},'
+                b'"SDS":{"P1":{"value":16.3,"units":"ppm"}}}\n'
+            ),
+            b"[123] [INFO] Datalog data: : h:65.99,t:25.51,p1:16.33\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    samples = [
+        json.loads(line)
+        for line in artifacts.samples_jsonl.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [
+        (sample["sensor"], sample["metric"], sample["value"]) for sample in samples
+    ] == [
+        ("BME280", "temperature", 25.5),
+        ("SDS", "P1", 16.3),
+        ("datalog", "humidity", 65.99),
+        ("datalog", "temperature", 25.51),
+        ("datalog", "P1", 16.33),
+    ]
+    assert stats.sensor_samples_count == 5
+    assert stats.sensor_series.latest(("BME280", "temperature")).value == 25.5
+    assert stats.sensor_series.latest(("datalog", "humidity")).value == 65.99
+
+
 def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     clock = FakeClock()
     artifacts = create_run_artifacts(

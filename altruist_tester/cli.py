@@ -220,6 +220,7 @@ def run(
             **stats.dev_metrics.as_dict(),
             "keyword_alerts_count": stats.keyword_alerts_count,
             "keyword_alerts": list(stats.keyword_alerts),
+            "sensor_samples_count": stats.sensor_samples_count,
         },
     )
     artifacts.write_report("completed", message=message, finished_at=finished_at)

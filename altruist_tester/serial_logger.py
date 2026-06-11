@@ -10,6 +10,8 @@ from typing import Any, Protocol
 from altruist_tester.artifacts import RunArtifacts
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
+from altruist_tester.parsers.sensor_values import parse_sensor_values
+from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
 
 
 class SerialReader(Protocol):
@@ -73,6 +75,8 @@ class SerialLogStats:
     dev_metrics: DevMetricsSummary = field(default_factory=DevMetricsSummary)
     keyword_alerts_count: int = 0
     keyword_alerts: tuple[dict[str, str], ...] = ()
+    sensor_samples_count: int = 0
+    sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
 
 
 def _decode_serial_line(line: bytes) -> str:
@@ -140,6 +144,19 @@ def _append_keyword_alerts(
     return tuple(appended_alerts)
 
 
+def _append_sensor_samples(
+    artifacts: RunArtifacts,
+    samples: list[SensorSample],
+    series: SensorSampleSeries,
+) -> tuple[SensorSampleRecord, ...]:
+    appended_samples = []
+    for sample in samples:
+        record = artifacts.append_sample(sample)
+        series.append(record)
+        appended_samples.append(record)
+    return tuple(appended_samples)
+
+
 def capture_raw_serial(
     serial_port: SerialReader,
     artifacts: RunArtifacts,
@@ -156,6 +173,7 @@ def capture_raw_serial(
     metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
     keyword_alerts: list[dict[str, str]] = []
+    sensor_series = SensorSampleSeries()
 
     with artifacts.serial_log.open("ab") as raw_log:
         while clock() < deadline:
@@ -176,6 +194,11 @@ def capture_raw_serial(
                     artifacts,
                     detect_keyword_alerts(decoded_line),
                 )
+            )
+            _append_sensor_samples(
+                artifacts,
+                parse_sensor_values(decoded_line),
+                sensor_series,
             )
 
             metrics = metrics_parser.feed(decoded_line)
@@ -206,4 +229,6 @@ def capture_raw_serial(
         dev_metrics=metrics_summary,
         keyword_alerts_count=len(keyword_alerts),
         keyword_alerts=tuple(keyword_alerts),
+        sensor_samples_count=sensor_series.count(),
+        sensor_series=sensor_series,
     )
