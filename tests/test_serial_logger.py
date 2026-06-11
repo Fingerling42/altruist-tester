@@ -185,6 +185,46 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     assert stats.sensor_series.latest(("datalog", "humidity")).value == 65.99
 
 
+def test_capture_raw_serial_reports_progress(tmp_path):
+    clock = FakeClock()
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="2s",
+        duration_seconds=2,
+        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+    )
+    serial = FakeSerial(
+        [
+            b'{"BME280":{"temperature":{"value":25.5,"units":"C"}}}\n',
+            b"Guru Meditation Error: Core 0 panic'ed\n",
+            b"=== [URBAN] METRICS ===\n",
+            b"Status: ALIVE\n",
+            b"==========================\n",
+        ],
+        clock,
+    )
+    progress_updates = []
+
+    capture_raw_serial(
+        serial,
+        artifacts,
+        2,
+        clock=clock,
+        progress_callback=progress_updates.append,
+        progress_interval_seconds=0.5,
+    )
+
+    assert progress_updates
+    assert progress_updates[-1].complete is True
+    assert progress_updates[-1].lines_read == 5
+    assert progress_updates[-1].dev_metrics_count == 1
+    assert progress_updates[-1].keyword_alerts_count == 2
+    assert progress_updates[-1].sensor_samples_count == 1
+    assert progress_updates[-1].percent == 100.0
+
+
 def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     clock = FakeClock()
     artifacts = create_run_artifacts(

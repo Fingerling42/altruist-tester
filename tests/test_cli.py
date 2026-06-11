@@ -3,9 +3,13 @@ import json
 from typer.testing import CliRunner
 
 from altruist_tester import __version__
-from altruist_tester.cli import app
+from altruist_tester.cli import _format_run_progress, app
 from altruist_tester.ports import SerialPortInfo
-from altruist_tester.serial_logger import DevMetricsSummary, SerialLogStats
+from altruist_tester.serial_logger import (
+    DevMetricsSummary,
+    SerialLogProgress,
+    SerialLogStats,
+)
 
 
 def test_package_version_is_available():
@@ -25,6 +29,23 @@ def test_cli_version_runs():
 
     assert result.exit_code == 0
     assert "altruist-tester" in result.output
+
+
+def test_format_run_progress_includes_elapsed_time_and_live_counters():
+    progress = SerialLogProgress(
+        elapsed_seconds=65.4,
+        duration_seconds=600,
+        lines_read=123,
+        bytes_read=4567,
+        dev_metrics_count=4,
+        keyword_alerts_count=1,
+        sensor_samples_count=28,
+    )
+
+    assert _format_run_progress(progress) == (
+        "Progress  10.9% (01:05/10:00) | lines=123 bytes=4567 "
+        "metrics=4 samples=28 alerts=1"
+    )
 
 
 def test_ports_lists_detected_serial_ports(monkeypatch):
@@ -168,7 +189,12 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_capture_raw_serial(serial_port, artifacts, duration_seconds):
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
         captured["serial_port"] = serial_port
         captured["duration_seconds"] = duration_seconds
         artifacts.serial_log.write_bytes(b"hello from device\n")
@@ -261,7 +287,12 @@ def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
         def __exit__(self, exc_type, exc, traceback):
             return False
 
-    def fake_capture_raw_serial(serial_port, artifacts, duration_seconds):
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
         return SerialLogStats(lines_read=0, bytes_read=0)
 
     monkeypatch.setattr(

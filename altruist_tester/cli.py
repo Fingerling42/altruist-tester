@@ -10,7 +10,7 @@ from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
-from altruist_tester.serial_logger import capture_raw_serial
+from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
 
@@ -67,6 +67,43 @@ def _print_ports(port_infos: list[SerialPortInfo]) -> None:
 
     for port_info in port_infos:
         typer.echo(_format_port_info(port_info))
+
+
+def _format_elapsed(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _format_run_progress(progress: SerialLogProgress) -> str:
+    elapsed = min(progress.elapsed_seconds, float(progress.duration_seconds))
+    return (
+        f"Progress {progress.percent:5.1f}% "
+        f"({_format_elapsed(elapsed)}/{_format_elapsed(progress.duration_seconds)}) "
+        f"| lines={progress.lines_read} "
+        f"bytes={progress.bytes_read} "
+        f"metrics={progress.dev_metrics_count} "
+        f"samples={progress.sensor_samples_count} "
+        f"alerts={progress.keyword_alerts_count}"
+    )
+
+
+def _make_progress_printer():
+    last_length = 0
+
+    def print_progress(progress: SerialLogProgress) -> None:
+        nonlocal last_length
+        message = _format_run_progress(progress)
+        padding = " " * max(0, last_length - len(message))
+        typer.echo(f"\r{message}{padding}", err=True, nl=False)
+        last_length = len(message)
+        if progress.complete:
+            typer.echo("", err=True)
+
+    return print_progress
 
 
 def _resolve_run_port(port: Path | None, auto: bool) -> Path:
@@ -187,7 +224,12 @@ def run(
         with serial.Serial(str(resolved_port), baudrate=baud, timeout=1) as serial_port:
             artifacts.append_event("serial_opened", port=str(resolved_port), baud=baud)
             artifacts.append_event("serial_capture_started")
-            stats = capture_raw_serial(serial_port, artifacts, duration_seconds)
+            stats = capture_raw_serial(
+                serial_port,
+                artifacts,
+                duration_seconds,
+                progress_callback=_make_progress_printer(),
+            )
     except serial.SerialException as exc:
         message = f"Could not open serial port {resolved_port}: {exc}"
         artifacts.append_event(

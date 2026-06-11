@@ -79,6 +79,28 @@ class SerialLogStats:
     sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
 
 
+@dataclass(frozen=True, slots=True)
+class SerialLogProgress:
+    """Point-in-time progress for one raw serial logging session."""
+
+    elapsed_seconds: float
+    duration_seconds: int
+    lines_read: int
+    bytes_read: int
+    dev_metrics_count: int
+    keyword_alerts_count: int
+    sensor_samples_count: int
+    complete: bool = False
+
+    @property
+    def percent(self) -> float:
+        """Return elapsed percentage capped to 100."""
+
+        if self.duration_seconds <= 0:
+            return 100.0
+        return min(100.0, (self.elapsed_seconds / self.duration_seconds) * 100.0)
+
+
 def _decode_serial_line(line: bytes) -> str:
     return line.decode("utf-8", errors="replace").rstrip("\r\n")
 
@@ -157,6 +179,30 @@ def _append_sensor_samples(
     return tuple(appended_samples)
 
 
+def _build_progress(
+    *,
+    now: float,
+    started_at: float,
+    duration_seconds: int,
+    lines_read: int,
+    bytes_read: int,
+    metrics_summary: DevMetricsSummary,
+    keyword_alerts_count: int,
+    sensor_series: SensorSampleSeries,
+    complete: bool = False,
+) -> SerialLogProgress:
+    return SerialLogProgress(
+        elapsed_seconds=max(0.0, now - started_at),
+        duration_seconds=duration_seconds,
+        lines_read=lines_read,
+        bytes_read=bytes_read,
+        dev_metrics_count=metrics_summary.count,
+        keyword_alerts_count=keyword_alerts_count,
+        sensor_samples_count=sensor_series.count(),
+        complete=complete,
+    )
+
+
 def capture_raw_serial(
     serial_port: SerialReader,
     artifacts: RunArtifacts,
@@ -164,10 +210,14 @@ def capture_raw_serial(
     *,
     clock: Callable[[], float] = time.monotonic,
     mirror_lines_to_events: bool = False,
+    progress_callback: Callable[[SerialLogProgress], None] | None = None,
+    progress_interval_seconds: float = 1.0,
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses."""
 
-    deadline = clock() + duration_seconds
+    started_at = clock()
+    deadline = started_at + duration_seconds
+    next_progress_at = started_at
     lines_read = 0
     bytes_read = 0
     metrics_parser = DevMetricsStreamParser()
@@ -175,10 +225,31 @@ def capture_raw_serial(
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
 
+    def emit_progress(now: float, *, complete: bool = False) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            _build_progress(
+                now=now,
+                started_at=started_at,
+                duration_seconds=duration_seconds,
+                lines_read=lines_read,
+                bytes_read=bytes_read,
+                metrics_summary=metrics_summary,
+                keyword_alerts_count=len(keyword_alerts),
+                sensor_series=sensor_series,
+                complete=complete,
+            )
+        )
+
     with artifacts.serial_log.open("ab") as raw_log:
-        while clock() < deadline:
+        while (now := clock()) < deadline:
             line = serial_port.readline()
+            now = clock()
             if not line:
+                if now >= next_progress_at:
+                    emit_progress(now)
+                    next_progress_at = now + progress_interval_seconds
                 continue
 
             raw_log.write(line)
@@ -212,6 +283,10 @@ def capture_raw_serial(
                     event["ts"],
                 )
 
+            if now >= next_progress_at:
+                emit_progress(now)
+                next_progress_at = now + progress_interval_seconds
+
     trailing_metrics = metrics_parser.finish()
     if trailing_metrics is not None:
         event = artifacts.append_event(
@@ -222,6 +297,8 @@ def capture_raw_serial(
             trailing_metrics,
             event["ts"],
         )
+
+    emit_progress(clock(), complete=True)
 
     return SerialLogStats(
         lines_read=lines_read,
