@@ -77,6 +77,7 @@ def test_format_run_progress_includes_elapsed_time_and_live_counters():
     progress = SerialLogProgress(
         elapsed_seconds=65.4,
         duration_seconds=600,
+        current_silence_seconds=12.0,
         lines_read=123,
         bytes_read=4567,
         dev_metrics_count=4,
@@ -85,7 +86,7 @@ def test_format_run_progress_includes_elapsed_time_and_live_counters():
     )
 
     assert _format_run_progress(progress) == (
-        "Progress  10.9% (01:05/10:00) | lines=123 bytes=4567 "
+        "Progress  10.9% (01:05/10:00) | lines=123 bytes=4567 quiet=00:12 "
         "metrics=4 samples=28 alerts=1"
     )
 
@@ -302,6 +303,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["max_uptime_sec"] == 121
     assert summary["max_errors"] == {"wifi": 0, "sensor": 0, "sd": 0}
     assert summary["sensor_samples_count"] == 2
+    assert summary["serial_silence"]["status"] == "ok"
     assert summary["sensor_presence"]["status"] == "warn"
     assert summary["sensor_presence"]["observed_metrics"] == [
         "humidity",
@@ -777,3 +779,54 @@ def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
     assert summary["runtime_counters"]["status"] == "fail"
     assert summary["runtime_counters"]["findings"][0]["code"] == "UPTIME_DECREASED"
     assert "runtime_counters_checked" in (run_dir / "events.jsonl").read_text()
+
+
+def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(lines_read=0, bytes_read=0)
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "10m",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "serial silence checks failed" in result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["serial_silence"]["status"] == "fail"
+    assert summary["serial_silence"]["findings"][0]["code"] == "NO_SERIAL_OUTPUT"
+    assert "serial_silence_checked" in (run_dir / "events.jsonl").read_text()

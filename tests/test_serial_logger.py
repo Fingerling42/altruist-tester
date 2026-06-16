@@ -52,6 +52,9 @@ def test_capture_raw_serial_writes_raw_log_without_line_events_by_default(tmp_pa
 
     assert stats.lines_read == 3
     assert stats.bytes_read == 36
+    assert stats.first_line_elapsed_seconds == 0.25
+    assert stats.last_line_elapsed_seconds == 0.75
+    assert stats.max_interline_gap_seconds == 0.25
     assert artifacts.serial_log.read_bytes() == (
         b"first line\r\nsecond line\nbad utf8: \xff\n"
     )

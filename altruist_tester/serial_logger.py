@@ -72,6 +72,9 @@ class SerialLogStats:
 
     lines_read: int
     bytes_read: int
+    first_line_elapsed_seconds: float | None = None
+    last_line_elapsed_seconds: float | None = None
+    max_interline_gap_seconds: float | None = None
     dev_metrics: DevMetricsSummary = field(default_factory=DevMetricsSummary)
     dev_metrics_records: tuple[dict[str, object], ...] = ()
     keyword_alerts_count: int = 0
@@ -86,6 +89,7 @@ class SerialLogProgress:
 
     elapsed_seconds: float
     duration_seconds: int
+    current_silence_seconds: float
     lines_read: int
     bytes_read: int
     dev_metrics_count: int
@@ -185,6 +189,7 @@ def _build_progress(
     now: float,
     started_at: float,
     duration_seconds: int,
+    last_line_elapsed_seconds: float | None,
     lines_read: int,
     bytes_read: int,
     metrics_summary: DevMetricsSummary,
@@ -192,9 +197,16 @@ def _build_progress(
     sensor_series: SensorSampleSeries,
     complete: bool = False,
 ) -> SerialLogProgress:
+    elapsed_seconds = max(0.0, now - started_at)
+    if last_line_elapsed_seconds is None:
+        current_silence_seconds = elapsed_seconds
+    else:
+        current_silence_seconds = max(0.0, elapsed_seconds - last_line_elapsed_seconds)
+
     return SerialLogProgress(
-        elapsed_seconds=max(0.0, now - started_at),
+        elapsed_seconds=elapsed_seconds,
         duration_seconds=duration_seconds,
+        current_silence_seconds=current_silence_seconds,
         lines_read=lines_read,
         bytes_read=bytes_read,
         dev_metrics_count=metrics_summary.count,
@@ -221,6 +233,9 @@ def capture_raw_serial(
     next_progress_at = started_at
     lines_read = 0
     bytes_read = 0
+    first_line_elapsed_seconds: float | None = None
+    last_line_elapsed_seconds: float | None = None
+    max_interline_gap_seconds: float | None = None
     metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
     metrics_records: list[dict[str, object]] = []
@@ -235,6 +250,7 @@ def capture_raw_serial(
                 now=now,
                 started_at=started_at,
                 duration_seconds=duration_seconds,
+                last_line_elapsed_seconds=last_line_elapsed_seconds,
                 lines_read=lines_read,
                 bytes_read=bytes_read,
                 metrics_summary=metrics_summary,
@@ -258,6 +274,16 @@ def capture_raw_serial(
             raw_log.flush()
             lines_read += 1
             bytes_read += len(line)
+            line_elapsed_seconds = max(0.0, now - started_at)
+            if first_line_elapsed_seconds is None:
+                first_line_elapsed_seconds = line_elapsed_seconds
+            if last_line_elapsed_seconds is not None:
+                gap_seconds = max(0.0, line_elapsed_seconds - last_line_elapsed_seconds)
+                max_interline_gap_seconds = _max_optional(
+                    max_interline_gap_seconds,
+                    gap_seconds,
+                )
+            last_line_elapsed_seconds = line_elapsed_seconds
             decoded_line = _decode_serial_line(line)
             if mirror_lines_to_events:
                 artifacts.append_event("serial_line", line=decoded_line)
@@ -311,6 +337,9 @@ def capture_raw_serial(
     return SerialLogStats(
         lines_read=lines_read,
         bytes_read=bytes_read,
+        first_line_elapsed_seconds=first_line_elapsed_seconds,
+        last_line_elapsed_seconds=last_line_elapsed_seconds,
+        max_interline_gap_seconds=max_interline_gap_seconds,
         dev_metrics=metrics_summary,
         dev_metrics_records=tuple(metrics_records),
         keyword_alerts_count=len(keyword_alerts),

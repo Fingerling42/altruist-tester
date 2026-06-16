@@ -104,6 +104,13 @@ Development metrics are checked for reboot signals:
 - an initial `boot` counter greater than `1` is recorded, but does not fail the
   run by itself.
 
+Serial output is checked for silence:
+
+- 2 minutes without serial lines is reported as a warning;
+- 10 minutes without serial lines fails the run;
+- if no lines appear at all, the finding mentions that the device may still be
+  in Wi-Fi AP/config portal mode.
+
 ## Run Artifacts
 
 Each run creates a directory under `runs/` by default:
@@ -128,12 +135,12 @@ Important files:
 - `report.txt` contains a short human-readable summary.
 
 `summary.json` includes `sensor_presence`, `sensor_flatlines`, `sensor_cadence`,
-and `runtime_counters` sections with observed metrics, missing metrics, warning
-counts, failure counts, and detailed findings.
+`runtime_counters`, and `serial_silence` sections with observed metrics, missing
+metrics, warning counts, failure counts, and detailed findings.
 
 While a run is active, the CLI prints live progress with elapsed time and
-counters for serial lines, bytes, dev metrics, sensor samples, and keyword
-alerts.
+counters for serial lines, bytes, current serial silence, dev metrics, sensor
+samples, and keyword alerts.
 
 ## Current Notes
 
