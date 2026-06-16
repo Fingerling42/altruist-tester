@@ -719,3 +719,61 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     assert summary["sensor_cadence"]["status"] == "fail"
     assert summary["sensor_cadence"]["failure_count"] == 1
     assert "sensor_cadence_checked" in (run_dir / "events.jsonl").read_text()
+
+
+def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            dev_metrics_records=(
+                {"boot": 1, "uptime_sec": 20},
+                {"boot": 1, "uptime_sec": 5},
+            ),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "30m",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "runtime counter checks failed" in result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["runtime_counters"]["status"] == "fail"
+    assert summary["runtime_counters"]["findings"][0]["code"] == "UPTIME_DECREASED"
+    assert "runtime_counters_checked" in (run_dir / "events.jsonl").read_text()

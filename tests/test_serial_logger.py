@@ -273,6 +273,9 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     assert metrics_events[1]["rssi"] == -79
 
     assert stats.dev_metrics.count == 2
+    assert [record["uptime_sec"] for record in stats.dev_metrics_records] == [121, 124]
+    assert [record["boot"] for record in stats.dev_metrics_records] == [7, 7]
+    assert stats.dev_metrics_records[0]["ts"] == metrics_events[0]["ts"]
     assert stats.dev_metrics.first_seen == metrics_events[0]["ts"]
     assert stats.dev_metrics.last_seen == metrics_events[1]["ts"]
     assert stats.dev_metrics.max_boot == 7

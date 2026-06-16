@@ -73,6 +73,7 @@ class SerialLogStats:
     lines_read: int
     bytes_read: int
     dev_metrics: DevMetricsSummary = field(default_factory=DevMetricsSummary)
+    dev_metrics_records: tuple[dict[str, object], ...] = ()
     keyword_alerts_count: int = 0
     keyword_alerts: tuple[dict[str, str], ...] = ()
     sensor_samples_count: int = 0
@@ -222,6 +223,7 @@ def capture_raw_serial(
     bytes_read = 0
     metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
+    metrics_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
 
@@ -277,6 +279,9 @@ def capture_raw_serial(
                 event = artifacts.append_event(
                     "dev_metrics", **metrics.as_event_payload()
                 )
+                metrics_records.append(
+                    {"ts": event["ts"], **metrics.as_event_payload()}
+                )
                 metrics_summary = _update_dev_metrics_summary(
                     metrics_summary,
                     metrics,
@@ -292,6 +297,9 @@ def capture_raw_serial(
         event = artifacts.append_event(
             "dev_metrics", **trailing_metrics.as_event_payload()
         )
+        metrics_records.append(
+            {"ts": event["ts"], **trailing_metrics.as_event_payload()}
+        )
         metrics_summary = _update_dev_metrics_summary(
             metrics_summary,
             trailing_metrics,
@@ -304,6 +312,7 @@ def capture_raw_serial(
         lines_read=lines_read,
         bytes_read=bytes_read,
         dev_metrics=metrics_summary,
+        dev_metrics_records=tuple(metrics_records),
         keyword_alerts_count=len(keyword_alerts),
         keyword_alerts=tuple(keyword_alerts),
         sensor_samples_count=sensor_series.count(),

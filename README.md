@@ -97,6 +97,13 @@ The tester checks sensor update cadence as well:
 - a gap of 10 minutes or more is reported as a warning;
 - a gap of 20 minutes or more fails the run.
 
+Development metrics are checked for reboot signals:
+
+- `uptime_sec` must not decrease during the run;
+- `boot` counter must not increase during the run;
+- an initial `boot` counter greater than `1` is recorded, but does not fail the
+  run by itself.
+
 ## Run Artifacts
 
 Each run creates a directory under `runs/` by default:
@@ -120,9 +127,9 @@ Important files:
 - `summary.json` contains the machine-readable run result.
 - `report.txt` contains a short human-readable summary.
 
-`summary.json` includes `sensor_presence`, `sensor_flatlines`, and
-`sensor_cadence` sections with observed metrics, missing metrics, warning
-counts, failure counts, and detailed per-series findings.
+`summary.json` includes `sensor_presence`, `sensor_flatlines`, `sensor_cadence`,
+and `runtime_counters` sections with observed metrics, missing metrics, warning
+counts, failure counts, and detailed findings.
 
 While a run is active, the CLI prints live progress with elapsed time and
 counters for serial lines, bytes, dev metrics, sensor samples, and keyword

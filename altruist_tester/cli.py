@@ -17,6 +17,7 @@ from altruist_tester.rules.presence import (
     check_sensor_presence,
     expected_metrics_for_sensors,
 )
+from altruist_tester.rules.runtime import check_runtime_counters
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
@@ -295,6 +296,7 @@ def run(
         reference_time=finished_at,
         max_tail_window_seconds=duration_seconds,
     )
+    runtime_counters = check_runtime_counters(stats.dev_metrics_records)
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -305,6 +307,8 @@ def run(
         message = _append_check_message(message, sensor_flatlines.message)
     if sensor_cadence.status == "fail":
         message = _append_check_message(message, sensor_cadence.message)
+    if runtime_counters.status == "fail":
+        message = _append_check_message(message, runtime_counters.message)
     artifacts.append_event(
         "serial_capture_completed",
         lines_read=stats.lines_read,
@@ -313,12 +317,14 @@ def run(
     artifacts.append_event("sensor_presence_checked", **sensor_presence.as_dict())
     artifacts.append_event("sensor_flatlines_checked", **sensor_flatlines.as_dict())
     artifacts.append_event("sensor_cadence_checked", **sensor_cadence.as_dict())
+    artifacts.append_event("runtime_counters_checked", **runtime_counters.as_dict())
     run_status = (
         "failed"
         if _run_checks_failed(
             sensor_presence.status,
             sensor_flatlines.status,
             sensor_cadence.status,
+            runtime_counters.status,
         )
         else "completed"
     )
@@ -329,6 +335,7 @@ def run(
                 ("sensor_presence", sensor_presence.status),
                 ("sensor_flatlines", sensor_flatlines.status),
                 ("sensor_cadence", sensor_cadence.status),
+                ("runtime_counters", runtime_counters.status),
             )
             if status == "fail"
         ]
@@ -342,6 +349,7 @@ def run(
                     (sensor_presence.message, sensor_presence.status),
                     (sensor_flatlines.message, sensor_flatlines.status),
                     (sensor_cadence.message, sensor_cadence.status),
+                    (runtime_counters.message, runtime_counters.status),
                 )
                 if status == "fail"
             ),
@@ -362,6 +370,7 @@ def run(
             "sensor_presence": sensor_presence.as_dict(),
             "sensor_flatlines": sensor_flatlines.as_dict(),
             "sensor_cadence": sensor_cadence.as_dict(),
+            "runtime_counters": runtime_counters.as_dict(),
         },
     )
     artifacts.write_report(run_status, message=message, finished_at=finished_at)
@@ -383,12 +392,20 @@ def run(
             fg=typer.colors.YELLOW,
             err=True,
         )
+    if runtime_counters.status == "warn":
+        typer.secho(
+            f"Warning: {runtime_counters.message}",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
     if sensor_presence.status == "fail":
         typer.secho(sensor_presence.message, fg=typer.colors.RED, err=True)
     if sensor_flatlines.status == "fail":
         typer.secho(sensor_flatlines.message, fg=typer.colors.RED, err=True)
     if sensor_cadence.status == "fail":
         typer.secho(sensor_cadence.message, fg=typer.colors.RED, err=True)
+    if runtime_counters.status == "fail":
+        typer.secho(runtime_counters.message, fg=typer.colors.RED, err=True)
     if run_status == "failed":
         raise typer.Exit(code=1)
     typer.echo(
