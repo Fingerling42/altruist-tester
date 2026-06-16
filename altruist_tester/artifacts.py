@@ -39,6 +39,109 @@ def device_hint_from_port(port: Path) -> str:
     return hint or "unknown"
 
 
+def _format_finding_line(finding: dict[str, Any]) -> str:
+    severity = str(finding.get("severity", "warn")).upper()
+    code = str(finding.get("code", "FINDING"))
+    message = str(finding.get("message", ""))
+    return f"- [{severity}] {code}: {message}"
+
+
+def _format_last_dev_metrics(metrics: dict[str, Any]) -> str:
+    if not metrics:
+        return "none"
+
+    errors = metrics.get("errors")
+    error_text = ""
+    if isinstance(errors, dict):
+        error_text = (
+            f", errors wifi={errors.get('wifi')} "
+            f"sensor={errors.get('sensor')} sd={errors.get('sd')}"
+        )
+
+    return (
+        f"status={metrics.get('status')}, uptime={metrics.get('uptime_sec')}s, "
+        f"boot={metrics.get('boot')}, wifi={metrics.get('wifi_state')}, "
+        f"rssi={metrics.get('rssi')}, tx={metrics.get('tx')}{error_text}"
+    )
+
+
+def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> None:
+    last_metrics_text = _format_last_dev_metrics(details.get("last_dev_metrics") or {})
+    rules = details.get("rules")
+    if isinstance(rules, dict):
+        lines.extend(
+            [
+                "",
+                "Verdict:",
+                f"- verdict: {rules.get('verdict')}",
+                f"- status: {rules.get('status')}",
+            ]
+        )
+
+        findings = rules.get("findings")
+        if isinstance(findings, list) and findings:
+            lines.extend(["", "Findings:"])
+            for finding in findings[:10]:
+                if isinstance(finding, dict):
+                    lines.append(_format_finding_line(finding))
+            if len(findings) > 10:
+                lines.append(f"- ... {len(findings) - 10} more findings")
+        else:
+            lines.extend(["", "Findings:", "- none"])
+
+    lines.extend(
+        [
+            "",
+            "Health:",
+            f"- dev metrics seen: {details.get('metrics_seen')}",
+            f"- samples seen: {details.get('samples_seen')}",
+            f"- serial lines: {details.get('serial_lines_read')}",
+            f"- serial bytes: {details.get('serial_bytes_read')}",
+            f"- max serial silence: {details.get('max_serial_silence_seconds')}s",
+            f"- last dev metrics: {last_metrics_text}",
+        ]
+    )
+
+    sensor_presence = details.get("sensor_presence")
+    sensor_ranges = details.get("sensor_ranges")
+    sensor_flatlines = details.get("sensor_flatlines")
+    sensor_cadence = details.get("sensor_cadence")
+    if isinstance(sensor_presence, dict):
+        observed = sensor_presence.get("observed_metrics") or []
+        missing = sensor_presence.get("missing_metrics") or []
+        lines.extend(
+            [
+                "",
+                "Sensors:",
+                f"- samples: {details.get('sensor_samples_count')}",
+                f"- observed metrics: {', '.join(observed) if observed else 'none'}",
+                f"- missing metrics: {', '.join(missing) if missing else 'none'}",
+            ]
+        )
+    if isinstance(sensor_ranges, dict):
+        lines.append(
+            "- ranges: "
+            f"{sensor_ranges.get('status')} "
+            f"({sensor_ranges.get('checked_samples_count')} samples, "
+            f"{sensor_ranges.get('failure_count')} failures, "
+            f"{sensor_ranges.get('warning_count')} warnings)"
+        )
+    if isinstance(sensor_flatlines, dict):
+        lines.append(
+            "- flatlines: "
+            f"{sensor_flatlines.get('status')} "
+            f"({sensor_flatlines.get('failure_count')} failures, "
+            f"{sensor_flatlines.get('warning_count')} warnings)"
+        )
+    if isinstance(sensor_cadence, dict):
+        lines.append(
+            "- cadence: "
+            f"{sensor_cadence.get('status')} "
+            f"({sensor_cadence.get('failure_count')} failures, "
+            f"{sensor_cadence.get('warning_count')} warnings)"
+        )
+
+
 @dataclass(slots=True)
 class RunArtifacts:
     """Paths and metadata for one test run."""
@@ -131,6 +234,7 @@ class RunArtifacts:
         *,
         message: str | None = None,
         finished_at: datetime | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """Write a human-readable run report."""
 
@@ -153,6 +257,8 @@ class RunArtifacts:
         )
         if message is not None:
             lines.extend(["", message])
+        if details is not None:
+            _append_final_report_details(lines, details)
         lines.extend(
             [
                 "",

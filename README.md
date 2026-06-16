@@ -137,12 +137,17 @@ Important files:
   alerts, and sensor presence results.
 - `samples.jsonl` contains parsed sensor values.
 - `summary.json` contains the machine-readable run result.
-- `report.txt` contains a short human-readable summary.
+- `report.txt` contains a human-readable verdict, findings, health metrics,
+  sensor summary, and artifact paths.
 
 `summary.json` includes `rules`, `sensor_presence`, `sensor_ranges`,
 `sensor_flatlines`, `sensor_cadence`, `runtime_counters`, and `serial_silence`
 sections with observed metrics, missing metrics, warning counts, failure counts,
 and detailed findings.
+
+Top-level `summary.json` fields also include `verdict`, `metrics_seen`,
+`samples_seen`, and normalized `findings` so automation can read the final
+result without traversing every rule-specific section.
 
 While a run is active, the CLI prints live progress with elapsed time and
 counters for serial lines, bytes, current serial silence, dev metrics, sensor

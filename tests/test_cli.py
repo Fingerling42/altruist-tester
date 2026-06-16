@@ -304,6 +304,10 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["baud"] == 9600
     assert summary["duration"] == "10m"
     assert summary["duration_sec"] == 600
+    assert summary["verdict"] == "WARN"
+    assert summary["metrics_seen"] is True
+    assert summary["samples_seen"] is True
+    assert summary["findings"]
     assert summary["serial_lines_read"] == 1
     assert summary["serial_bytes_read"] == 18
     assert summary["dev_metrics_seen"] is True
@@ -336,7 +340,12 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "sensor_ranges_checked" in events_text
     assert "rules_evaluated" in events_text
     assert "serial_line" not in events_text
-    assert "Captured 1 serial lines" in (run_dir / "report.txt").read_text()
+    report_text = (run_dir / "report.txt").read_text()
+    assert "Captured 1 serial lines" in report_text
+    assert "Verdict:" in report_text
+    assert "- verdict: WARN" in report_text
+    assert "Health:" in report_text
+    assert "Sensors:" in report_text
 
 
 def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
@@ -845,6 +854,10 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
+    assert summary["verdict"] == "FAIL"
+    assert summary["metrics_seen"] is False
+    assert summary["samples_seen"] is False
+    assert summary["findings"]
     assert summary["serial_silence"]["status"] == "fail"
     assert summary["serial_silence"]["findings"][0]["code"] == "NO_SERIAL_OUTPUT"
     assert summary["rules"]["verdict"] == "FAIL"

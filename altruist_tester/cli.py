@@ -337,30 +337,41 @@ def run(
         )
     else:
         artifacts.append_event("run_completed")
+    final_details = {
+        "verdict": rule_result.verdict,
+        "metrics_seen": stats.dev_metrics.seen,
+        "samples_seen": stats.sensor_samples_count > 0,
+        "findings": [finding.as_dict() for finding in rule_result.findings],
+        "serial_lines_read": stats.lines_read,
+        "serial_bytes_read": stats.bytes_read,
+        "first_serial_line_elapsed_seconds": stats.first_line_elapsed_seconds,
+        "last_serial_line_elapsed_seconds": stats.last_line_elapsed_seconds,
+        "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
+        "max_serial_silence_seconds": serial_silence.max_silence_seconds,
+        **stats.dev_metrics.as_dict(),
+        "keyword_alerts_count": stats.keyword_alerts_count,
+        "keyword_alerts": list(stats.keyword_alerts),
+        "sensor_samples_count": stats.sensor_samples_count,
+        "rules": rule_result.as_dict(),
+        "sensor_presence": sensor_presence.as_dict(),
+        "sensor_ranges": sensor_ranges.as_dict(),
+        "sensor_flatlines": sensor_flatlines.as_dict(),
+        "sensor_cadence": sensor_cadence.as_dict(),
+        "runtime_counters": runtime_counters.as_dict(),
+        "serial_silence": serial_silence.as_dict(),
+    }
     artifacts.write_summary(
         run_status,
         message=message,
         finished_at=finished_at,
-        extra={
-            "serial_lines_read": stats.lines_read,
-            "serial_bytes_read": stats.bytes_read,
-            "first_serial_line_elapsed_seconds": stats.first_line_elapsed_seconds,
-            "last_serial_line_elapsed_seconds": stats.last_line_elapsed_seconds,
-            "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
-            **stats.dev_metrics.as_dict(),
-            "keyword_alerts_count": stats.keyword_alerts_count,
-            "keyword_alerts": list(stats.keyword_alerts),
-            "sensor_samples_count": stats.sensor_samples_count,
-            "rules": rule_result.as_dict(),
-            "sensor_presence": sensor_presence.as_dict(),
-            "sensor_ranges": sensor_ranges.as_dict(),
-            "sensor_flatlines": sensor_flatlines.as_dict(),
-            "sensor_cadence": sensor_cadence.as_dict(),
-            "runtime_counters": runtime_counters.as_dict(),
-            "serial_silence": serial_silence.as_dict(),
-        },
+        extra=final_details,
     )
-    artifacts.write_report(run_status, message=message, finished_at=finished_at)
+    artifacts.write_report(
+        run_status,
+        message=message,
+        finished_at=finished_at,
+        details=final_details,
+    )
     if sensor_presence.status == "warn":
         typer.secho(
             f"Warning: {sensor_presence.message}",
