@@ -49,6 +49,14 @@ This checks the usual Urban sensor set:
 - `sds`: PM10 and PM2.5;
 - `ics-43434`: average and max noise.
 
+The same Urban expectations and rule thresholds can be loaded from a TOML
+profile:
+
+```bash
+uv run altruist-tester run --auto --duration 10m \
+  --config configs/urban.example.toml
+```
+
 Run with required Insight sensors:
 
 ```bash
@@ -64,6 +72,13 @@ This checks the usual Insight sensor set:
 
 Current firmware uses BME680 for temperature, humidity, and pressure only; the
 gas heater is disabled.
+
+Insight expectations and rule thresholds can also be loaded from a TOML profile:
+
+```bash
+uv run altruist-tester run --auto --duration 10m \
+  --config configs/insight.example.toml
+```
 
 `--expect-sensor` can be repeated. If any metric expected from those sensors is
 missing, the run is marked as failed and the command exits with code `1` after
@@ -84,6 +99,18 @@ uv run altruist-tester run --auto --duration 10m \
 configured, the run is still completed, but `summary.json` records a warning
 because the tester cannot know which sensors are mandatory for that device
 build.
+
+`--config` loads a TOML tester profile. Supported sections are:
+
+- `[expect]` for required `sensors` and `metrics`;
+- `[sensor_ranges.<metric>]` for sane min/max values;
+- `[range_checks]` for unknown range behavior;
+- `[flatline]` for stuck value thresholds;
+- `[cadence]` for update interval thresholds;
+- `[serial]` for serial silence thresholds.
+
+CLI `--expect-sensor` and `--expect-metric` values are added to expectations
+from the profile.
 
 The tester also checks whether parsed sensor values are stuck:
 

@@ -8,6 +8,7 @@ import typer
 
 from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
+from altruist_tester.config import ConfigError, load_tester_config
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
@@ -194,6 +195,18 @@ def run(
             resolve_path=False,
         ),
     ] = DEFAULT_OUTPUT_DIR,
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help="TOML tester profile with expected sensors and rule thresholds.",
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=False,
+        ),
+    ] = None,
     expected_sensor: Annotated[
         list[str] | None,
         typer.Option(
@@ -227,7 +240,13 @@ def run(
     except typer.BadParameter as exc:
         raise typer.BadParameter(str(exc), param_hint="--port") from exc
 
-    expected_sensors = tuple(expected_sensor or ())
+    try:
+        tester_config = load_tester_config(config)
+    except ConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--config") from exc
+
+    expected_sensors = (*tester_config.expected_sensors, *(expected_sensor or ()))
+    expected_metrics = (*tester_config.expected_metrics, *(expected_metric or ()))
     try:
         expected_metrics_for_sensors(expected_sensors)
     except UnknownExpectedSensorError as exc:
@@ -281,8 +300,21 @@ def run(
     rule_result = evaluate_rules(
         stats,
         RuleEngineConfig(
-            expected_metrics=tuple(expected_metric or ()),
+            expected_metrics=expected_metrics,
             expected_sensors=expected_sensors,
+            sensor_ranges=tester_config.sensor_ranges,
+            warn_on_unknown_ranges=tester_config.warn_on_unknown_ranges,
+            unknown_non_negative_metrics=tester_config.unknown_non_negative_metrics,
+            flatline_window_seconds=tester_config.flatline_window_seconds,
+            flatline_fail_after_seconds=tester_config.flatline_fail_after_seconds,
+            flatline_min_distinct_values=(tester_config.flatline_min_distinct_values),
+            cadence_expected_interval_seconds=(
+                tester_config.cadence_expected_interval_seconds
+            ),
+            cadence_warn_after_missed=tester_config.cadence_warn_after_missed,
+            cadence_fail_after_missed=tester_config.cadence_fail_after_missed,
+            silence_warn_after_seconds=tester_config.silence_warn_after_seconds,
+            silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
             reference_time=finished_at,
             max_tail_window_seconds=duration_seconds,
             duration_seconds=duration_seconds,
@@ -339,6 +371,7 @@ def run(
         artifacts.append_event("run_completed")
     final_details = {
         "verdict": rule_result.verdict,
+        "config": str(config) if config is not None else None,
         "metrics_seen": stats.dev_metrics.seen,
         "samples_seen": stats.sensor_samples_count > 0,
         "findings": [finding.as_dict() for finding in rule_result.findings],

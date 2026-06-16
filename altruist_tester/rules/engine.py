@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -11,7 +12,13 @@ from altruist_tester.rules.cadence import (
     SensorCadenceReport,
     check_sensor_cadence,
 )
-from altruist_tester.rules.defaults import SensorRangeReport, check_sensor_sample_ranges
+from altruist_tester.rules.defaults import (
+    DEFAULT_NON_NEGATIVE_METRICS,
+    DEFAULT_SENSOR_RANGES,
+    SensorRange,
+    SensorRangeReport,
+    check_sensor_sample_ranges,
+)
 from altruist_tester.rules.flatline import (
     SensorFlatlineFinding,
     SensorFlatlineReport,
@@ -33,6 +40,19 @@ class RuleEngineConfig:
 
     expected_metrics: tuple[str, ...] = ()
     expected_sensors: tuple[str, ...] = ()
+    sensor_ranges: Mapping[str, SensorRange] = field(
+        default_factory=lambda: dict(DEFAULT_SENSOR_RANGES)
+    )
+    warn_on_unknown_ranges: bool = False
+    unknown_non_negative_metrics: Collection[str] = DEFAULT_NON_NEGATIVE_METRICS
+    flatline_window_seconds: int = 30 * 60
+    flatline_fail_after_seconds: int = 60 * 60
+    flatline_min_distinct_values: int = 2
+    cadence_expected_interval_seconds: int = 5 * 60
+    cadence_warn_after_missed: int = 2
+    cadence_fail_after_missed: int = 4
+    silence_warn_after_seconds: int = 2 * 60
+    silence_fail_after_seconds: int = 10 * 60
     reference_time: datetime | None = None
     max_tail_window_seconds: int | None = None
     duration_seconds: int = 0
@@ -267,13 +287,28 @@ def evaluate_rules(
         expected_sensors=config.expected_sensors,
     )
     sensor_ranges = check_sensor_sample_ranges(
-        sample for records in stats.sensor_series.by_key.values() for sample in records
+        (
+            sample
+            for records in stats.sensor_series.by_key.values()
+            for sample in records
+        ),
+        ranges=config.sensor_ranges,
+        warn_on_unknown=config.warn_on_unknown_ranges,
+        unknown_non_negative_metrics=config.unknown_non_negative_metrics,
     )
-    sensor_flatlines = check_sensor_flatlines(stats.sensor_series)
+    sensor_flatlines = check_sensor_flatlines(
+        stats.sensor_series,
+        flatline_window_seconds=config.flatline_window_seconds,
+        flatline_fail_after_seconds=config.flatline_fail_after_seconds,
+        min_distinct_values=config.flatline_min_distinct_values,
+    )
     sensor_cadence = check_sensor_cadence(
         stats.sensor_series,
         reference_time=config.reference_time,
         max_tail_window_seconds=config.max_tail_window_seconds,
+        expected_interval_seconds=config.cadence_expected_interval_seconds,
+        warn_after_missed=config.cadence_warn_after_missed,
+        fail_after_missed=config.cadence_fail_after_missed,
     )
     runtime_counters = check_runtime_counters(stats.dev_metrics_records)
     serial_silence = check_serial_silence(
@@ -282,6 +317,8 @@ def evaluate_rules(
         first_line_elapsed_seconds=stats.first_line_elapsed_seconds,
         last_line_elapsed_seconds=stats.last_line_elapsed_seconds,
         max_interline_gap_seconds=stats.max_interline_gap_seconds,
+        warn_after_seconds=config.silence_warn_after_seconds,
+        fail_after_seconds=config.silence_fail_after_seconds,
     )
     reports = RuleEngineReports(
         sensor_presence=sensor_presence,

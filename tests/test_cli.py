@@ -536,6 +536,175 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
     assert summary["sensor_presence"]["missing_metrics"] == []
 
 
+def test_run_uses_expected_sensors_from_config(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    config_path = tmp_path / "urban.toml"
+    config_path.write_text(
+        """
+[expect]
+sensors = ["bme280", "sds", "ics-43434"]
+""",
+        encoding="utf-8",
+    )
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(
+            lines_read=2,
+            bytes_read=20,
+            sensor_samples_count=7,
+            sensor_series=_series_with_metrics(
+                "temperature",
+                "humidity",
+                "pressure",
+                "P1",
+                "P2",
+                "noiseAvg",
+                "noiseMax",
+            ),
+        )
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["config"] == str(config_path)
+    assert summary["sensor_presence"]["expected_sensors"] == [
+        "bme280",
+        "ics43434",
+        "sds",
+    ]
+    assert summary["sensor_presence"]["missing_metrics"] == []
+    assert f"- config: {config_path}" in (run_dir / "report.txt").read_text()
+
+
+def test_run_rejects_invalid_config_before_creating_artifacts(tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    config_path = tmp_path / "profile.toml"
+    config_path.write_text(
+        """
+[serial]
+silence_fail_after = "eventually"
+""",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "serial.silence_fail_after" in result.output
+    assert not output_dir.exists()
+
+
+def test_run_uses_serial_silence_thresholds_from_config(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    config_path = tmp_path / "profile.toml"
+    config_path.write_text(
+        """
+[serial]
+silence_warn_after = "2s"
+silence_fail_after = "4s"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        return SerialLogStats(lines_read=0, bytes_read=0)
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 1
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["serial_silence"]["status"] == "fail"
+    assert summary["serial_silence"]["findings"][0]["fail_after_seconds"] == 4
+
+
 def test_run_rejects_unknown_expected_sensor_before_creating_artifacts(tmp_path):
     port = tmp_path / "ttyACM0"
     port.touch()

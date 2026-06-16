@@ -93,6 +93,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
         [
             "",
             "Health:",
+            f"- config: {details.get('config') or 'built-in defaults'}",
             f"- dev metrics seen: {details.get('metrics_seen')}",
             f"- samples seen: {details.get('samples_seen')}",
             f"- serial lines: {details.get('serial_lines_read')}",

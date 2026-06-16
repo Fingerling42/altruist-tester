@@ -1,0 +1,56 @@
+[expect]
+sensors = ["bme280", "sds", "ics-43434"]
+metrics = []
+
+[range_checks]
+warn_on_unknown = false
+unknown_non_negative_metrics = ["aqi", "gas", "radiation"]
+
+[sensor_ranges.temperature]
+name = "temperature_c"
+minimum = -40.0
+maximum = 85.0
+
+[sensor_ranges.humidity]
+name = "humidity_percent"
+minimum = 0.0
+maximum = 100.0
+
+[sensor_ranges.pressure]
+name = "pressure_hpa"
+minimum = 850.0
+maximum = 1100.0
+
+[sensor_ranges.P1]
+name = "pm_ug_m3"
+minimum = 0.0
+maximum = 2000.0
+
+[sensor_ranges.P2]
+name = "pm_ug_m3"
+minimum = 0.0
+maximum = 2000.0
+
+[sensor_ranges.noiseAvg]
+name = "noise_dba"
+minimum = 20.0
+maximum = 130.0
+
+[sensor_ranges.noiseMax]
+name = "noise_dba"
+minimum = 20.0
+maximum = 130.0
+
+[flatline]
+window = "30m"
+fail_after = "1h"
+min_distinct_values = 2
+
+[cadence]
+expected_interval = "5m"
+warn_after_missed = 2
+fail_after_missed = 4
+
+[serial]
+silence_warn_after = "2m"
+silence_fail_after = "10m"
