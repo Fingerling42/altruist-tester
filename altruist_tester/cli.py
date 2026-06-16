@@ -10,19 +10,14 @@ from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
-from altruist_tester.rules.cadence import check_sensor_cadence
-from altruist_tester.rules.flatline import check_sensor_flatlines
+from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
 from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
-    check_sensor_presence,
     expected_metrics_for_sensors,
 )
-from altruist_tester.rules.runtime import check_runtime_counters
-from altruist_tester.rules.silence import check_serial_silence
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
-RUN_CHECK_FAILURE_STATUSES = frozenset({"fail"})
 
 app = typer.Typer(
     help=(
@@ -139,10 +134,6 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
         for port_info in port_infos:
             typer.echo(f"  {_format_port_info(port_info)}", err=True)
     raise typer.Exit(code=2)
-
-
-def _run_checks_failed(*statuses: str) -> bool:
-    return any(status in RUN_CHECK_FAILURE_STATUSES for status in statuses)
 
 
 def _append_check_message(message: str, check_message: str) -> str:
@@ -287,25 +278,22 @@ def run(
         raise typer.Exit(code=2) from exc
 
     finished_at = utc_now()
-    sensor_presence = check_sensor_presence(
-        stats.sensor_series,
-        expected_metrics=tuple(expected_metric or ()),
-        expected_sensors=expected_sensors,
+    rule_result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=tuple(expected_metric or ()),
+            expected_sensors=expected_sensors,
+            reference_time=finished_at,
+            max_tail_window_seconds=duration_seconds,
+            duration_seconds=duration_seconds,
+        ),
     )
-    sensor_flatlines = check_sensor_flatlines(stats.sensor_series)
-    sensor_cadence = check_sensor_cadence(
-        stats.sensor_series,
-        reference_time=finished_at,
-        max_tail_window_seconds=duration_seconds,
-    )
-    runtime_counters = check_runtime_counters(stats.dev_metrics_records)
-    serial_silence = check_serial_silence(
-        lines_read=stats.lines_read,
-        duration_seconds=duration_seconds,
-        first_line_elapsed_seconds=stats.first_line_elapsed_seconds,
-        last_line_elapsed_seconds=stats.last_line_elapsed_seconds,
-        max_interline_gap_seconds=stats.max_interline_gap_seconds,
-    )
+    sensor_presence = rule_result.reports.sensor_presence
+    sensor_ranges = rule_result.reports.sensor_ranges
+    sensor_flatlines = rule_result.reports.sensor_flatlines
+    sensor_cadence = rule_result.reports.sensor_cadence
+    runtime_counters = rule_result.reports.runtime_counters
+    serial_silence = rule_result.reports.serial_silence
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -326,47 +314,25 @@ def run(
         bytes_read=stats.bytes_read,
     )
     artifacts.append_event("sensor_presence_checked", **sensor_presence.as_dict())
+    artifacts.append_event(
+        "sensor_ranges_checked",
+        **sensor_ranges.as_dict(),
+    )
     artifacts.append_event("sensor_flatlines_checked", **sensor_flatlines.as_dict())
     artifacts.append_event("sensor_cadence_checked", **sensor_cadence.as_dict())
     artifacts.append_event("runtime_counters_checked", **runtime_counters.as_dict())
     artifacts.append_event("serial_silence_checked", **serial_silence.as_dict())
-    run_status = (
-        "failed"
-        if _run_checks_failed(
-            sensor_presence.status,
-            sensor_flatlines.status,
-            sensor_cadence.status,
-            runtime_counters.status,
-            serial_silence.status,
-        )
-        else "completed"
-    )
+    artifacts.append_event("rules_evaluated", **rule_result.as_dict())
+    run_status = "failed" if rule_result.verdict == "FAIL" else "completed"
     if run_status == "failed":
-        failed_checks = [
-            name
-            for name, status in (
-                ("sensor_presence", sensor_presence.status),
-                ("sensor_flatlines", sensor_flatlines.status),
-                ("sensor_cadence", sensor_cadence.status),
-                ("runtime_counters", runtime_counters.status),
-                ("serial_silence", serial_silence.status),
-            )
-            if status == "fail"
-        ]
         artifacts.append_event(
             "run_failed",
             reason="sensor_checks",
-            failed_checks=failed_checks,
+            failed_checks=list(rule_result.failed_checks),
             message="; ".join(
-                check_message
-                for check_message, status in (
-                    (sensor_presence.message, sensor_presence.status),
-                    (sensor_flatlines.message, sensor_flatlines.status),
-                    (sensor_cadence.message, sensor_cadence.status),
-                    (runtime_counters.message, runtime_counters.status),
-                    (serial_silence.message, serial_silence.status),
-                )
-                if status == "fail"
+                finding.message
+                for finding in rule_result.findings
+                if finding.severity == "fail"
             ),
         )
     else:
@@ -385,7 +351,9 @@ def run(
             "keyword_alerts_count": stats.keyword_alerts_count,
             "keyword_alerts": list(stats.keyword_alerts),
             "sensor_samples_count": stats.sensor_samples_count,
+            "rules": rule_result.as_dict(),
             "sensor_presence": sensor_presence.as_dict(),
+            "sensor_ranges": sensor_ranges.as_dict(),
             "sensor_flatlines": sensor_flatlines.as_dict(),
             "sensor_cadence": sensor_cadence.as_dict(),
             "runtime_counters": runtime_counters.as_dict(),

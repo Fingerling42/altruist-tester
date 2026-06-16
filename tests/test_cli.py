@@ -16,13 +16,25 @@ from altruist_tester.serial_logger import (
 
 def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
     series = SensorSampleSeries()
+    sample_values = {
+        "co2": 600.0,
+        "humidity": 45.0,
+        "noiseAvg": 45.0,
+        "noiseMax": 55.0,
+        "P1": 10.0,
+        "P2": 5.0,
+        "pm10": 10.0,
+        "pm25": 5.0,
+        "pressure": 1013.25,
+        "temperature": 24.0,
+    }
     for index, metric in enumerate(metrics):
         series.append(
             SensorSampleRecord(
                 ts=f"2026-06-05T12:00:{index:02d}.000Z",
                 sensor="sensor",
                 metric=metric,
-                value=float(index),
+                value=sample_values.get(metric, float(index)),
                 unit=None,
                 source="serial",
             )
@@ -303,6 +315,10 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["max_uptime_sec"] == 121
     assert summary["max_errors"] == {"wifi": 0, "sensor": 0, "sd": 0}
     assert summary["sensor_samples_count"] == 2
+    assert summary["rules"]["verdict"] == "WARN"
+    assert summary["rules"]["status"] == "warn"
+    assert summary["sensor_ranges"]["status"] == "ok"
+    assert summary["sensor_ranges"]["checked_samples_count"] == 2
     assert summary["serial_silence"]["status"] == "ok"
     assert summary["sensor_presence"]["status"] == "warn"
     assert summary["sensor_presence"]["observed_metrics"] == [
@@ -317,6 +333,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "serial_opened" in events_text
     assert "serial_capture_started" in events_text
     assert "serial_capture_completed" in events_text
+    assert "sensor_ranges_checked" in events_text
+    assert "rules_evaluated" in events_text
     assert "serial_line" not in events_text
     assert "Captured 1 serial lines" in (run_dir / "report.txt").read_text()
 
@@ -829,4 +847,6 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     assert summary["status"] == "failed"
     assert summary["serial_silence"]["status"] == "fail"
     assert summary["serial_silence"]["findings"][0]["code"] == "NO_SERIAL_OUTPUT"
+    assert summary["rules"]["verdict"] == "FAIL"
+    assert "serial_silence" in summary["rules"]["failed_checks"]
     assert "serial_silence_checked" in (run_dir / "events.jsonl").read_text()

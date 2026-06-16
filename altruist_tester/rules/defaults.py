@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -47,6 +47,47 @@ class SensorRangeCheck:
         """Return True when the value did not fail the range check."""
 
         return self.status != "fail"
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-friendly check result."""
+
+        return {
+            "status": self.status,
+            "metric": self.metric,
+            "value": self.value,
+            "rule": self.rule,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SensorRangeReport:
+    """Aggregate range sanity result for parsed sensor samples."""
+
+    status: RangeStatus
+    checked_samples_count: int
+    warning_count: int
+    failure_count: int
+    findings: tuple[SensorRangeCheck, ...]
+    message: str
+
+    @property
+    def ok(self) -> bool:
+        """Return True when the range check did not fail."""
+
+        return self.status != "fail"
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-friendly report."""
+
+        return {
+            "status": self.status,
+            "checked_samples_count": self.checked_samples_count,
+            "warning_count": self.warning_count,
+            "failure_count": self.failure_count,
+            "findings": [finding.as_dict() for finding in self.findings],
+            "message": self.message,
+        }
 
 
 DEFAULT_SENSOR_RANGES: dict[str, SensorRange] = {
@@ -184,4 +225,46 @@ def check_sensor_sample_range(
         ranges=ranges,
         warn_on_unknown=warn_on_unknown,
         unknown_non_negative_metrics=unknown_non_negative_metrics,
+    )
+
+
+def check_sensor_sample_ranges(
+    samples: Iterable[SensorSample | SensorSampleRecord],
+    *,
+    ranges: Mapping[str, SensorRange] = DEFAULT_SENSOR_RANGES,
+    warn_on_unknown: bool = False,
+    unknown_non_negative_metrics: Collection[str] = DEFAULT_NON_NEGATIVE_METRICS,
+) -> SensorRangeReport:
+    """Check parsed sensor samples against the default sanity ranges."""
+
+    checks = tuple(
+        check_sensor_sample_range(
+            sample,
+            ranges=ranges,
+            warn_on_unknown=warn_on_unknown,
+            unknown_non_negative_metrics=unknown_non_negative_metrics,
+        )
+        for sample in samples
+    )
+    findings = tuple(check for check in checks if check.status != "ok")
+    warning_count = sum(1 for finding in findings if finding.status == "warn")
+    failure_count = sum(1 for finding in findings if finding.status == "fail")
+
+    if failure_count:
+        status: RangeStatus = "fail"
+        message = f"{failure_count} sensor samples are outside sane ranges"
+    elif warning_count:
+        status = "warn"
+        message = f"{warning_count} sensor samples need range configuration"
+    else:
+        status = "ok"
+        message = "All parsed sensor samples are inside sane ranges"
+
+    return SensorRangeReport(
+        status=status,
+        checked_samples_count=len(checks),
+        warning_count=warning_count,
+        failure_count=failure_count,
+        findings=findings,
+        message=message,
     )

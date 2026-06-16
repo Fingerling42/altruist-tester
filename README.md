@@ -111,6 +111,11 @@ Serial output is checked for silence:
 - if no lines appear at all, the finding mentions that the device may still be
   in Wi-Fi AP/config portal mode.
 
+All health checks are evaluated through a central rules engine. It records a
+machine-readable `rules` block with a `PASS_CANDIDATE`, `WARN`, or `FAIL`
+verdict plus normalized findings. `FAIL` findings fail the run; `WARN` findings
+are preserved for diagnostics without changing the command exit code.
+
 ## Run Artifacts
 
 Each run creates a directory under `runs/` by default:
@@ -134,9 +139,10 @@ Important files:
 - `summary.json` contains the machine-readable run result.
 - `report.txt` contains a short human-readable summary.
 
-`summary.json` includes `sensor_presence`, `sensor_flatlines`, `sensor_cadence`,
-`runtime_counters`, and `serial_silence` sections with observed metrics, missing
-metrics, warning counts, failure counts, and detailed findings.
+`summary.json` includes `rules`, `sensor_presence`, `sensor_ranges`,
+`sensor_flatlines`, `sensor_cadence`, `runtime_counters`, and `serial_silence`
+sections with observed metrics, missing metrics, warning counts, failure counts,
+and detailed findings.
 
 While a run is active, the CLI prints live progress with elapsed time and
 counters for serial lines, bytes, current serial silence, dev metrics, sensor

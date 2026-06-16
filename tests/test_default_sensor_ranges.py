@@ -3,6 +3,7 @@ import math
 from altruist_tester.rules.defaults import (
     DEFAULT_SENSOR_RANGES,
     check_sensor_sample_range,
+    check_sensor_sample_ranges,
     check_sensor_value_range,
 )
 from altruist_tester.samples import SensorSample
@@ -79,3 +80,28 @@ def test_check_sensor_sample_range_uses_sample_metric_value_and_unit():
     assert result.status == "ok"
     assert result.rule == "pressure_hpa"
     assert result.value == 1010.691
+
+
+def test_check_sensor_sample_ranges_aggregates_non_ok_findings():
+    samples = [
+        SensorSample(
+            sensor="BME280",
+            metric="humidity",
+            value=45.0,
+            unit="%",
+        ),
+        SensorSample(
+            sensor="BME280",
+            metric="humidity",
+            value=120.0,
+            unit="%",
+        ),
+    ]
+
+    report = check_sensor_sample_ranges(samples)
+
+    assert report.status == "fail"
+    assert report.checked_samples_count == 2
+    assert report.failure_count == 1
+    assert len(report.findings) == 1
+    assert report.findings[0].message == "humidity=120 is outside humidity_percent"
