@@ -25,7 +25,7 @@ def parse_duration_seconds(value: str) -> int:
     if not match:
         raise DurationParseError(
             "Duration must be a positive integer followed by s, m, or h, "
-                "for example 30s, 10m, or 24h."
+            "for example 30s, 10m, or 24h."
         )
 
     amount = int(match.group("value"))

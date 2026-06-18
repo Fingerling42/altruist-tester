@@ -13,6 +13,8 @@ from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_
 from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
 
+Number = int | float
+
 
 class SerialReader(Protocol):
     """Minimal serial reader protocol used by the logger."""
@@ -110,7 +112,7 @@ def _decode_serial_line(line: bytes) -> str:
     return line.decode("utf-8", errors="replace").rstrip("\r\n")
 
 
-def _min_optional(current: int | float | None, value: int | float | None):
+def _min_optional(current: Number | None, value: Number | None) -> Number | None:
     if value is None:
         return current
     if current is None:
@@ -118,7 +120,7 @@ def _min_optional(current: int | float | None, value: int | float | None):
     return min(current, value)
 
 
-def _max_optional(current: int | float | None, value: int | float | None):
+def _max_optional(current: Number | None, value: Number | None) -> Number | None:
     if value is None:
         return current
     if current is None:
@@ -182,6 +184,18 @@ def _append_sensor_samples(
         series.append(record)
         appended_samples.append(record)
     return tuple(appended_samples)
+
+
+def _append_dev_metrics(
+    artifacts: RunArtifacts,
+    metrics: DevMetrics,
+    records: list[dict[str, object]],
+    summary: DevMetricsSummary,
+) -> DevMetricsSummary:
+    payload = metrics.as_event_payload()
+    event = artifacts.append_event("dev_metrics", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_dev_metrics_summary(summary, metrics, event["ts"])
 
 
 def _build_progress(
@@ -302,16 +316,11 @@ def capture_raw_serial(
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
-                event = artifacts.append_event(
-                    "dev_metrics", **metrics.as_event_payload()
-                )
-                metrics_records.append(
-                    {"ts": event["ts"], **metrics.as_event_payload()}
-                )
-                metrics_summary = _update_dev_metrics_summary(
-                    metrics_summary,
+                metrics_summary = _append_dev_metrics(
+                    artifacts,
                     metrics,
-                    event["ts"],
+                    metrics_records,
+                    metrics_summary,
                 )
 
             if now >= next_progress_at:
@@ -320,16 +329,11 @@ def capture_raw_serial(
 
     trailing_metrics = metrics_parser.finish()
     if trailing_metrics is not None:
-        event = artifacts.append_event(
-            "dev_metrics", **trailing_metrics.as_event_payload()
-        )
-        metrics_records.append(
-            {"ts": event["ts"], **trailing_metrics.as_event_payload()}
-        )
-        metrics_summary = _update_dev_metrics_summary(
-            metrics_summary,
+        metrics_summary = _append_dev_metrics(
+            artifacts,
             trailing_metrics,
-            event["ts"],
+            metrics_records,
+            metrics_summary,
         )
 
     emit_progress(clock(), complete=True)

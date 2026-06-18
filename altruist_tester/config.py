@@ -48,30 +48,6 @@ class TesterConfig:
 
         return cls()
 
-    def with_expected(
-        self,
-        *,
-        sensors: tuple[str, ...],
-        metrics: tuple[str, ...],
-    ) -> TesterConfig:
-        """Return a copy with extra expected sensors and metrics appended."""
-
-        return TesterConfig(
-            expected_sensors=(*self.expected_sensors, *sensors),
-            expected_metrics=(*self.expected_metrics, *metrics),
-            sensor_ranges=self.sensor_ranges,
-            warn_on_unknown_ranges=self.warn_on_unknown_ranges,
-            unknown_non_negative_metrics=self.unknown_non_negative_metrics,
-            flatline_window_seconds=self.flatline_window_seconds,
-            flatline_fail_after_seconds=self.flatline_fail_after_seconds,
-            flatline_min_distinct_values=self.flatline_min_distinct_values,
-            cadence_expected_interval_seconds=self.cadence_expected_interval_seconds,
-            cadence_warn_after_missed=self.cadence_warn_after_missed,
-            cadence_fail_after_missed=self.cadence_fail_after_missed,
-            silence_warn_after_seconds=self.silence_warn_after_seconds,
-            silence_fail_after_seconds=self.silence_fail_after_seconds,
-        )
-
 
 def _require_mapping(value: object, name: str) -> Mapping[str, Any]:
     if not isinstance(value, dict):

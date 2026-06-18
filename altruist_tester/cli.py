@@ -1,17 +1,22 @@
 """Command line interface for the Altruist tester."""
 
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 import serial
 import typer
 
 from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
-from altruist_tester.config import ConfigError, load_tester_config
+from altruist_tester.config import ConfigError, TesterConfig, load_tester_config
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
-from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
+from altruist_tester.rules.engine import (
+    RuleEngineConfig,
+    RuleEngineResult,
+    evaluate_rules,
+)
 from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
     expected_metrics_for_sensors,
@@ -19,6 +24,14 @@ from altruist_tester.rules.presence import (
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
+
+
+class RuleReportMessage(Protocol):
+    """Report subset used for CLI status output."""
+
+    status: str
+    message: str
+
 
 app = typer.Typer(
     help=(
@@ -139,6 +152,69 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
 
 def _append_check_message(message: str, check_message: str) -> str:
     return f"{message} {check_message}."
+
+
+def _rule_engine_config(
+    tester_config: TesterConfig,
+    *,
+    expected_sensors: tuple[str, ...],
+    expected_metrics: tuple[str, ...],
+    finished_at: datetime,
+    duration_seconds: int,
+) -> RuleEngineConfig:
+    return RuleEngineConfig(
+        expected_metrics=expected_metrics,
+        expected_sensors=expected_sensors,
+        sensor_ranges=tester_config.sensor_ranges,
+        warn_on_unknown_ranges=tester_config.warn_on_unknown_ranges,
+        unknown_non_negative_metrics=tester_config.unknown_non_negative_metrics,
+        flatline_window_seconds=tester_config.flatline_window_seconds,
+        flatline_fail_after_seconds=tester_config.flatline_fail_after_seconds,
+        flatline_min_distinct_values=tester_config.flatline_min_distinct_values,
+        cadence_expected_interval_seconds=(
+            tester_config.cadence_expected_interval_seconds
+        ),
+        cadence_warn_after_missed=tester_config.cadence_warn_after_missed,
+        cadence_fail_after_missed=tester_config.cadence_fail_after_missed,
+        silence_warn_after_seconds=tester_config.silence_warn_after_seconds,
+        silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
+        reference_time=finished_at,
+        max_tail_window_seconds=duration_seconds,
+        duration_seconds=duration_seconds,
+    )
+
+
+def _report_messages(rule_result: RuleEngineResult) -> tuple[RuleReportMessage, ...]:
+    reports = rule_result.reports
+    return (
+        reports.sensor_presence,
+        reports.sensor_flatlines,
+        reports.sensor_cadence,
+        reports.runtime_counters,
+        reports.serial_silence,
+    )
+
+
+def _append_failed_report_messages(
+    message: str,
+    reports: tuple[RuleReportMessage, ...],
+) -> str:
+    for report in reports:
+        if report.status == "fail":
+            message = _append_check_message(message, report.message)
+    return message
+
+
+def _emit_report_messages(reports: tuple[RuleReportMessage, ...]) -> None:
+    for report in reports:
+        if report.status == "warn":
+            typer.secho(
+                f"Warning: {report.message}",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+        elif report.status == "fail":
+            typer.secho(report.message, fg=typer.colors.RED, err=True)
 
 
 @app.command()
@@ -299,24 +375,11 @@ def run(
     finished_at = utc_now()
     rule_result = evaluate_rules(
         stats,
-        RuleEngineConfig(
-            expected_metrics=expected_metrics,
+        _rule_engine_config(
+            tester_config,
             expected_sensors=expected_sensors,
-            sensor_ranges=tester_config.sensor_ranges,
-            warn_on_unknown_ranges=tester_config.warn_on_unknown_ranges,
-            unknown_non_negative_metrics=tester_config.unknown_non_negative_metrics,
-            flatline_window_seconds=tester_config.flatline_window_seconds,
-            flatline_fail_after_seconds=tester_config.flatline_fail_after_seconds,
-            flatline_min_distinct_values=(tester_config.flatline_min_distinct_values),
-            cadence_expected_interval_seconds=(
-                tester_config.cadence_expected_interval_seconds
-            ),
-            cadence_warn_after_missed=tester_config.cadence_warn_after_missed,
-            cadence_fail_after_missed=tester_config.cadence_fail_after_missed,
-            silence_warn_after_seconds=tester_config.silence_warn_after_seconds,
-            silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
-            reference_time=finished_at,
-            max_tail_window_seconds=duration_seconds,
+            expected_metrics=expected_metrics,
+            finished_at=finished_at,
             duration_seconds=duration_seconds,
         ),
     )
@@ -330,16 +393,8 @@ def run(
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
     )
-    if sensor_presence.status == "fail":
-        message = _append_check_message(message, sensor_presence.message)
-    if sensor_flatlines.status == "fail":
-        message = _append_check_message(message, sensor_flatlines.message)
-    if sensor_cadence.status == "fail":
-        message = _append_check_message(message, sensor_cadence.message)
-    if runtime_counters.status == "fail":
-        message = _append_check_message(message, runtime_counters.message)
-    if serial_silence.status == "fail":
-        message = _append_check_message(message, serial_silence.message)
+    report_messages = _report_messages(rule_result)
+    message = _append_failed_report_messages(message, report_messages)
     artifacts.append_event(
         "serial_capture_completed",
         lines_read=stats.lines_read,
@@ -405,46 +460,7 @@ def run(
         finished_at=finished_at,
         details=final_details,
     )
-    if sensor_presence.status == "warn":
-        typer.secho(
-            f"Warning: {sensor_presence.message}",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    if sensor_flatlines.status == "warn":
-        typer.secho(
-            f"Warning: {sensor_flatlines.message}",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    if sensor_cadence.status == "warn":
-        typer.secho(
-            f"Warning: {sensor_cadence.message}",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    if runtime_counters.status == "warn":
-        typer.secho(
-            f"Warning: {runtime_counters.message}",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    if serial_silence.status == "warn":
-        typer.secho(
-            f"Warning: {serial_silence.message}",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-    if sensor_presence.status == "fail":
-        typer.secho(sensor_presence.message, fg=typer.colors.RED, err=True)
-    if sensor_flatlines.status == "fail":
-        typer.secho(sensor_flatlines.message, fg=typer.colors.RED, err=True)
-    if sensor_cadence.status == "fail":
-        typer.secho(sensor_cadence.message, fg=typer.colors.RED, err=True)
-    if runtime_counters.status == "fail":
-        typer.secho(runtime_counters.message, fg=typer.colors.RED, err=True)
-    if serial_silence.status == "fail":
-        typer.secho(serial_silence.message, fg=typer.colors.RED, err=True)
+    _emit_report_messages(report_messages)
     if run_status == "failed":
         raise typer.Exit(code=1)
     typer.echo(
