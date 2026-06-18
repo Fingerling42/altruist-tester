@@ -133,8 +133,8 @@ def _coerce_finite_number(value: Any) -> float | None:
 
 
 def _normalise_metric_value(metric: str, value: float, unit: str | None) -> float:
-    # Current firmware labels pressure as hPa while emitting Pa-like values.
-    if metric == "pressure" and unit == "hPa" and value > 2000.0:
+    # Current firmware may emit pressure in Pa or label Pa-like values as hPa.
+    if metric == "pressure" and unit in {"Pa", "hPa"} and value > 2000.0:
         return value / 100.0
     return value
 

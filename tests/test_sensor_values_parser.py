@@ -63,6 +63,39 @@ def test_parse_datalog_line_supports_all_firmware_aliases():
     ]
 
 
+def test_parse_sensor_json_snapshot_with_uart_text_around_it():
+    line = (
+        '[123] [INFO] prefix {"SCD4x":{"co2":{"value":612,'
+        '"intl_name":"CO2","units":"ppm"}}}[124] [INFO] suffix'
+    )
+
+    samples = parse_sensor_values(line)
+
+    parsed = [
+        (sample.sensor, sample.metric, sample.value, sample.unit) for sample in samples
+    ]
+    assert parsed == [
+        ("SCD4x", "co2", 612.0, "ppm"),
+    ]
+
+
+def test_parse_concatenated_sensor_json_snapshots():
+    line = (
+        '{"SCD4x":{"co2":{"value":612,"units":"ppm"}}}'
+        '{"BME680":{"pressure":{"value":101325,"units":"Pa"}}}'
+    )
+
+    samples = parse_sensor_values(line)
+
+    parsed = [
+        (sample.sensor, sample.metric, sample.value, sample.unit) for sample in samples
+    ]
+    assert parsed == [
+        ("SCD4x", "co2", 612.0, "ppm"),
+        ("BME680", "pressure", 101325.0, "Pa"),
+    ]
+
+
 def test_parse_sensor_values_ignores_non_sensor_lines_and_bad_json():
     assert parse_sensor_values("=== [URBAN] METRICS ===") == []
     assert parse_sensor_values('{"service_data":{"signal_strength":-40}}') == []

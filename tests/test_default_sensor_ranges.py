@@ -82,6 +82,21 @@ def test_check_sensor_sample_range_uses_sample_metric_value_and_unit():
     assert result.value == 1010.691
 
 
+def test_check_sensor_sample_range_normalizes_pascal_pressure_values():
+    sample = SensorSample(
+        sensor="BME680",
+        metric="pressure",
+        value=101325.0,
+        unit="Pa",
+    )
+
+    result = check_sensor_sample_range(sample)
+
+    assert result.status == "ok"
+    assert result.rule == "pressure_hpa"
+    assert result.value == 1013.25
+
+
 def test_check_sensor_sample_ranges_aggregates_non_ok_findings():
     samples = [
         SensorSample(

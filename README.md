@@ -186,8 +186,8 @@ samples, and keyword alerts.
 - Durations support values such as `30s`, `10m`, `2h`, and `24h`.
 - If the device is still in Wi-Fi setup/AP mode, current firmware may not print
   useful serial logs. Configure Wi-Fi before using the run as a burn-in signal.
-- Current firmware sensor logs may label pressure as `hPa` while emitting
-  Pa-like values. Range checks normalize this format internally.
+- Current firmware sensor logs may emit pressure as `Pa` or label Pa-like
+  values as `hPa`. Range checks normalize both forms to `hPa` internally.
 
 ## Development
 

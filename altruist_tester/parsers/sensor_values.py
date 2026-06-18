@@ -33,6 +33,8 @@ _DATALOG_ALIASES = {
     "ea": ("epa_aqi", None),
 }
 
+_JSON_DECODER = json.JSONDecoder()
+
 
 def _finite_float(value: Any) -> float | None:
     if isinstance(value, bool):
@@ -46,14 +48,7 @@ def _finite_float(value: Any) -> float | None:
     return parsed
 
 
-def _parse_json_sensor_snapshot(line: str) -> list[SensorSample]:
-    if not line.startswith("{"):
-        return []
-
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return []
+def _samples_from_json_payload(payload: Any) -> list[SensorSample]:
     if not isinstance(payload, dict):
         return []
 
@@ -79,6 +74,22 @@ def _parse_json_sensor_snapshot(line: str) -> list[SensorSample]:
                     unit=None if unit_value is None else str(unit_value),
                 )
             )
+
+    return samples
+
+
+def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
+    samples: list[SensorSample] = []
+    start = line.find("{")
+    while start != -1:
+        try:
+            payload, end = _JSON_DECODER.raw_decode(line, start)
+        except json.JSONDecodeError:
+            start = line.find("{", start + 1)
+            continue
+
+        samples.extend(_samples_from_json_payload(payload))
+        start = line.find("{", end)
 
     return samples
 
@@ -112,7 +123,7 @@ def _parse_datalog_line(line: str) -> list[SensorSample]:
 def parse_sensor_values(line: str) -> list[SensorSample]:
     """Parse zero or more sensor samples from one serial line."""
 
-    json_samples = _parse_json_sensor_snapshot(line)
+    json_samples = _parse_json_sensor_snapshots(line)
     if json_samples:
         return json_samples
     return _parse_datalog_line(line)
