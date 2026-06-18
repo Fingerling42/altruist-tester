@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 from typer.testing import CliRunner
@@ -12,6 +13,8 @@ from altruist_tester.serial_logger import (
     SerialLogProgress,
     SerialLogStats,
 )
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
@@ -107,6 +110,12 @@ def _patch_cli_capture(
     )
 
 
+def _plain_output(result) -> str:
+    """Return CLI output without terminal styling escape sequences."""
+
+    return _ANSI_ESCAPE_RE.sub("", result.output)
+
+
 def test_package_version_is_available():
     assert isinstance(__version__, str)
     assert __version__
@@ -194,7 +203,7 @@ def test_run_rejects_missing_serial_port(tmp_path):
     )
 
     assert result.exit_code == 2
-    assert "Serial port does not exist: /dev/not-real" in result.output
+    assert "Serial port does not exist: /dev/not-real" in _plain_output(result)
     run_dirs = list(output_dir.iterdir())
     assert len(run_dirs) == 1
 
@@ -216,14 +225,14 @@ def test_run_rejects_invalid_duration_before_opening_port():
     )
 
     assert result.exit_code == 2
-    assert "Duration must be a positive integer" in result.output
+    assert "Duration must be a positive integer" in _plain_output(result)
 
 
 def test_run_requires_port_or_auto():
     result = CliRunner().invoke(app, ["run", "--duration", "5s"])
 
     assert result.exit_code == 2
-    assert "Specify --port or --auto" in result.output
+    assert "Specify --port or --auto" in _plain_output(result)
 
 
 def test_run_rejects_port_with_auto(tmp_path):
@@ -236,7 +245,7 @@ def test_run_rejects_port_with_auto(tmp_path):
     )
 
     assert result.exit_code == 2
-    assert "Use either --port or --auto" in result.output
+    assert "Use either --port or --auto" in _plain_output(result)
 
 
 def test_run_auto_rejects_missing_detected_ports(monkeypatch):
@@ -245,7 +254,7 @@ def test_run_auto_rejects_missing_detected_ports(monkeypatch):
     result = CliRunner().invoke(app, ["run", "--auto", "--duration", "5s"])
 
     assert result.exit_code == 2
-    assert "No serial ports found" in result.output
+    assert "No serial ports found" in _plain_output(result)
 
 
 def test_run_auto_rejects_multiple_detected_ports(monkeypatch):
@@ -260,9 +269,10 @@ def test_run_auto_rejects_multiple_detected_ports(monkeypatch):
     result = CliRunner().invoke(app, ["run", "--auto", "--duration", "5s"])
 
     assert result.exit_code == 2
-    assert "Multiple serial ports found" in result.output
-    assert "/dev/ttyACM0" in result.output
-    assert "/dev/ttyUSB0" in result.output
+    plain_output = _plain_output(result)
+    assert "Multiple serial ports found" in plain_output
+    assert "/dev/ttyACM0" in plain_output
+    assert "/dev/ttyUSB0" in plain_output
 
 
 def test_run_accepts_valid_options(monkeypatch, tmp_path):
@@ -604,7 +614,7 @@ silence_fail_after = "eventually"
     )
 
     assert result.exit_code == 2
-    assert "serial.silence_fail_after" in result.output
+    assert "serial.silence_fail_after" in _plain_output(result)
     assert not output_dir.exists()
 
 
@@ -670,7 +680,7 @@ def test_run_rejects_unknown_expected_sensor_before_creating_artifacts(tmp_path)
     )
 
     assert result.exit_code == 2
-    assert "Unknown expected sensor 'not-a-sensor'" in result.output
+    assert "Unknown expected sensor 'not-a-sensor'" in _plain_output(result)
     assert not output_dir.exists()
 
 
@@ -711,7 +721,7 @@ def test_run_fails_when_expected_metric_is_missing(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "Missing expected sensor metrics: pm25" in result.output
+    assert "Missing expected sensor metrics: pm25" in _plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
@@ -754,7 +764,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "sensor metric series failed flatline checks" in result.output
+    assert "sensor metric series failed flatline checks" in _plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
@@ -799,7 +809,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     )
 
     assert result.exit_code == 1
-    assert "sensor metric series missed too many updates" in result.output
+    assert "sensor metric series missed too many updates" in _plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
@@ -842,7 +852,7 @@ def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "runtime counter checks failed" in result.output
+    assert "runtime counter checks failed" in _plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
@@ -876,7 +886,7 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "serial silence checks failed" in result.output
+    assert "serial silence checks failed" in _plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
