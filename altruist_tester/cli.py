@@ -43,6 +43,8 @@ app = typer.Typer(
 
 
 def version_callback(value: bool) -> None:
+    """Print the package version for Typer's eager ``--version`` option."""
+
     if value:
         typer.echo(f"altruist-tester {__version__}")
         raise typer.Exit()
@@ -219,7 +221,7 @@ def _emit_report_messages(reports: tuple[RuleReportMessage, ...]) -> None:
 
 @app.command()
 def ports() -> None:
-    """List detected serial ports."""
+    """List likely USB serial ports detected on the host."""
 
     _print_ports(list_serial_ports())
 
@@ -304,7 +306,12 @@ def run(
         ),
     ] = None,
 ) -> None:
-    """Run a USB-C serial burn-in test for one device."""
+    """Run a USB-C serial burn-in test for one device.
+
+    The command captures raw UART output, parses health observations, evaluates
+    all rules, and writes run artifacts under ``--output-dir``. A failed health
+    verdict exits with code 1; CLI/config/serial-open failures exit with code 2.
+    """
 
     try:
         duration_seconds = parse_duration_seconds(duration)
@@ -328,6 +335,8 @@ def run(
     except UnknownExpectedSensorError as exc:
         raise typer.BadParameter(str(exc), param_hint="--expect-sensor") from exc
 
+    # Create run artifacts only after static CLI/config validation; from this
+    # point on, hardware failures are part of the run record.
     artifacts = create_run_artifacts(
         output_dir,
         port=resolved_port,

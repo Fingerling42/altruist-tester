@@ -107,6 +107,8 @@ def _effective_reference_time(
     if max_tail_window_seconds is None:
         return reference_time
 
+    # The final sample may be much older than the wall clock when old artifacts
+    # are re-evaluated; cap tail-gap checks to the capture duration.
     latest_sample_time = timestamps[-1]
     max_reference_time = latest_sample_time + timedelta(seconds=max_tail_window_seconds)
     return min(reference_time, max_reference_time)
@@ -141,7 +143,12 @@ def check_series_cadence(
     warn_after_missed: int = DEFAULT_WARN_AFTER_MISSED,
     fail_after_missed: int = DEFAULT_FAIL_AFTER_MISSED,
 ) -> SensorCadenceFinding:
-    """Check one sensor metric series update cadence."""
+    """Check one sensor metric series update cadence.
+
+    Gaps between samples and the optional tail gap to ``reference_time`` are
+    compared against missed-update thresholds derived from
+    ``expected_interval_seconds``.
+    """
 
     timestamps = _record_timestamps(records)
     effective_reference_time = _effective_reference_time(
@@ -238,7 +245,11 @@ def check_sensor_cadence(
     warn_after_missed: int = DEFAULT_WARN_AFTER_MISSED,
     fail_after_missed: int = DEFAULT_FAIL_AFTER_MISSED,
 ) -> SensorCadenceReport:
-    """Check all sensor metric series update cadence."""
+    """Check all sensor metric series update cadence.
+
+    Returns one finding per observed sensor/metric time series and an aggregate
+    status based on the worst finding.
+    """
 
     findings = tuple(
         check_series_cadence(

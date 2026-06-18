@@ -10,7 +10,7 @@ from serial.tools import list_ports
 
 @dataclass(frozen=True, slots=True)
 class SerialPortInfo:
-    """Human-readable serial port metadata."""
+    """Human-readable metadata for one detected USB serial port."""
 
     device: str
     description: str | None = None
@@ -39,7 +39,11 @@ def _is_usb_serial_candidate(device: str) -> bool:
 
 
 def list_serial_ports() -> list[SerialPortInfo]:
-    """List detected serial ports."""
+    """List likely USB serial ports in deterministic order.
+
+    The tester only auto-discovers common USB CDC/serial device names. Callers
+    can still pass any explicit port path to the CLI with ``--port``.
+    """
 
     ports = [
         SerialPortInfo(

@@ -149,7 +149,12 @@ def _check_non_increasing(
 def check_runtime_counters(
     records: Sequence[dict[str, object]],
 ) -> RuntimeCounterReport:
-    """Check monotonic uptime and boot counter values."""
+    """Check monotonic uptime and boot counter values.
+
+    Uptime must not decrease during one run, and the firmware boot counter is
+    expected to stay constant. Missing development metrics produce a warning
+    because runtime continuity cannot be verified.
+    """
 
     boot_values = _metric_values(records, "boot")
     uptime_values = _metric_values(records, "uptime_sec")

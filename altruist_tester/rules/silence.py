@@ -145,7 +145,12 @@ def check_serial_silence(
     warn_after_seconds: int = DEFAULT_SILENCE_WARN_AFTER_SECONDS,
     fail_after_seconds: int = DEFAULT_SILENCE_FAIL_AFTER_SECONDS,
 ) -> SerialSilenceReport:
-    """Check whether serial output went silent for too long."""
+    """Check whether serial output went silent for too long.
+
+    The check considers initial silence, gaps between received lines, and tail
+    silence after the final line. A run with no serial output is handled as one
+    silence interval spanning the full duration.
+    """
 
     findings: list[SerialSilenceFinding] = []
     bounded_duration = max(0, duration_seconds)

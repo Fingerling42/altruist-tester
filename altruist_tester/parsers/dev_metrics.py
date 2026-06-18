@@ -24,7 +24,7 @@ _FOOTER_PREFIX = "=========================="
 
 @dataclass(frozen=True, slots=True)
 class DevMetricsErrors:
-    """Error counters from one metrics block."""
+    """Error counters from one development metrics block."""
 
     wifi: int | None = None
     sensor: int | None = None
@@ -42,7 +42,12 @@ class DevMetricsErrors:
 
 @dataclass(frozen=True, slots=True)
 class DevMetrics:
-    """Parsed development firmware metrics."""
+    """Parsed development firmware metrics.
+
+    Fields are optional because serial capture can start or stop in the middle
+    of a metrics block, and firmware revisions may add or omit individual
+    lines.
+    """
 
     model: str | None = None
     status: str | None = None
@@ -73,7 +78,12 @@ class DevMetrics:
 
 
 def parse_dev_metrics_block(lines: Iterable[str]) -> DevMetrics | None:
-    """Parse one metrics block from development firmware output."""
+    """Parse one metrics block from development firmware output.
+
+    :param lines: Lines from one ``=== [MODEL] METRICS ===`` block.
+    :returns: Parsed metrics when a block header is present, otherwise
+        ``None``.
+    """
 
     model: str | None = None
     status: str | None = None
@@ -151,7 +161,11 @@ def parse_dev_metrics_block(lines: Iterable[str]) -> DevMetrics | None:
 
 
 def parse_dev_metrics_blocks(lines: Iterable[str]) -> list[DevMetrics]:
-    """Parse all complete or trailing metrics blocks from a line stream."""
+    """Parse all complete or trailing metrics blocks from a line stream.
+
+    A new block header closes the previous block, and a trailing block is
+    parsed even without the footer so captures do not lose the last snapshot.
+    """
 
     metrics: list[DevMetrics] = []
     current_block: list[str] | None = None
@@ -159,6 +173,8 @@ def parse_dev_metrics_blocks(lines: Iterable[str]) -> list[DevMetrics]:
     for raw_line in lines:
         line = raw_line.rstrip("\r\n")
         if _HEADER_RE.match(line):
+            # A new header closes the previous block even if the footer was
+            # dropped or the capture started/stopped mid-print.
             if current_block:
                 parsed = parse_dev_metrics_block(current_block)
                 if parsed is not None:
@@ -185,16 +201,26 @@ def parse_dev_metrics_blocks(lines: Iterable[str]) -> list[DevMetrics]:
 
 
 class DevMetricsStreamParser:
-    """Incrementally parse metrics blocks from serial lines."""
+    """Incrementally parse metrics blocks from serial lines.
+
+    Use this parser during live serial capture. It returns a ``DevMetrics``
+    object only when a block boundary is reached.
+    """
 
     def __init__(self) -> None:
         self._current_block: list[str] | None = None
 
     def feed(self, line: str) -> DevMetrics | None:
-        """Feed one decoded serial line and return metrics when a block closes."""
+        """Feed one decoded serial line.
+
+        :returns: Parsed metrics when the previous or current block closes,
+            otherwise ``None``.
+        """
 
         line = line.rstrip("\r\n")
         if _HEADER_RE.match(line):
+            # Treat a fresh header as an implicit boundary so a missing footer
+            # does not make us discard the previous metrics snapshot.
             parsed: DevMetrics | None = None
             if self._current_block:
                 parsed = parse_dev_metrics_block(self._current_block)
@@ -217,6 +243,8 @@ class DevMetricsStreamParser:
         if not self._current_block:
             return None
 
+        # Serial capture can end between the header and footer; keep whatever
+        # complete fields were already printed in that final block.
         parsed = parse_dev_metrics_block(self._current_block)
         self._current_block = None
         return parsed

@@ -156,7 +156,12 @@ def check_sensor_value_range(
     warn_on_unknown: bool = False,
     unknown_non_negative_metrics: Collection[str] = DEFAULT_NON_NEGATIVE_METRICS,
 ) -> SensorRangeCheck:
-    """Check one sensor metric value against the default sanity ranges."""
+    """Check one sensor metric value against sanity ranges.
+
+    Non-finite values are failures. Unknown finite metrics pass by default, or
+    warn when ``warn_on_unknown`` is enabled. Unknown metrics whose names look
+    non-negative-only fail when the value is negative.
+    """
 
     numeric_value = _coerce_finite_number(value)
     if numeric_value is None:
@@ -216,7 +221,7 @@ def check_sensor_sample_range(
     warn_on_unknown: bool = False,
     unknown_non_negative_metrics: Collection[str] = DEFAULT_NON_NEGATIVE_METRICS,
 ) -> SensorRangeCheck:
-    """Check one parsed sensor sample against the default sanity ranges."""
+    """Check one parsed sensor sample against sanity ranges."""
 
     return check_sensor_value_range(
         sample.metric,
@@ -235,7 +240,11 @@ def check_sensor_sample_ranges(
     warn_on_unknown: bool = False,
     unknown_non_negative_metrics: Collection[str] = DEFAULT_NON_NEGATIVE_METRICS,
 ) -> SensorRangeReport:
-    """Check parsed sensor samples against the default sanity ranges."""
+    """Check parsed sensor samples against sanity ranges.
+
+    Returns an aggregate report containing only non-OK findings, plus total
+    counts for checked samples, warnings, and failures.
+    """
 
     checks = tuple(
         check_sensor_sample_range(

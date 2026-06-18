@@ -17,7 +17,11 @@ Number = int | float
 
 
 class SerialReader(Protocol):
-    """Minimal serial reader protocol used by the logger."""
+    """Minimal serial reader protocol used by the logger.
+
+    ``serial.Serial`` satisfies this protocol, and tests can provide a fake
+    object that returns bytes from ``readline``.
+    """
 
     def readline(self) -> bytes:
         """Read one line from the serial stream."""
@@ -25,7 +29,11 @@ class SerialReader(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DevMetricsSummary:
-    """Aggregate parsed development metrics for a run."""
+    """Aggregate parsed development metrics for a run.
+
+    The summary keeps min/max values needed by reports while
+    ``dev_metrics_records`` keeps the individual snapshots for runtime rules.
+    """
 
     count: int = 0
     first_seen: str | None = None
@@ -70,7 +78,11 @@ class DevMetricsSummary:
 
 @dataclass(frozen=True, slots=True)
 class SerialLogStats:
-    """Summary of one raw serial logging session."""
+    """Summary of one raw serial logging session.
+
+    The object is passed to the rules engine after capture and contains both
+    raw serial counters and parsed health observations.
+    """
 
     lines_read: int
     bytes_read: int
@@ -87,7 +99,11 @@ class SerialLogStats:
 
 @dataclass(frozen=True, slots=True)
 class SerialLogProgress:
-    """Point-in-time progress for one raw serial logging session."""
+    """Point-in-time progress for one raw serial logging session.
+
+    Instances are emitted to the optional progress callback while capture is
+    running and once more with ``complete=True`` at the end.
+    """
 
     elapsed_seconds: float
     duration_seconds: int
@@ -240,7 +256,24 @@ def capture_raw_serial(
     progress_callback: Callable[[SerialLogProgress], None] | None = None,
     progress_interval_seconds: float = 1.0,
 ) -> SerialLogStats:
-    """Capture raw serial output until the requested duration elapses."""
+    """Capture raw serial output until the requested duration elapses.
+
+    Every received byte is appended to ``serial.log``. Decoded lines are also
+    parsed for keyword alerts, development metrics blocks, and sensor samples;
+    those structured observations are written to ``events.jsonl`` or
+    ``samples.jsonl`` as appropriate.
+
+    :param serial_port: Object with a ``readline`` method returning bytes.
+    :param artifacts: Run artifact paths and writers.
+    :param duration_seconds: Capture duration in seconds.
+    :param clock: Monotonic clock function, injectable for tests.
+    :param mirror_lines_to_events: Also mirror decoded serial lines to
+        ``events.jsonl`` when raw line-level events are needed.
+    :param progress_callback: Optional receiver for live progress updates.
+    :param progress_interval_seconds: Minimum interval between progress
+        updates.
+    :returns: Aggregated counters and parsed observations for rule evaluation.
+    """
 
     started_at = clock()
     deadline = started_at + duration_seconds
@@ -329,6 +362,8 @@ def capture_raw_serial(
 
     trailing_metrics = metrics_parser.finish()
     if trailing_metrics is not None:
+        # Do not lose a metrics block that was being printed when the timed
+        # capture ended.
         metrics_summary = _append_dev_metrics(
             artifacts,
             trailing_metrics,

@@ -120,6 +120,8 @@ def _is_warn_only_zero_flatline(
     distinct_values: set[float],
     canonical_metric: str,
 ) -> bool:
+    # Zero can be a real reading for dust, gas, AQI and radiation metrics, so
+    # a long all-zero series is suspicious but not enough for a hard failure.
     return (
         distinct_values == {0.0} and canonical_metric in ZERO_FLATLINE_WARN_ONLY_METRICS
     )
@@ -134,7 +136,12 @@ def check_series_flatline(
     flatline_fail_after_seconds: int = DEFAULT_FLATLINE_FAIL_AFTER_SECONDS,
     min_distinct_values: int = DEFAULT_MIN_DISTINCT_VALUES,
 ) -> SensorFlatlineFinding:
-    """Check one sensor metric series for stuck values."""
+    """Check one sensor metric series for stuck values.
+
+    A series passes once it has enough distinct values. A long non-zero
+    flatline fails, while selected all-zero environmental metrics warn because
+    zero can be a valid physical reading.
+    """
 
     samples_count = len(records)
     distinct_values = _distinct_values(records)
@@ -212,7 +219,11 @@ def check_sensor_flatlines(
     flatline_fail_after_seconds: int = DEFAULT_FLATLINE_FAIL_AFTER_SECONDS,
     min_distinct_values: int = DEFAULT_MIN_DISTINCT_VALUES,
 ) -> SensorFlatlineReport:
-    """Check all sensor metric series for stuck values."""
+    """Check all sensor metric series for stuck values.
+
+    Returns one finding per observed sensor/metric time series and an aggregate
+    status based on the worst finding.
+    """
 
     findings = tuple(
         check_series_flatline(

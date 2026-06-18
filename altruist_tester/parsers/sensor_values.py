@@ -82,6 +82,8 @@ def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
     samples: list[SensorSample] = []
     start = line.find("{")
     while start != -1:
+        # Firmware can print JSON snapshots after a log prefix, and more than
+        # one JSON object may appear in a single UART line.
         try:
             payload, end = _JSON_DECODER.raw_decode(line, start)
         except json.JSONDecodeError:
@@ -121,9 +123,16 @@ def _parse_datalog_line(line: str) -> list[SensorSample]:
 
 
 def parse_sensor_values(line: str) -> list[SensorSample]:
-    """Parse zero or more sensor samples from one serial line."""
+    """Parse zero or more sensor samples from one serial line.
+
+    Supports JSON sensor snapshots and compact ``Datalog data`` lines printed
+    by development firmware. Unknown datalog aliases are preserved as metric
+    names so new firmware values can still be inspected in artifacts.
+    """
 
     json_samples = _parse_json_sensor_snapshots(line)
     if json_samples:
         return json_samples
+    # The compact datalog form is a fallback for development firmware lines
+    # that are not valid JSON snapshots.
     return _parse_datalog_line(line)

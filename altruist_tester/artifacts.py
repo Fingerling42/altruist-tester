@@ -16,13 +16,17 @@ _RUN_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def utc_now() -> datetime:
-    """Return the current UTC time."""
+    """Return the current timezone-aware UTC time."""
 
     return datetime.now(UTC)
 
 
 def format_timestamp(value: datetime) -> str:
-    """Format a timestamp for JSON artifacts."""
+    """Format a timestamp for JSON and JSONL artifacts.
+
+    The output uses millisecond precision and the ``Z`` suffix so all run
+    files share one compact UTC timestamp format.
+    """
 
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -32,7 +36,7 @@ def _format_run_id_time(value: datetime) -> str:
 
 
 def device_hint_from_port(port: Path) -> str:
-    """Build a stable-enough device hint from a serial port path."""
+    """Build a filesystem-safe device hint from a serial port path."""
 
     hint = port.name or "unknown"
     hint = _RUN_ID_SAFE_RE.sub("-", hint).strip("-_.")
@@ -81,6 +85,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
         findings = rules.get("findings")
         if isinstance(findings, list) and findings:
             lines.extend(["", "Findings:"])
+            # Keep the text report readable; summary.json keeps the full list.
             for finding in findings[:10]:
                 if isinstance(finding, dict):
                     lines.append(_format_finding_line(finding))
@@ -145,7 +150,12 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
 
 @dataclass(slots=True)
 class RunArtifacts:
-    """Paths and metadata for one test run."""
+    """Paths and metadata for one test run.
+
+    Instances know where every run artifact lives and provide the only write
+    helpers used by the logger and CLI. This keeps JSONL formatting and report
+    layout consistent across success and failure paths.
+    """
 
     run_id: str
     run_dir: Path
@@ -168,7 +178,13 @@ class RunArtifacts:
         self.report_txt = self.run_dir / "report.txt"
 
     def append_event(self, event_type: str, **payload: Any) -> dict[str, Any]:
-        """Append one structured event to events.jsonl."""
+        """Append one structured runtime event to ``events.jsonl``.
+
+        :param event_type: Stable event type name.
+        :param payload: JSON-serializable event fields.
+        :returns: The exact event object written to disk, including its
+            timestamp.
+        """
 
         event = {
             "ts": format_timestamp(utc_now()),
@@ -180,7 +196,10 @@ class RunArtifacts:
         return event
 
     def append_sample(self, sample: SensorSample) -> SensorSampleRecord:
-        """Append one timestamped sensor sample to samples.jsonl."""
+        """Append one timestamped sensor sample to ``samples.jsonl``.
+
+        :returns: The stored sample record, including the generated timestamp.
+        """
 
         record = {
             "ts": format_timestamp(utc_now()),
@@ -198,7 +217,12 @@ class RunArtifacts:
         finished_at: datetime | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Write the current machine-readable run summary."""
+        """Write the current machine-readable run summary.
+
+        ``summary.json`` is rewritten as the run progresses. The final write is
+        the authoritative machine-readable result for automation and CI-style
+        consumers.
+        """
 
         summary: dict[str, Any] = {
             "status": status,
@@ -237,7 +261,11 @@ class RunArtifacts:
         finished_at: datetime | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
-        """Write a human-readable run report."""
+        """Write a human-readable run report.
+
+        ``report.txt`` is intentionally compact and review-oriented. Detailed
+        per-rule payloads stay in ``summary.json``.
+        """
 
         lines = [
             "Altruist Tester Run Report",
@@ -283,7 +311,12 @@ def create_run_artifacts(
     duration_seconds: int,
     started_at: datetime | None = None,
 ) -> RunArtifacts:
-    """Create the directory and initial files for one run."""
+    """Create and initialize the artifact directory for one run.
+
+    Creates ``serial.log``, ``events.jsonl``, ``samples.jsonl``,
+    ``summary.json``, and ``report.txt``. If the timestamp/port-derived run ID
+    already exists, a numeric suffix is appended.
+    """
 
     started_at = started_at or utc_now()
     run_id = f"{_format_run_id_time(started_at)}_{device_hint_from_port(port)}"
@@ -308,6 +341,8 @@ def create_run_artifacts(
         (run_dir / filename).touch()
     artifacts.write_summary("running")
     artifacts.write_report("running", message="Run artifacts were initialized.")
+    # events.jsonl is a runtime audit trail; final rule payloads are written to
+    # summary.json/report.txt at the end of the run.
     artifacts.append_event(
         "run_started",
         port=str(port),

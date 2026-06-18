@@ -132,7 +132,10 @@ def _unique_sorted_sensors(sensors: Iterable[str]) -> tuple[str, ...]:
 
 
 def expected_metrics_for_sensors(sensors: Sequence[str]) -> tuple[str, ...]:
-    """Return canonical expected metrics for expected sensor presets."""
+    """Return canonical expected metrics for expected sensor presets.
+
+    :raises UnknownExpectedSensorError: If any sensor preset is not known.
+    """
 
     metrics = []
     for sensor in _unique_sorted_sensors(sensors):
@@ -157,7 +160,12 @@ def check_sensor_presence(
     expected_metrics: Sequence[str] = (),
     expected_sensors: Sequence[str] = (),
 ) -> SensorPresenceReport:
-    """Check that expected metrics were observed at least once."""
+    """Check that expected metrics were observed at least once.
+
+    ``expected_sensors`` expands known sensor presets into their required
+    metrics, then merges them with explicit ``expected_metrics``. Missing
+    configured metrics are failures; an empty expectation set is a warning.
+    """
 
     observed_metrics = observed_metrics_from_series(series)
     expected_sensor_names = _unique_sorted_sensors(expected_sensors)

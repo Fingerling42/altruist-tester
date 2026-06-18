@@ -9,7 +9,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class KeywordRule:
-    """One serial keyword rule."""
+    """One serial keyword rule.
+
+    Rules are matched case-insensitively against decoded UART lines.
+    """
 
     code: str
     keyword: str
@@ -74,8 +77,17 @@ def detect_keyword_alerts(
     line: str,
     rules: Iterable[KeywordRule] = KEYWORD_RULES,
 ) -> list[KeywordAlert]:
-    """Detect runtime-alert keywords in one serial line."""
+    """Detect runtime-alert keywords in one serial line.
 
+    :param line: Decoded serial line.
+    :param rules: Keyword rules to evaluate. The default set is based on
+        Altruist firmware messages and ESP runtime crash output.
+    :returns: All alerts matched in the line. A single line can produce more
+        than one alert when it contains overlapping failure terms.
+    """
+
+    # Test firmware can print the injected sample name before printing the
+    # actual sample; that metadata line must not trigger its own alert.
     if line.startswith("[TEST] Injecting serial sample:"):
         return []
 

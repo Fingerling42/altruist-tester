@@ -10,7 +10,11 @@ SampleKey = tuple[str, str]
 
 @dataclass(frozen=True, slots=True)
 class SensorSample:
-    """One sensor metric value before it is timestamped in a run."""
+    """One sensor metric value before it is timestamped in a run.
+
+    Parser functions return this lightweight model. Artifact writers attach the
+    run timestamp and turn it into ``SensorSampleRecord``.
+    """
 
     sensor: str
     metric: str
@@ -81,7 +85,11 @@ class SensorSampleRecord:
 
 @dataclass(slots=True)
 class SensorSampleSeries:
-    """In-memory sample time series grouped by sensor and metric."""
+    """In-memory sample time series grouped by sensor and metric.
+
+    Rule checks use this structure to evaluate presence, flatlines, and update
+    cadence after capture completes.
+    """
 
     by_key: dict[SampleKey, list[SensorSampleRecord]] = field(default_factory=dict)
 

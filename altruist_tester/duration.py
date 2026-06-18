@@ -19,7 +19,15 @@ _UNIT_SECONDS = {
 
 
 def parse_duration_seconds(value: str) -> int:
-    """Parse a duration like 30s, 10m, or 24h into seconds."""
+    """Parse a CLI duration into seconds.
+
+    Accepts positive integer values with an optional unit suffix: seconds
+    (``s``), minutes (``m``), or hours (``h``). Values without a suffix are
+    treated as seconds.
+
+    :raises DurationParseError: If the value is empty, non-positive, or uses an
+        unsupported unit.
+    """
 
     match = _DURATION_RE.match(value)
     if not match:

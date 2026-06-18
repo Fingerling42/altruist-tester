@@ -36,7 +36,11 @@ RuleVerdict = Literal["PASS_CANDIDATE", "WARN", "FAIL"]
 
 @dataclass(frozen=True, slots=True)
 class RuleEngineConfig:
-    """Rule inputs that are not captured directly from the serial stream."""
+    """Rule inputs that are not captured directly from the serial stream.
+
+    The CLI builds this object from command-line options, tester config, and
+    run timing information before evaluating the final health verdict.
+    """
 
     expected_metrics: tuple[str, ...] = ()
     expected_sensors: tuple[str, ...] = ()
@@ -108,7 +112,11 @@ class RuleEngineReports:
 
 @dataclass(frozen=True, slots=True)
 class RuleEngineResult:
-    """Centralized verdict and findings for a completed capture."""
+    """Centralized verdict and findings for a completed capture.
+
+    ``reports`` keeps the raw per-rule payloads. ``findings`` is a normalized
+    flattened view used by summaries, text reports, and process exit decisions.
+    """
 
     verdict: RuleVerdict
     status: RuleStatus
@@ -279,7 +287,12 @@ def evaluate_rules(
     stats: SerialLogStats,
     config: RuleEngineConfig,
 ) -> RuleEngineResult:
-    """Run all health rules and return a centralized verdict."""
+    """Run all health rules and return a centralized verdict.
+
+    The engine evaluates presence, ranges, flatlines, cadence, runtime
+    counters, and serial silence, then collapses their warnings/failures into
+    one process-level verdict.
+    """
 
     sensor_presence = check_sensor_presence(
         stats.sensor_series,

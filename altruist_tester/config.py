@@ -17,12 +17,16 @@ from altruist_tester.rules.defaults import (
 
 
 class ConfigError(ValueError):
-    """Raised when a tester config file cannot be loaded."""
+    """Raised when a tester config file cannot be loaded or validated."""
 
 
 @dataclass(frozen=True, slots=True)
 class TesterConfig:
-    """Configuration values that can be loaded from TOML."""
+    """Validated tester configuration loaded from TOML.
+
+    The object stores only normalized values used by the rules engine. Duration
+    fields are converted to seconds during loading.
+    """
 
     expected_sensors: tuple[str, ...] = ()
     expected_metrics: tuple[str, ...] = ()
@@ -153,6 +157,8 @@ def _sensor_range_from_table(
 
 
 def _sensor_ranges(data: Mapping[str, Any]) -> Mapping[str, SensorRange]:
+    # Config range tables override only the provided fields and inherit the
+    # built-in defaults for everything else.
     ranges = dict(DEFAULT_SENSOR_RANGES)
     table = _optional_table(data, "sensor_ranges")
     for metric, value in table.items():
@@ -179,7 +185,15 @@ def _load_toml(path: Path) -> Mapping[str, Any]:
 
 
 def load_tester_config(path: Path | None) -> TesterConfig:
-    """Load tester configuration from TOML, or built-in defaults."""
+    """Load and validate a tester TOML profile.
+
+    :param path: Optional path to a TOML config file. ``None`` returns built-in
+        defaults.
+    :returns: A normalized ``TesterConfig`` with duration values converted to
+        seconds.
+    :raises ConfigError: If the file is missing, malformed, or contains values
+        with invalid types.
+    """
 
     if path is None:
         return TesterConfig.defaults()
