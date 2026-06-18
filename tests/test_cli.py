@@ -337,8 +337,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "serial_opened" in events_text
     assert "serial_capture_started" in events_text
     assert "serial_capture_completed" in events_text
-    assert "sensor_ranges_checked" in events_text
-    assert "rules_evaluated" in events_text
+    assert "sensor_ranges_checked" not in events_text
+    assert "rules_evaluated" not in events_text
     assert "serial_line" not in events_text
     report_text = (run_dir / "report.txt").read_text()
     assert "Captured 1 serial lines" in report_text
@@ -853,7 +853,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
     assert summary["sensor_presence"]["status"] == "ok"
     assert summary["sensor_flatlines"]["status"] == "fail"
     assert summary["sensor_flatlines"]["failure_count"] == 1
-    assert "sensor_flatlines_checked" in (run_dir / "events.jsonl").read_text()
+    assert "sensor_flatlines_checked" not in (run_dir / "events.jsonl").read_text()
 
 
 def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path):
@@ -916,7 +916,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     assert summary["sensor_flatlines"]["status"] == "ok"
     assert summary["sensor_cadence"]["status"] == "fail"
     assert summary["sensor_cadence"]["failure_count"] == 1
-    assert "sensor_cadence_checked" in (run_dir / "events.jsonl").read_text()
+    assert "sensor_cadence_checked" not in (run_dir / "events.jsonl").read_text()
 
 
 def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
@@ -974,7 +974,7 @@ def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
     assert summary["status"] == "failed"
     assert summary["runtime_counters"]["status"] == "fail"
     assert summary["runtime_counters"]["findings"][0]["code"] == "UPTIME_DECREASED"
-    assert "runtime_counters_checked" in (run_dir / "events.jsonl").read_text()
+    assert "runtime_counters_checked" not in (run_dir / "events.jsonl").read_text()
 
 
 def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
@@ -1031,4 +1031,4 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     assert summary["serial_silence"]["findings"][0]["code"] == "NO_SERIAL_OUTPUT"
     assert summary["rules"]["verdict"] == "FAIL"
     assert "serial_silence" in summary["rules"]["failed_checks"]
-    assert "serial_silence_checked" in (run_dir / "events.jsonl").read_text()
+    assert "serial_silence_checked" not in (run_dir / "events.jsonl").read_text()

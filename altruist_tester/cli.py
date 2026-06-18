@@ -400,16 +400,6 @@ def run(
         lines_read=stats.lines_read,
         bytes_read=stats.bytes_read,
     )
-    artifacts.append_event("sensor_presence_checked", **sensor_presence.as_dict())
-    artifacts.append_event(
-        "sensor_ranges_checked",
-        **sensor_ranges.as_dict(),
-    )
-    artifacts.append_event("sensor_flatlines_checked", **sensor_flatlines.as_dict())
-    artifacts.append_event("sensor_cadence_checked", **sensor_cadence.as_dict())
-    artifacts.append_event("runtime_counters_checked", **runtime_counters.as_dict())
-    artifacts.append_event("serial_silence_checked", **serial_silence.as_dict())
-    artifacts.append_event("rules_evaluated", **rule_result.as_dict())
     run_status = "failed" if rule_result.verdict == "FAIL" else "completed"
     if run_status == "failed":
         artifacts.append_event(

@@ -160,8 +160,8 @@ Important files:
 
 - `serial.log` contains raw serial output as close as possible to the firmware
   output.
-- `events.jsonl` contains structured tester events, dev metrics, keyword
-  alerts, and sensor presence results.
+- `events.jsonl` contains chronological tester events, dev metrics, and keyword
+  alerts. Final rule results live in `summary.json`.
 - `samples.jsonl` contains parsed sensor values.
 - `summary.json` contains the machine-readable run result.
 - `report.txt` contains a human-readable verdict, findings, health metrics,
