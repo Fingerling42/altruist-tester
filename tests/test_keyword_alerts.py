@@ -93,8 +93,12 @@ def test_ignores_normal_firmware_reset_reasons():
 
 
 def test_ignores_failure_injection_metadata_lines():
-    assert detect_keyword_alerts("[TEST] Injecting serial sample: keyword-watchdog") == []
-    assert detect_keyword_alerts("[TEST] Injecting serial sample: keyword-brownout") == []
+    assert (
+        detect_keyword_alerts("[TEST] Injecting serial sample: keyword-watchdog") == []
+    )
+    assert (
+        detect_keyword_alerts("[TEST] Injecting serial sample: keyword-brownout") == []
+    )
 
 
 def test_ignores_expected_network_error_lines():

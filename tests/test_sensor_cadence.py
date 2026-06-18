@@ -95,6 +95,8 @@ def test_check_series_cadence_caps_tail_gap_to_run_window():
         _sample("BME280", "temperature", 24.0, 0),
         _sample("BME280", "temperature", 24.1, 5 * 60),
     ]
+    # Use a far-future reference to verify the cap is the test run window, not
+    # wall-clock distance from the last sample.
     reference_time = datetime(2026, 6, 11, 12, 30, tzinfo=UTC)
 
     finding = check_series_cadence(

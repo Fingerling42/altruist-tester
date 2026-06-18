@@ -5,6 +5,9 @@ from pathlib import Path
 from altruist_tester.artifacts import create_run_artifacts
 from altruist_tester.serial_logger import capture_raw_serial
 
+# Fixed artifact timestamps keep JSON/report assertions stable.
+STARTED_AT = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+
 
 class FakeSerial:
     def __init__(self, lines, clock):
@@ -12,6 +15,8 @@ class FakeSerial:
         self._clock = clock
 
     def readline(self):
+        # Advance on every read so interline gap and silence calculations are
+        # deterministic without sleeping in tests.
         self._clock.advance(0.25)
         if self._lines:
             return self._lines.pop(0)
@@ -19,6 +24,8 @@ class FakeSerial:
 
 
 class FakeClock:
+    """Small monotonic-clock replacement controlled by the fake serial port."""
+
     def __init__(self):
         self.current = 0.0
 
@@ -29,16 +36,24 @@ class FakeClock:
         self.current += seconds
 
 
-def test_capture_raw_serial_writes_raw_log_without_line_events_by_default(tmp_path):
-    clock = FakeClock()
-    artifacts = create_run_artifacts(
+def _create_artifacts(tmp_path, *, duration_input="1s", duration_seconds=1):
+    return create_run_artifacts(
         tmp_path,
         port=Path("/dev/ttyACM0"),
         baud=115200,
-        duration_input="1s",
-        duration_seconds=1,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+        duration_input=duration_input,
+        duration_seconds=duration_seconds,
+        started_at=STARTED_AT,
     )
+
+
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_capture_raw_serial_writes_raw_log_without_line_events_by_default(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
     serial = FakeSerial(
         [
             b"first line\r\n",
@@ -59,24 +74,14 @@ def test_capture_raw_serial_writes_raw_log_without_line_events_by_default(tmp_pa
         b"first line\r\nsecond line\nbad utf8: \xff\n"
     )
 
-    events = [
-        json.loads(line)
-        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
-    ]
+    events = _read_jsonl(artifacts.events_jsonl)
     serial_events = [event for event in events if event["type"] == "serial_line"]
     assert serial_events == []
 
 
 def test_capture_raw_serial_can_mirror_lines_to_events(tmp_path):
     clock = FakeClock()
-    artifacts = create_run_artifacts(
-        tmp_path,
-        port=Path("/dev/ttyACM0"),
-        baud=115200,
-        duration_input="1s",
-        duration_seconds=1,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
-    )
+    artifacts = _create_artifacts(tmp_path)
     serial = FakeSerial(
         [
             b"first line\r\n",
@@ -97,10 +102,7 @@ def test_capture_raw_serial_can_mirror_lines_to_events(tmp_path):
     assert stats.lines_read == 3
     assert stats.bytes_read == 36
 
-    events = [
-        json.loads(line)
-        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
-    ]
+    events = _read_jsonl(artifacts.events_jsonl)
     serial_events = [event for event in events if event["type"] == "serial_line"]
     assert [event["line"] for event in serial_events] == [
         "first line",
@@ -111,14 +113,7 @@ def test_capture_raw_serial_can_mirror_lines_to_events(tmp_path):
 
 def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
     clock = FakeClock()
-    artifacts = create_run_artifacts(
-        tmp_path,
-        port=Path("/dev/ttyACM0"),
-        baud=115200,
-        duration_input="1s",
-        duration_seconds=1,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
-    )
+    artifacts = _create_artifacts(tmp_path)
     serial = FakeSerial(
         [
             b"normal boot line\n",
@@ -130,10 +125,7 @@ def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
 
     stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
 
-    events = [
-        json.loads(line)
-        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
-    ]
+    events = _read_jsonl(artifacts.events_jsonl)
     alert_events = [event for event in events if event["type"] == "keyword_alert"]
     assert [event["code"] for event in alert_events] == [
         "PANIC",
@@ -148,14 +140,7 @@ def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
 
 def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     clock = FakeClock()
-    artifacts = create_run_artifacts(
-        tmp_path,
-        port=Path("/dev/ttyACM0"),
-        baud=115200,
-        duration_input="1s",
-        duration_seconds=1,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
-    )
+    artifacts = _create_artifacts(tmp_path)
     serial = FakeSerial(
         [
             (
@@ -170,10 +155,7 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
 
     stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
 
-    samples = [
-        json.loads(line)
-        for line in artifacts.samples_jsonl.read_text(encoding="utf-8").splitlines()
-    ]
+    samples = _read_jsonl(artifacts.samples_jsonl)
     assert [
         (sample["sensor"], sample["metric"], sample["value"]) for sample in samples
     ] == [
@@ -190,13 +172,10 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
 
 def test_capture_raw_serial_reports_progress(tmp_path):
     clock = FakeClock()
-    artifacts = create_run_artifacts(
+    artifacts = _create_artifacts(
         tmp_path,
-        port=Path("/dev/ttyACM0"),
-        baud=115200,
         duration_input="2s",
         duration_seconds=2,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
     )
     serial = FakeSerial(
         [
@@ -220,6 +199,8 @@ def test_capture_raw_serial_reports_progress(tmp_path):
     )
 
     assert progress_updates
+    # The logger always emits a final complete update even when the interval
+    # callback cadence does not land exactly on the run duration.
     assert progress_updates[-1].complete is True
     assert progress_updates[-1].lines_read == 5
     assert progress_updates[-1].dev_metrics_count == 1
@@ -230,13 +211,10 @@ def test_capture_raw_serial_reports_progress(tmp_path):
 
 def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     clock = FakeClock()
-    artifacts = create_run_artifacts(
+    artifacts = _create_artifacts(
         tmp_path,
-        port=Path("/dev/ttyACM0"),
-        baud=115200,
         duration_input="5s",
         duration_seconds=5,
-        started_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
     )
     serial = FakeSerial(
         [
@@ -264,10 +242,7 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
 
     stats = capture_raw_serial(serial, artifacts, 5, clock=clock)
 
-    events = [
-        json.loads(line)
-        for line in artifacts.events_jsonl.read_text(encoding="utf-8").splitlines()
-    ]
+    events = _read_jsonl(artifacts.events_jsonl)
     metrics_events = [event for event in events if event["type"] == "dev_metrics"]
     assert len(metrics_events) == 2
     assert metrics_events[0]["uptime_sec"] == 121
@@ -275,6 +250,8 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     assert metrics_events[1]["uptime_sec"] == 124
     assert metrics_events[1]["rssi"] == -79
 
+    # Check both the persisted health event shape and the aggregate summary used
+    # later by runtime-counter rules.
     assert stats.dev_metrics.count == 2
     assert [record["uptime_sec"] for record in stats.dev_metrics_records] == [121, 124]
     assert [record["boot"] for record in stats.dev_metrics_records] == [7, 7]

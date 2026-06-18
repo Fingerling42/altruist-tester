@@ -82,6 +82,8 @@ def test_check_series_flatline_fails_for_long_flatline():
 
 
 def test_check_series_flatline_warns_for_long_zero_flatline_metrics():
+    # Zero particulate/gas/radiation readings can be physically valid, so a
+    # long zero flatline is suspicious but not an automatic failure.
     records = [
         _sample("SDS", "P2", 0.0, 0),
         _sample("SDS", "P2", 0.0, 60 * 60),

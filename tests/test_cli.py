@@ -16,6 +16,8 @@ from altruist_tester.serial_logger import (
 
 def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
     series = SensorSampleSeries()
+    # Keep generated values inside the default ranges so these tests isolate
+    # CLI/rules wiring instead of exercising range validation.
     sample_values = {
         "co2": 600.0,
         "humidity": 45.0,
@@ -64,6 +66,45 @@ def _series_with_records(*records: SensorSampleRecord) -> SensorSampleSeries:
     for record in records:
         series.append(record)
     return series
+
+
+def _patch_cli_capture(
+    monkeypatch,
+    stats: SerialLogStats,
+    *,
+    opened: dict[str, object] | None = None,
+    capture_hook=None,
+) -> None:
+    # CLI tests should cover command behavior without opening real serial
+    # devices or waiting for the raw logger loop.
+    class FakeSerial:
+        def __init__(self, path, baudrate, timeout):
+            if opened is not None:
+                opened["path"] = path
+                opened["baudrate"] = baudrate
+                opened["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_capture_raw_serial(
+        serial_port,
+        artifacts,
+        duration_seconds,
+        **kwargs,
+    ):
+        if capture_hook is not None:
+            capture_hook(serial_port, artifacts, duration_seconds, **kwargs)
+        return stats
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
+    monkeypatch.setattr(
+        "altruist_tester.cli.capture_raw_serial",
+        fake_capture_raw_serial,
+    )
 
 
 def test_package_version_is_available():
@@ -229,22 +270,9 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
     opened = {}
-
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            opened["path"] = path
-            opened["baudrate"] = baudrate
-            opened["timeout"] = timeout
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
     captured = {}
 
-    def fake_capture_raw_serial(
+    def capture_hook(
         serial_port,
         artifacts,
         duration_seconds,
@@ -252,8 +280,13 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     ):
         captured["serial_port"] = serial_port
         captured["duration_seconds"] = duration_seconds
+        # The fake capture function bypasses the raw logger, so write one raw
+        # line here to verify report generation sees serial.log content.
         artifacts.serial_log.write_bytes(b"hello from device\n")
-        return SerialLogStats(
+
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=1,
             bytes_read=18,
             dev_metrics=DevMetricsSummary(
@@ -267,11 +300,9 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
             ),
             sensor_samples_count=2,
             sensor_series=_series_with_metrics("temperature", "humidity"),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
+        opened=opened,
+        capture_hook=capture_hook,
     )
 
     result = CliRunner().invoke(
@@ -332,11 +363,15 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["sensor_flatlines"]["status"] == "warn"
     assert summary["sensor_cadence"]["status"] == "warn"
     assert (run_dir / "serial.log").read_text() == "hello from device\n"
+    # The fake capture returns an in-memory sample series; only the real logger
+    # owns writing samples.jsonl.
     assert (run_dir / "samples.jsonl").read_text() == ""
     events_text = (run_dir / "events.jsonl").read_text()
     assert "serial_opened" in events_text
     assert "serial_capture_started" in events_text
     assert "serial_capture_completed" in events_text
+    # Aggregated rule results belong to summary.json/report.txt; events.jsonl is
+    # kept for runtime milestones and raw health observations.
     assert "sensor_ranges_checked" not in events_text
     assert "rules_evaluated" not in events_text
     assert "serial_line" not in events_text
@@ -354,33 +389,14 @@ def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
     output_dir = tmp_path / "runs"
     opened = {}
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            opened["path"] = path
-            opened["baudrate"] = baudrate
-            opened["timeout"] = timeout
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(lines_read=0, bytes_read=0)
-
     monkeypatch.setattr(
         "altruist_tester.cli.list_serial_ports",
         lambda: [SerialPortInfo(device=str(port), description="only port")],
     )
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(lines_read=0, bytes_read=0),
+        opened=opened,
     )
 
     result = CliRunner().invoke(
@@ -407,32 +423,14 @@ def test_run_passes_when_expected_metrics_are_seen(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=4,
             sensor_series=_series_with_metrics("temperature", "humidity", "P1", "P2"),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -469,23 +467,9 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=7,
@@ -498,11 +482,7 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
                 "noiseAvg",
                 "noiseMax",
             ),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -549,23 +529,9 @@ sensors = ["bme280", "sds", "ics-43434"]
         encoding="utf-8",
     )
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=7,
@@ -578,11 +544,7 @@ sensors = ["bme280", "sds", "ics-43434"]
                 "noiseAvg",
                 "noiseMax",
             ),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -660,27 +622,9 @@ silence_fail_after = "4s"
         encoding="utf-8",
     )
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(lines_read=0, bytes_read=0)
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(lines_read=0, bytes_read=0),
     )
 
     result = CliRunner().invoke(
@@ -735,32 +679,14 @@ def test_run_fails_when_expected_metric_is_missing(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=3,
             sensor_series=_series_with_metrics("temperature", "humidity", "P1"),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -799,23 +725,9 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
@@ -823,11 +735,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
                 _sample_record("SCD4x", "co2", 612.0, 0),
                 _sample_record("SCD4x", "co2", 612.0, 60 * 60),
             ),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -853,6 +761,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
     assert summary["sensor_presence"]["status"] == "ok"
     assert summary["sensor_flatlines"]["status"] == "fail"
     assert summary["sensor_flatlines"]["failure_count"] == 1
+    # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "sensor_flatlines_checked" not in (run_dir / "events.jsonl").read_text()
 
 
@@ -861,23 +770,9 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
@@ -885,11 +780,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
                 _sample_record("BME280", "temperature", 24.0, 0),
                 _sample_record("BME280", "temperature", 24.5, 25 * 60),
             ),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -916,6 +807,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     assert summary["sensor_flatlines"]["status"] == "ok"
     assert summary["sensor_cadence"]["status"] == "fail"
     assert summary["sensor_cadence"]["failure_count"] == 1
+    # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "sensor_cadence_checked" not in (run_dir / "events.jsonl").read_text()
 
 
@@ -924,34 +816,16 @@ def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(
             lines_read=2,
             bytes_read=20,
             dev_metrics_records=(
                 {"boot": 1, "uptime_sec": 20},
                 {"boot": 1, "uptime_sec": 5},
             ),
-        )
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+        ),
     )
 
     result = CliRunner().invoke(
@@ -974,6 +848,7 @@ def test_run_fails_when_runtime_counters_show_reboot(monkeypatch, tmp_path):
     assert summary["status"] == "failed"
     assert summary["runtime_counters"]["status"] == "fail"
     assert summary["runtime_counters"]["findings"][0]["code"] == "UPTIME_DECREASED"
+    # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "runtime_counters_checked" not in (run_dir / "events.jsonl").read_text()
 
 
@@ -982,27 +857,9 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     port.touch()
     output_dir = tmp_path / "runs"
 
-    class FakeSerial:
-        def __init__(self, path, baudrate, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_capture_raw_serial(
-        serial_port,
-        artifacts,
-        duration_seconds,
-        **kwargs,
-    ):
-        return SerialLogStats(lines_read=0, bytes_read=0)
-
-    monkeypatch.setattr("altruist_tester.cli.serial.Serial", FakeSerial)
-    monkeypatch.setattr(
-        "altruist_tester.cli.capture_raw_serial", fake_capture_raw_serial
+    _patch_cli_capture(
+        monkeypatch,
+        SerialLogStats(lines_read=0, bytes_read=0),
     )
 
     result = CliRunner().invoke(
@@ -1031,4 +888,5 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     assert summary["serial_silence"]["findings"][0]["code"] == "NO_SERIAL_OUTPUT"
     assert summary["rules"]["verdict"] == "FAIL"
     assert "serial_silence" in summary["rules"]["failed_checks"]
+    # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "serial_silence_checked" not in (run_dir / "events.jsonl").read_text()

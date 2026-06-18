@@ -68,6 +68,7 @@ def test_check_sensor_value_range_fails_unknown_negative_non_negative_metric():
 
 
 def test_check_sensor_sample_range_uses_sample_metric_value_and_unit():
+    # Current firmware logs may expose Pa-like pressure values with an hPa label.
     sample = SensorSample(
         sensor="BME280",
         metric="pressure",
@@ -83,6 +84,7 @@ def test_check_sensor_sample_range_uses_sample_metric_value_and_unit():
 
 
 def test_check_sensor_sample_range_normalizes_pascal_pressure_values():
+    # BME680 reports pressure in pascals; range checks compare normalized hPa.
     sample = SensorSample(
         sensor="BME680",
         metric="pressure",
