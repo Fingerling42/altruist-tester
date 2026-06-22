@@ -291,6 +291,41 @@ Use `required` only when the device was provisioned for that channel:
 Use `optional` when you want upload statistics and warnings without failing the
 whole burn-in run.
 
+## Batch Config
+
+`configs/batch.usb.example.toml` describes several USB-connected devices for a
+future batch run. The format is intentionally separate from the single-device
+tester profile: the batch config maps physical USB slots to ports and profiles,
+while `configs/urban.example.toml` and `configs/insight.example.toml` keep the
+actual health rules for each device type.
+
+Example:
+
+```toml
+[batch]
+duration = "24h"
+baud = 115200
+output_dir = "runs"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/pci-0000:00:14.0-usb-0:1.2:1.0"
+config = "urban.example.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/pci-0000:00:14.0-usb-0:1.1:1.0"
+config = "insight.example.toml"
+```
+
+Relative device `config` paths are resolved from the directory that contains the
+batch TOML file. For mixed batches, such as Urban and Insight devices connected
+to the same Raspberry Pi, set `config` explicitly for every device. The shared
+`[batch].device_config` field is only a fallback for homogeneous batches where
+all slots use the same tester profile.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.

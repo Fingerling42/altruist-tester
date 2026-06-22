@@ -1,0 +1,16 @@
+[batch]
+duration = "24h"
+baud = 115200
+output_dir = "runs"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/pci-0000:00:14.0-usb-0:1.2:1.0"
+config = "urban.example.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/pci-0000:00:14.0-usb-0:1.1:1.0"
+config = "insight.example.toml"

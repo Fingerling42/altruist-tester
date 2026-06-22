@@ -22,6 +22,31 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class BatchDeviceConfig:
+    """One device entry from a USB batch configuration."""
+
+    slot: str
+    port: Path
+    model: str | None = None
+    config: Path | None = None
+    effective_config: Path | None = None
+    expected_sensors: tuple[str, ...] = ()
+    expected_metrics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BatchConfig:
+    """Validated USB batch configuration loaded from TOML."""
+
+    duration_input: str
+    duration_seconds: int
+    baud: int = 115200
+    output_dir: Path = Path("runs")
+    device_config: Path | None = None
+    devices: tuple[BatchDeviceConfig, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TesterConfig:
     """Validated tester configuration loaded from TOML.
 
@@ -75,6 +100,21 @@ def _string_tuple(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ConfigError(f"{name} must be an array of strings")
     return tuple(value)
+
+
+def _optional_string(value: object, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{name} must be a non-empty string")
+    return value.strip()
+
+
+def _required_string(value: object, name: str) -> str:
+    string_value = _optional_string(value, name)
+    if string_value is None:
+        raise ConfigError(f"{name} is required")
+    return string_value
 
 
 def _bool_value(value: object, name: str, default: bool) -> bool:
@@ -148,6 +188,42 @@ def _duration_value(value: object, name: str, default: int) -> int:
         return parse_duration_seconds(value)
     except DurationParseError as exc:
         raise ConfigError(f"{name}: {exc}") from exc
+
+
+def _duration_input(value: object, name: str) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value <= 0:
+            raise ConfigError(f"{name} must be greater than zero")
+        return str(value)
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{name} must be a duration string or seconds")
+    return value.strip()
+
+
+def _path_value(
+    value: object,
+    name: str,
+    *,
+    base_dir: Path | None = None,
+    required: bool = False,
+) -> Path | None:
+    if value is None:
+        if required:
+            raise ConfigError(f"{name} is required")
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{name} must be a non-empty path string")
+    path = Path(value.strip())
+    if base_dir is not None and not path.is_absolute():
+        path = base_dir / path
+    return path
+
+
+def _optional_model(value: object, name: str) -> str | None:
+    model = _optional_string(value, name)
+    if model is None:
+        return None
+    return model.lower()
 
 
 def _sensor_range_from_table(
@@ -247,6 +323,84 @@ def _load_toml(path: Path) -> Mapping[str, Any]:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"Could not parse config {path}: {exc}") from exc
     return data
+
+
+def _batch_device_config(
+    value: object,
+    *,
+    index: int,
+    base_dir: Path,
+    default_config: Path | None,
+) -> BatchDeviceConfig:
+    name = f"devices[{index}]"
+    table = _require_mapping(value, name)
+    config = _path_value(table.get("config"), f"{name}.config", base_dir=base_dir)
+    return BatchDeviceConfig(
+        slot=_required_string(table.get("slot"), f"{name}.slot"),
+        port=cast(Path, _path_value(table.get("port"), f"{name}.port", required=True)),
+        model=_optional_model(table.get("model"), f"{name}.model"),
+        config=config,
+        effective_config=config or default_config,
+        expected_sensors=_string_tuple(
+            table.get("expected_sensors"),
+            f"{name}.expected_sensors",
+        ),
+        expected_metrics=_string_tuple(
+            table.get("expected_metrics"),
+            f"{name}.expected_metrics",
+        ),
+    )
+
+
+def load_batch_config(path: Path) -> BatchConfig:
+    """Load a USB batch TOML configuration.
+
+    :param path: Path to a batch TOML file.
+    :returns: A normalized ``BatchConfig`` with duration converted to seconds
+        and per-device effective profile paths resolved.
+    :raises ConfigError: If the file is missing, malformed, or does not match
+        the batch config shape.
+    """
+
+    data = _load_toml(path)
+    base_dir = path.parent
+    batch = _require_mapping(data.get("batch"), "batch")
+    duration_input = _duration_input(batch.get("duration"), "batch.duration")
+    duration_seconds = _duration_value(
+        batch.get("duration"),
+        "batch.duration",
+        0,
+    )
+    default_config = _path_value(
+        batch.get("device_config"),
+        "batch.device_config",
+        base_dir=base_dir,
+    )
+    devices_value = data.get("devices")
+    if not isinstance(devices_value, list):
+        raise ConfigError("devices must be an array of tables")
+    if not devices_value:
+        raise ConfigError("devices must contain at least one device")
+
+    return BatchConfig(
+        duration_input=duration_input,
+        duration_seconds=duration_seconds,
+        baud=_int_value(batch.get("baud"), "batch.baud", 115200),
+        output_dir=cast(
+            Path,
+            _path_value(batch.get("output_dir"), "batch.output_dir") or Path("runs"),
+        ),
+        device_config=default_config,
+        devices=tuple(
+            _batch_device_config(
+                device,
+                index=index,
+                base_dir=base_dir,
+                default_config=default_config,
+            )
+            for index, device in enumerate(devices_value)
+        ),
+    )
 
 
 def load_tester_config(path: Path | None) -> TesterConfig:
