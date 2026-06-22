@@ -112,6 +112,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     sensor_ranges = details.get("sensor_ranges")
     sensor_flatlines = details.get("sensor_flatlines")
     sensor_cadence = details.get("sensor_cadence")
+    upload_health = details.get("upload_health")
     if isinstance(sensor_presence, dict):
         observed = sensor_presence.get("observed_metrics") or []
         missing = sensor_presence.get("missing_metrics") or []
@@ -146,6 +147,27 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             f"({sensor_cadence.get('failure_count')} failures, "
             f"{sensor_cadence.get('warning_count')} warnings)"
         )
+    if isinstance(upload_health, dict):
+        lines.extend(["", "Uploads:"])
+        channels = upload_health.get("channels")
+        if isinstance(channels, dict):
+            for channel_name in sorted(channels):
+                channel = channels[channel_name]
+                if not isinstance(channel, dict):
+                    continue
+                success_rate = channel.get("success_rate")
+                if isinstance(success_rate, float):
+                    success_rate_text = f"{success_rate:.1%}"
+                else:
+                    success_rate_text = "n/a"
+                lines.append(
+                    f"- {channel_name}: {channel.get('status')} "
+                    f"(mode={channel.get('mode')}, "
+                    f"attempts={channel.get('attempts')}, "
+                    f"successes={channel.get('successes')}, "
+                    f"failures={channel.get('failures')}, "
+                    f"success_rate={success_rate_text})"
+                )
 
 
 @dataclass(slots=True)

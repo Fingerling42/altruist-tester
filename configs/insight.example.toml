@@ -39,3 +39,17 @@ fail_after_missed = 4
 [serial]
 silence_warn_after = "2m"
 silence_fail_after = "10m"
+
+[uploads]
+connectivity = "optional"
+datalog = "optional"
+
+[uploads.connectivity_thresholds]
+min_successes = 1
+min_success_rate = 0.8
+max_consecutive_failures = 5
+
+[uploads.datalog_thresholds]
+min_successes = 1
+min_success_rate = 0.8
+max_consecutive_failures = 3

@@ -6,7 +6,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.rules.defaults import (
@@ -14,6 +14,7 @@ from altruist_tester.rules.defaults import (
     DEFAULT_SENSOR_RANGES,
     SensorRange,
 )
+from altruist_tester.rules.uploads import UploadChannelConfig, UploadMode
 
 
 class ConfigError(ValueError):
@@ -45,6 +46,10 @@ class TesterConfig:
     cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
+    connectivity_upload: UploadChannelConfig = field(
+        default_factory=UploadChannelConfig
+    )
+    datalog_upload: UploadChannelConfig = field(default_factory=UploadChannelConfig)
 
     @classmethod
     def defaults(cls) -> TesterConfig:
@@ -86,6 +91,40 @@ def _int_value(value: object, name: str, default: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ConfigError(f"{name} must be a positive integer")
     return value
+
+
+def _optional_non_negative_int_value(
+    value: object,
+    name: str,
+    default: int | None,
+) -> int | None:
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ConfigError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _ratio_value(value: object, name: str, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ConfigError(f"{name} must be a number between 0 and 1")
+    ratio = float(value)
+    if ratio < 0.0 or ratio > 1.0:
+        raise ConfigError(f"{name} must be between 0 and 1")
+    return ratio
+
+
+def _upload_mode(value: object, name: str, default: UploadMode) -> UploadMode:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ConfigError(f"{name} must be disabled, optional, or required")
+    mode = value.strip().lower()
+    if mode not in {"disabled", "optional", "required"}:
+        raise ConfigError(f"{name} must be disabled, optional, or required")
+    return cast(UploadMode, mode)
 
 
 def _number_value(value: object, name: str) -> float | None:
@@ -170,6 +209,32 @@ def _sensor_ranges(data: Mapping[str, Any]) -> Mapping[str, SensorRange]:
     return ranges
 
 
+def _upload_channel_config(
+    uploads: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+    channel: str,
+) -> UploadChannelConfig:
+    return UploadChannelConfig(
+        mode=_upload_mode(uploads.get(channel), f"uploads.{channel}", "disabled"),
+        min_successes=_optional_non_negative_int_value(
+            thresholds.get("min_successes"),
+            f"uploads.{channel}_thresholds.min_successes",
+            1,
+        )
+        or 0,
+        min_success_rate=_ratio_value(
+            thresholds.get("min_success_rate"),
+            f"uploads.{channel}_thresholds.min_success_rate",
+            0.8,
+        ),
+        max_consecutive_failures=_optional_non_negative_int_value(
+            thresholds.get("max_consecutive_failures"),
+            f"uploads.{channel}_thresholds.max_consecutive_failures",
+            None,
+        ),
+    )
+
+
 def _load_toml(path: Path) -> Mapping[str, Any]:
     if not path.exists():
         raise ConfigError(f"Config file does not exist: {path}")
@@ -204,6 +269,15 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     flatline = _optional_table(data, "flatline")
     cadence = _optional_table(data, "cadence")
     serial = _optional_table(data, "serial")
+    uploads = _optional_table(data, "uploads")
+    connectivity_thresholds = _require_mapping(
+        uploads.get("connectivity_thresholds", {}),
+        "uploads.connectivity_thresholds",
+    )
+    datalog_thresholds = _require_mapping(
+        uploads.get("datalog_thresholds", {}),
+        "uploads.datalog_thresholds",
+    )
 
     return TesterConfig(
         expected_sensors=_string_tuple(expect.get("sensors"), "expect.sensors"),
@@ -258,5 +332,15 @@ def load_tester_config(path: Path | None) -> TesterConfig:
             serial.get("silence_fail_after"),
             "serial.silence_fail_after",
             10 * 60,
+        ),
+        connectivity_upload=_upload_channel_config(
+            uploads,
+            connectivity_thresholds,
+            "connectivity",
+        ),
+        datalog_upload=_upload_channel_config(
+            uploads,
+            datalog_thresholds,
+            "datalog",
         ),
     )

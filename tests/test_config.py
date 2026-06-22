@@ -41,6 +41,19 @@ fail_after_missed = 5
 silence_warn_after = "15s"
 silence_fail_after = "45s"
 
+[uploads]
+connectivity = "required"
+datalog = "optional"
+
+[uploads.connectivity_thresholds]
+min_successes = 2
+min_success_rate = 0.75
+max_consecutive_failures = 4
+
+[uploads.datalog_thresholds]
+min_successes = 1
+min_success_rate = 0.5
+
 [sensor_ranges.temperature]
 minimum = -10.0
 maximum = 60.0
@@ -60,6 +73,12 @@ maximum = 60.0
     assert config.cadence_fail_after_missed == 5
     assert config.silence_warn_after_seconds == 15
     assert config.silence_fail_after_seconds == 45
+    assert config.connectivity_upload.mode == "required"
+    assert config.connectivity_upload.min_successes == 2
+    assert config.connectivity_upload.min_success_rate == 0.75
+    assert config.connectivity_upload.max_consecutive_failures == 4
+    assert config.datalog_upload.mode == "optional"
+    assert config.datalog_upload.min_success_rate == 0.5
     assert config.sensor_ranges["temperature"].minimum == -10.0
     assert config.sensor_ranges["temperature"].maximum == 60.0
 
@@ -80,6 +99,20 @@ silence_fail_after = "soon"
     )
 
     with pytest.raises(ConfigError, match="serial.silence_fail_after"):
+        load_tester_config(path)
+
+
+def test_load_tester_config_rejects_invalid_upload_mode(tmp_path):
+    path = tmp_path / "profile.toml"
+    path.write_text(
+        """
+[uploads]
+connectivity = "sure"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="uploads.connectivity"):
         load_tester_config(path)
 
 

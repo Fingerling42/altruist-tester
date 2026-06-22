@@ -138,6 +138,39 @@ def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
     ]
 
 
+def test_capture_raw_serial_writes_upload_events(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
+    serial = FakeSerial(
+        [
+            b"[123] [INFO] [Map#7] Send attempt\n",
+            b"[124] [INFO] [Map#7] POST to connectivity.robonomics.network:65/\n",
+            (
+                b"[125] [INFO] [Map#7] OK, POST succeeded -> "
+                b"connectivity.robonomics.network\n"
+            ),
+            b"[Datalog] Sending: h:45,t:24\n",
+            b"[Datalog] FAILED\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    upload_events = [event for event in events if event["type"] == "upload_event"]
+    assert [event["status"] for event in upload_events] == [
+        "attempt",
+        "target",
+        "success",
+        "attempt",
+        "failure",
+    ]
+    assert stats.upload_stats.channel("connectivity").attempts == 1
+    assert stats.upload_stats.channel("connectivity").successes == 1
+    assert stats.upload_stats.channel("datalog").failures == 1
+
+
 def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)

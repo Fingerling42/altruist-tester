@@ -11,7 +11,9 @@ from altruist_tester.artifacts import RunArtifacts
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.sensor_values import parse_sensor_values
+from altruist_tester.parsers.upload_events import UploadEvent, parse_upload_event
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
+from altruist_tester.uploads import UploadStats
 
 Number = int | float
 
@@ -95,6 +97,7 @@ class SerialLogStats:
     keyword_alerts: tuple[dict[str, str], ...] = ()
     sensor_samples_count: int = 0
     sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
+    upload_stats: UploadStats = field(default_factory=UploadStats)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +217,16 @@ def _append_dev_metrics(
     return _update_dev_metrics_summary(summary, metrics, event["ts"])
 
 
+def _append_upload_event(
+    artifacts: RunArtifacts,
+    upload_event: UploadEvent,
+    upload_stats: UploadStats,
+) -> None:
+    payload = upload_event.as_event_payload()
+    artifacts.append_event("upload_event", **payload)
+    upload_stats.append(upload_event)
+
+
 def _build_progress(
     *,
     now: float,
@@ -288,6 +301,7 @@ def capture_raw_serial(
     metrics_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
+    upload_stats = UploadStats()
 
     def emit_progress(now: float, *, complete: bool = False) -> None:
         if progress_callback is None:
@@ -346,6 +360,9 @@ def capture_raw_serial(
                 parse_sensor_values(decoded_line),
                 sensor_series,
             )
+            upload_event = parse_upload_event(decoded_line)
+            if upload_event is not None:
+                _append_upload_event(artifacts, upload_event, upload_stats)
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
@@ -385,4 +402,5 @@ def capture_raw_serial(
         keyword_alerts=tuple(keyword_alerts),
         sensor_samples_count=sensor_series.count(),
         sensor_series=sensor_series,
+        upload_stats=upload_stats,
     )

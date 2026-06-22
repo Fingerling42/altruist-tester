@@ -1,8 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
+from altruist_tester.parsers.upload_events import UploadEvent
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
+from altruist_tester.rules.uploads import UploadChannelConfig
 from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
 from altruist_tester.serial_logger import SerialLogStats
+from altruist_tester.uploads import UploadStats
 
 
 def _sample(
@@ -27,6 +30,13 @@ def _series(*records: SensorSampleRecord) -> SensorSampleSeries:
     for record in records:
         series.append(record)
     return series
+
+
+def _upload_stats(*events: UploadEvent) -> UploadStats:
+    stats = UploadStats()
+    for event in events:
+        stats.append(event)
+    return stats
 
 
 def test_evaluate_rules_returns_pass_candidate_without_findings():
@@ -110,3 +120,38 @@ def test_evaluate_rules_lets_fail_dominate_warn():
     assert "serial_silence" in result.failed_checks
     assert any(finding.severity == "warn" for finding in result.findings)
     assert any(finding.severity == "fail" for finding in result.findings)
+
+
+def test_evaluate_rules_can_require_upload_success():
+    stats = SerialLogStats(
+        lines_read=10,
+        bytes_read=100,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=50.0,
+        max_interline_gap_seconds=10.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            _sample("BME280", "temperature", 24.0, 0),
+            _sample("BME280", "temperature", 24.5, 60),
+        ),
+        upload_stats=_upload_stats(
+            UploadEvent("connectivity", "attempt"),
+            UploadEvent("connectivity", "failure", reason="server returned HTTP error"),
+        ),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("temperature",),
+            duration_seconds=60,
+            connectivity_upload=UploadChannelConfig(mode="required"),
+        ),
+    )
+
+    assert result.verdict == "FAIL"
+    assert "upload_health" in result.failed_checks
+    assert result.reports.upload_health.channels["connectivity"].failures == 1

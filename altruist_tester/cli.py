@@ -180,6 +180,8 @@ def _rule_engine_config(
         cadence_fail_after_missed=tester_config.cadence_fail_after_missed,
         silence_warn_after_seconds=tester_config.silence_warn_after_seconds,
         silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
+        connectivity_upload=tester_config.connectivity_upload,
+        datalog_upload=tester_config.datalog_upload,
         reference_time=finished_at,
         max_tail_window_seconds=duration_seconds,
         duration_seconds=duration_seconds,
@@ -194,6 +196,7 @@ def _report_messages(rule_result: RuleEngineResult) -> tuple[RuleReportMessage, 
         reports.sensor_cadence,
         reports.runtime_counters,
         reports.serial_silence,
+        reports.upload_health,
     )
 
 
@@ -398,6 +401,7 @@ def run(
     sensor_cadence = rule_result.reports.sensor_cadence
     runtime_counters = rule_result.reports.runtime_counters
     serial_silence = rule_result.reports.serial_silence
+    upload_health = rule_result.reports.upload_health
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -446,6 +450,8 @@ def run(
         "sensor_cadence": sensor_cadence.as_dict(),
         "runtime_counters": runtime_counters.as_dict(),
         "serial_silence": serial_silence.as_dict(),
+        "upload_stats": stats.upload_stats.as_dict(),
+        "upload_health": upload_health.as_dict(),
     }
     artifacts.write_summary(
         run_status,
