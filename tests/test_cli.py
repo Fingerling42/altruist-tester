@@ -189,6 +189,121 @@ def test_ports_handles_empty_list(monkeypatch):
     assert "No serial ports found." in result.output
 
 
+def test_batch_dry_run_prints_planned_device_runs(monkeypatch, tmp_path):
+    urban_profile = tmp_path / "urban.toml"
+    insight_profile = tmp_path / "insight.toml"
+    urban_profile.touch()
+    insight_profile.touch()
+    urban_port = tmp_path / "ttyACM0"
+    urban_port.touch()
+    insight_port = tmp_path / "ttyACM1"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "24h"
+baud = 9600
+output_dir = "batch-runs"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "{urban_port}"
+config = "urban.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "{insight_port}"
+config = "insight.toml"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "altruist_tester.cli.list_serial_ports",
+        lambda: [
+            SerialPortInfo(
+                device=str(urban_port),
+                description="USB JTAG/serial debug unit",
+                manufacturer="Espressif",
+                serial_number="58:8C:81:40:B8:EC",
+            )
+        ],
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["batch", "--config", str(batch_config), "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    output = _plain_output(result)
+    assert "Batch dry-run" in output
+    assert "- duration: 24h (86400s)" in output
+    assert "- baud: 9600" in output
+    assert "- output_dir: batch-runs" in output
+    assert "slot-01" in output
+    assert "model: urban" in output
+    assert f"port: {urban_port}" in output
+    assert "port_exists: yes" in output
+    assert f"config: {urban_profile}" in output
+    assert "device_id=588C8140B8EC" in output
+    assert "mac=58:8C:81:40:B8:EC" in output
+    assert "slot-02" in output
+    assert "model: insight" in output
+    assert f"port: {insight_port}" in output
+    assert "port_exists: no" in output
+    assert f"config: {insight_profile}" in output
+
+
+def test_batch_requires_dry_run(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 2
+    assert "Only --dry-run is supported" in _plain_output(result)
+
+
+def test_batch_dry_run_rejects_invalid_config(tmp_path):
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        """
+[batch]
+duration = "1h"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["batch", "--config", str(batch_config), "--dry-run"],
+    )
+
+    assert result.exit_code == 2
+    assert "devices[0].config is required" in _plain_output(result)
+
+
 def test_run_rejects_missing_serial_port(tmp_path):
     output_dir = tmp_path / "runs"
 

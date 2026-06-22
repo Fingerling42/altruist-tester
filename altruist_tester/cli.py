@@ -9,7 +9,13 @@ import typer
 
 from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
-from altruist_tester.config import ConfigError, TesterConfig, load_tester_config
+from altruist_tester.config import (
+    BatchConfig,
+    ConfigError,
+    TesterConfig,
+    load_batch_config,
+    load_tester_config,
+)
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.identity import detect_device_identity, normalize_device_id
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
@@ -98,6 +104,46 @@ def _print_ports(port_infos: list[SerialPortInfo]) -> None:
 
     for port_info in port_infos:
         typer.echo(_format_port_info(port_info))
+
+
+def _format_optional_path(path: Path | None) -> str:
+    if path is None:
+        return "<none>"
+    return str(path)
+
+
+def _format_batch_identity(port: Path, port_infos: list[SerialPortInfo]) -> str:
+    identity = detect_device_identity(port, port_infos=port_infos)
+    if identity.device_id is None and identity.usb_serial is None:
+        return "<not detected>"
+
+    parts = []
+    if identity.device_id is not None:
+        parts.append(f"device_id={identity.device_id}")
+    if identity.mac is not None:
+        parts.append(f"mac={identity.mac}")
+    if identity.usb_serial is not None:
+        parts.append(f"usb_serial={identity.usb_serial}")
+    return ", ".join(parts)
+
+
+def _print_batch_dry_run(config: BatchConfig) -> None:
+    port_infos = list_serial_ports()
+
+    typer.echo("Batch dry-run")
+    typer.echo(f"- duration: {config.duration_input} ({config.duration_seconds}s)")
+    typer.echo(f"- baud: {config.baud}")
+    typer.echo(f"- output_dir: {config.output_dir}")
+    typer.echo(f"- default_config: {_format_optional_path(config.device_config)}")
+    typer.echo("Devices:")
+    for device in config.devices:
+        port_exists = "yes" if device.port.exists() else "no"
+        typer.echo(f"  - {device.slot}")
+        typer.echo(f"    model: {device.model or '<unspecified>'}")
+        typer.echo(f"    port: {device.port}")
+        typer.echo(f"    port_exists: {port_exists}")
+        typer.echo(f"    config: {_format_optional_path(device.effective_config)}")
+        typer.echo(f"    identity: {_format_batch_identity(device.port, port_infos)}")
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -237,6 +283,44 @@ def ports() -> None:
     """List likely USB serial ports detected on the host."""
 
     _print_ports(list_serial_ports())
+
+
+@app.command()
+def batch(
+    config: Annotated[
+        Path,
+        typer.Option(
+            "--config",
+            help="TOML batch config describing USB slots and device profiles.",
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=False,
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Validate the batch config and print the planned device runs.",
+        ),
+    ] = False,
+) -> None:
+    """Validate and preview a USB batch run without opening serial ports."""
+
+    if not dry_run:
+        raise typer.BadParameter(
+            "Only --dry-run is supported for batch mode for now.",
+            param_hint="--dry-run",
+        )
+
+    try:
+        batch_config = load_batch_config(config)
+    except ConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--config") from exc
+
+    _print_batch_dry_run(batch_config)
 
 
 @app.command()

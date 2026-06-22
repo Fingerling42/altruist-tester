@@ -336,6 +336,17 @@ Batch config validation rejects:
 - mixed Urban and Insight batches that rely on one shared
   `[batch].device_config`.
 
+Preview a batch setup before running real burn-in tests:
+
+```bash
+uv run altruist-tester batch --config configs/batch.usb.example.toml --dry-run
+```
+
+Dry-run validates the config and prints the duration, output directory, slots,
+ports, models, effective tester profiles, port presence, and USB identity when
+metadata is available. It does not open serial ports and does not create run
+artifacts.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.
