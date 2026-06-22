@@ -347,6 +347,23 @@ ports, models, effective tester profiles, port presence, and USB identity when
 metadata is available. It does not open serial ports and does not create run
 artifacts.
 
+When batch execution is enabled, each batch run will create a top-level
+directory that separates batch files from per-device worker output:
+
+```text
+runs/batch_<timestamp>/
+  batch_summary.json
+  batch_report.txt
+  devices/
+    slot-01/
+    slot-02/
+```
+
+Each slot directory is reserved as the output directory for its single-device
+worker. The worker will then create the usual `serial.log`, `events.jsonl`,
+`samples.jsonl`, `summary.json`, and `report.txt` inside that slot-specific
+area.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.

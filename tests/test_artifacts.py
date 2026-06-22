@@ -3,10 +3,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from altruist_tester.artifacts import (
+    create_batch_artifacts,
     create_run_artifacts,
     device_hint_from_port,
     format_timestamp,
+    safe_artifact_name,
 )
+from altruist_tester.config import BatchConfig, BatchDeviceConfig
 from altruist_tester.samples import SensorSample
 
 
@@ -16,6 +19,12 @@ def test_device_hint_from_port():
         device_hint_from_port(Path("/dev/serial/by-id/usb Test Device"))
         == "usb-Test-Device"
     )
+
+
+def test_safe_artifact_name():
+    assert safe_artifact_name("slot-01") == "slot-01"
+    assert safe_artifact_name("rack 1 / slot 02") == "rack-1-slot-02"
+    assert safe_artifact_name("...") == "unknown"
 
 
 def test_format_timestamp_uses_utc_z_suffix():
@@ -51,6 +60,59 @@ def test_create_run_artifacts_initializes_files(tmp_path):
     event = json.loads(artifacts.events_jsonl.read_text().splitlines()[0])
     assert event["type"] == "run_started"
     assert event["port"] == "/dev/ttyACM0"
+
+
+def test_create_batch_artifacts_initializes_batch_skeleton(tmp_path):
+    started_at = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    config = BatchConfig(
+        duration_input="24h",
+        duration_seconds=24 * 60 * 60,
+        baud=115200,
+        output_dir=tmp_path,
+        devices=(
+            BatchDeviceConfig(
+                slot="slot-01",
+                port=Path("/dev/serial/by-path/urban"),
+                model="urban",
+                config=Path("configs/urban.example.toml"),
+                effective_config=Path("configs/urban.example.toml"),
+            ),
+            BatchDeviceConfig(
+                slot="rack 1 / slot 02",
+                port=Path("/dev/serial/by-path/insight"),
+                model="insight",
+                config=Path("configs/insight.example.toml"),
+                effective_config=Path("configs/insight.example.toml"),
+            ),
+        ),
+    )
+
+    artifacts = create_batch_artifacts(tmp_path, config=config, started_at=started_at)
+
+    assert artifacts.batch_id == "batch_2026-06-05T12-00-00Z"
+    assert artifacts.batch_dir == tmp_path / "batch_2026-06-05T12-00-00Z"
+    assert artifacts.summary_json.exists()
+    assert artifacts.report_txt.exists()
+    assert artifacts.devices_dir == artifacts.batch_dir / "devices"
+    assert artifacts.devices[0].output_dir == artifacts.devices_dir / "slot-01"
+    assert artifacts.devices[1].output_dir == artifacts.devices_dir / "rack-1-slot-02"
+    assert artifacts.devices[0].output_dir.exists()
+    assert artifacts.devices[1].output_dir.exists()
+    assert not (artifacts.devices[0].output_dir / "serial.log").exists()
+
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    assert summary["status"] == "initialized"
+    assert summary["duration_sec"] == 24 * 60 * 60
+    assert summary["devices"][0]["slot"] == "slot-01"
+    assert summary["devices"][0]["slot_dir"] == str(artifacts.devices[0].output_dir)
+    assert summary["devices"][0]["config"] == "configs/urban.example.toml"
+    assert summary["devices"][1]["slot"] == "rack 1 / slot 02"
+
+    report = artifacts.report_txt.read_text(encoding="utf-8")
+    assert "Altruist Tester Batch Report" in report
+    assert "Batch ID: batch_2026-06-05T12-00-00Z" in report
+    assert "- slot-01" in report
+    assert "model: insight" in report
 
 
 def test_append_sample_writes_timestamped_sensor_sample(tmp_path):

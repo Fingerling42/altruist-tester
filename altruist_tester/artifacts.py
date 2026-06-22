@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from altruist_tester.config import BatchConfig, BatchDeviceConfig
 from altruist_tester.samples import SensorSample, SensorSampleRecord
 
 ARTIFACT_FILENAMES = ("serial.log", "events.jsonl", "samples.jsonl")
@@ -41,6 +42,13 @@ def device_hint_from_port(port: Path) -> str:
     hint = port.name or "unknown"
     hint = _RUN_ID_SAFE_RE.sub("-", hint).strip("-_.")
     return hint or "unknown"
+
+
+def safe_artifact_name(value: str) -> str:
+    """Return a filesystem-safe name for an artifact directory segment."""
+
+    name = _RUN_ID_SAFE_RE.sub("-", value).strip("-_.")
+    return name or "unknown"
 
 
 def _format_finding_line(finding: dict[str, Any]) -> str:
@@ -342,6 +350,162 @@ class RunArtifacts:
         )
 
         self.report_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchDeviceArtifacts:
+    """Paths reserved for one device inside a batch run directory."""
+
+    slot: str
+    slot_dir_name: str
+    device: BatchDeviceConfig
+    output_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class BatchArtifacts:
+    """Paths and metadata for one USB batch run."""
+
+    batch_id: str
+    batch_dir: Path
+    started_at: datetime
+    config: BatchConfig
+    summary_json: Path
+    report_txt: Path
+    devices_dir: Path
+    devices: tuple[BatchDeviceArtifacts, ...]
+
+
+def _batch_device_summary(device_artifacts: BatchDeviceArtifacts) -> dict[str, Any]:
+    device = device_artifacts.device
+    return {
+        "slot": device.slot,
+        "slot_dir": str(device_artifacts.output_dir),
+        "port": str(device.port),
+        "model": device.model,
+        "config": str(device.effective_config) if device.effective_config else None,
+        "expected_sensors": list(device.expected_sensors),
+        "expected_metrics": list(device.expected_metrics),
+    }
+
+
+def _write_batch_summary(artifacts: BatchArtifacts, status: str) -> None:
+    summary = {
+        "status": status,
+        "batch_id": artifacts.batch_id,
+        "batch_dir": str(artifacts.batch_dir),
+        "started_at": format_timestamp(artifacts.started_at),
+        "duration": artifacts.config.duration_input,
+        "duration_sec": artifacts.config.duration_seconds,
+        "baud": artifacts.config.baud,
+        "output_dir": str(artifacts.config.output_dir),
+        "device_config": (
+            str(artifacts.config.device_config)
+            if artifacts.config.device_config is not None
+            else None
+        ),
+        "artifacts": {
+            "batch_summary_json": str(artifacts.summary_json),
+            "batch_report_txt": str(artifacts.report_txt),
+            "devices_dir": str(artifacts.devices_dir),
+        },
+        "devices": [
+            _batch_device_summary(device_artifacts)
+            for device_artifacts in artifacts.devices
+        ],
+    }
+    artifacts.summary_json.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_batch_report(artifacts: BatchArtifacts, status: str) -> None:
+    lines = [
+        "Altruist Tester Batch Report",
+        "============================",
+        "",
+        f"Batch ID: {artifacts.batch_id}",
+        f"Status: {status}",
+        f"Started at: {format_timestamp(artifacts.started_at)}",
+        f"Duration: {artifacts.config.duration_input} "
+        f"({artifacts.config.duration_seconds}s)",
+        f"Baud: {artifacts.config.baud}",
+        f"Output dir: {artifacts.config.output_dir}",
+        "",
+        "Devices:",
+    ]
+    for device_artifacts in artifacts.devices:
+        device = device_artifacts.device
+        lines.extend(
+            [
+                f"- {device.slot}",
+                f"  model: {device.model or 'unspecified'}",
+                f"  port: {device.port}",
+                f"  config: {device.effective_config}",
+                f"  output dir: {device_artifacts.output_dir}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "Artifacts:",
+            f"- batch summary: {artifacts.summary_json}",
+            f"- batch report: {artifacts.report_txt}",
+            f"- devices: {artifacts.devices_dir}",
+        ]
+    )
+    artifacts.report_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def create_batch_artifacts(
+    output_dir: Path,
+    *,
+    config: BatchConfig,
+    started_at: datetime | None = None,
+) -> BatchArtifacts:
+    """Create the artifact directory skeleton for one USB batch run.
+
+    This initializes only batch-level files and per-slot output directories.
+    The usual per-device run files are created later by each device worker
+    inside its reserved slot directory.
+    """
+
+    started_at = started_at or utc_now()
+    batch_id = f"batch_{_format_run_id_time(started_at)}"
+    batch_dir = output_dir / batch_id
+    suffix = 1
+    while batch_dir.exists():
+        suffix += 1
+        batch_dir = output_dir / f"{batch_id}-{suffix}"
+
+    devices_dir = batch_dir / "devices"
+    devices_dir.mkdir(parents=True)
+    device_artifacts = tuple(
+        BatchDeviceArtifacts(
+            slot=device.slot,
+            slot_dir_name=safe_artifact_name(device.slot),
+            device=device,
+            output_dir=devices_dir / safe_artifact_name(device.slot),
+        )
+        for device in config.devices
+    )
+    for device in device_artifacts:
+        device.output_dir.mkdir()
+
+    artifacts = BatchArtifacts(
+        batch_id=batch_dir.name,
+        batch_dir=batch_dir,
+        started_at=started_at,
+        config=config,
+        summary_json=batch_dir / "batch_summary.json",
+        report_txt=batch_dir / "batch_report.txt",
+        devices_dir=devices_dir,
+        devices=device_artifacts,
+    )
+    _write_batch_summary(artifacts, "initialized")
+    _write_batch_report(artifacts, "initialized")
+    return artifacts
 
 
 def create_run_artifacts(
