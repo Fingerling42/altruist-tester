@@ -171,6 +171,34 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     assert stats.upload_stats.channel("datalog").failures == 1
 
 
+def test_capture_raw_serial_records_device_identity(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"[123] [INFO] ChipId: : 1051DB010C70\n",
+            b"[124] [INFO] ChipId: : 1051DB010C70\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    identity_events = [
+        event for event in events if event["type"] == "device_identity_observed"
+    ]
+    assert identity_events == [
+        {
+            "ts": identity_events[0]["ts"],
+            "type": "device_identity_observed",
+            "source": "serial_log",
+            "device_id": "1051DB010C70",
+        }
+    ]
+    assert stats.serial_device_ids == ("1051DB010C70",)
+
+
 def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)

@@ -164,6 +164,7 @@ def test_ports_lists_detected_serial_ports(monkeypatch):
                 vid=0x303A,
                 pid=0x1001,
                 manufacturer="Espressif",
+                serial_number="10:51:DB:01:0C:70",
             )
         ],
     )
@@ -175,6 +176,8 @@ def test_ports_lists_detected_serial_ports(monkeypatch):
     assert "USB JTAG/serial debug unit" in result.output
     assert "Espressif" in result.output
     assert "VID:PID=303A:1001" in result.output
+    assert "SER=10:51:DB:01:0C:70" in result.output
+    assert "device_id=1051DB010C70" in result.output
 
 
 def test_ports_handles_empty_list(monkeypatch):
@@ -281,6 +284,17 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     output_dir = tmp_path / "runs"
     opened = {}
     captured = {}
+    monkeypatch.setattr(
+        "altruist_tester.cli.list_serial_ports",
+        lambda: [
+            SerialPortInfo(
+                device=str(port),
+                description="USB JTAG/serial debug unit",
+                manufacturer="Espressif",
+                serial_number="10:51:DB:01:0C:70",
+            )
+        ],
+    )
 
     def capture_hook(
         serial_port,
@@ -310,6 +324,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
             ),
             sensor_samples_count=2,
             sensor_series=_series_with_metrics("temperature", "humidity"),
+            serial_device_ids=("1051DB010C70",),
         ),
         opened=opened,
         capture_hook=capture_hook,
@@ -345,6 +360,12 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert summary["baud"] == 9600
     assert summary["duration"] == "10m"
     assert summary["duration_sec"] == 600
+    assert summary["device_identity"]["device_id"] == "1051DB010C70"
+    assert summary["device_identity"]["mac"] == "10:51:DB:01:0C:70"
+    assert summary["device_identity"]["sources"] == {
+        "serial_log": "1051DB010C70",
+        "usb": "1051DB010C70",
+    }
     assert summary["verdict"] == "WARN"
     assert summary["metrics_seen"] is True
     assert summary["samples_seen"] is True
@@ -380,6 +401,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "serial_opened" in events_text
     assert "serial_capture_started" in events_text
     assert "serial_capture_completed" in events_text
+    assert "device_identity_detected" in events_text
+    assert "device_identity_resolved" in events_text
     # Aggregated rule results belong to summary.json/report.txt; events.jsonl is
     # kept for runtime milestones and raw health observations.
     assert "sensor_ranges_checked" not in events_text
@@ -391,6 +414,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     assert "- verdict: WARN" in report_text
     assert "Health:" in report_text
     assert "Sensors:" in report_text
+    assert "Device:" in report_text
+    assert "- id: 1051DB010C70" in report_text
 
 
 def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):

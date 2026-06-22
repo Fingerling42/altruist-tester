@@ -70,6 +70,23 @@ def _format_last_dev_metrics(metrics: dict[str, Any]) -> str:
 
 
 def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> None:
+    identity = details.get("device_identity")
+    if isinstance(identity, dict):
+        lines.extend(
+            [
+                "",
+                "Device:",
+                f"- id: {identity.get('device_id') or 'unknown'}",
+                f"- mac: {identity.get('mac') or 'unknown'}",
+                f"- usb serial: {identity.get('usb_serial') or 'unknown'}",
+                f"- by-id: {identity.get('by_id') or 'unknown'}",
+                f"- by-path: {identity.get('by_path') or 'unknown'}",
+            ]
+        )
+        conflicts = identity.get("conflicts")
+        if isinstance(conflicts, list) and conflicts:
+            lines.append("- identity conflicts: yes")
+
     last_metrics_text = _format_last_dev_metrics(details.get("last_dev_metrics") or {})
     rules = details.get("rules")
     if isinstance(rules, dict):
@@ -186,6 +203,7 @@ class RunArtifacts:
     baud: int
     duration_input: str
     duration_seconds: int
+    device_identity: dict[str, Any] | None = None
     serial_log: Path = field(init=False)
     events_jsonl: Path = field(init=False)
     samples_jsonl: Path = field(init=False)
@@ -263,6 +281,8 @@ class RunArtifacts:
                 "report_txt": str(self.report_txt),
             },
         }
+        if self.device_identity is not None:
+            summary["device_identity"] = self.device_identity
         if finished_at is not None:
             summary["finished_at"] = format_timestamp(finished_at)
         if message is not None:
@@ -331,6 +351,7 @@ def create_run_artifacts(
     baud: int,
     duration_input: str,
     duration_seconds: int,
+    device_identity: dict[str, Any] | None = None,
     started_at: datetime | None = None,
 ) -> RunArtifacts:
     """Create and initialize the artifact directory for one run.
@@ -357,6 +378,7 @@ def create_run_artifacts(
         baud=baud,
         duration_input=duration_input,
         duration_seconds=duration_seconds,
+        device_identity=device_identity,
     )
 
     for filename in ARTIFACT_FILENAMES:
@@ -371,5 +393,6 @@ def create_run_artifacts(
         baud=baud,
         duration=duration_input,
         duration_sec=duration_seconds,
+        device_identity=device_identity,
     )
     return artifacts

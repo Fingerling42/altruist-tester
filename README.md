@@ -21,6 +21,10 @@ List detected USB serial ports:
 uv run altruist-tester ports
 ```
 
+When USB metadata is available, the command also prints the USB serial number
+and normalized `device_id`. For ESP32-C6 Altruist devices this usually matches
+the firmware `ChipId`/MAC without separators.
+
 Run a short test using the only detected serial port:
 
 ```bash
@@ -100,6 +104,25 @@ uv run altruist-tester run --auto --duration 10m \
 If no expectations are configured, the run can still complete, but
 `summary.json` records a warning because the tester cannot know which sensor
 metrics are mandatory for that device.
+
+## Device Identity
+
+The tester records device identity even for a single-device run. It uses several
+sources when available:
+
+- USB metadata from pyserial, especially the USB serial number;
+- `/dev/serial/by-id/...` names, which often include the ESP MAC;
+- firmware serial lines such as `ChipId: ...`;
+- JSON payload lines with `sensor_id`, when they appear in UART logs.
+
+The final `summary.json` contains a `device_identity` object with the normalized
+`device_id`, colon-formatted `mac`, source values, stable `by-id`/`by-path`
+links, and any conflicts between sources. `report.txt` includes the same
+identity in a compact `Device` section.
+
+For multi-device stands, use `/dev/serial/by-path/...` for physical slot mapping
+and let the tester derive the device identity from USB metadata and firmware
+logs. Manual MAC lists should be a fallback, not the main workflow.
 
 ## Health Checks
 
@@ -189,7 +212,8 @@ top-level findings, counters, and per-rule sections:
   - `sensor_cadence`;
   - `runtime_counters`;
   - `serial_silence`;
-  - `upload_health`.
+  - `upload_health`;
+  - `device_identity`.
 
 - `report.txt` is the human-readable run report for quick inspection over SSH or
 for pasting into an issue or chat.
@@ -198,7 +222,7 @@ for pasting into an issue or chat.
 is useful for graphs, cadence analysis, flatline debugging, and parser checks.
 
 - `events.jsonl` contains chronological tester events, parsed development metrics,
-keyword alerts, and upload observations.
+keyword alerts, upload observations, and identity observations.
 
 While a run is active, the CLI prints live progress with elapsed time, serial
 line and byte counters, current serial silence, parsed dev metrics, parsed

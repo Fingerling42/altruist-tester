@@ -18,6 +18,9 @@ class SerialPortInfo:
     vid: int | None = None
     pid: int | None = None
     manufacturer: str | None = None
+    product: str | None = None
+    serial_number: str | None = None
+    location: str | None = None
 
     @property
     def vid_pid(self) -> str:
@@ -53,6 +56,9 @@ def list_serial_ports() -> list[SerialPortInfo]:
             vid=port.vid,
             pid=port.pid,
             manufacturer=port.manufacturer,
+            product=port.product,
+            serial_number=port.serial_number,
+            location=port.location,
         )
         for port in list_ports.comports()
         if _is_usb_serial_candidate(port.device)

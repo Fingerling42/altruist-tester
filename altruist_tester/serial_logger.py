@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from altruist_tester.artifacts import RunArtifacts
+from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.sensor_values import parse_sensor_values
@@ -98,6 +99,7 @@ class SerialLogStats:
     sensor_samples_count: int = 0
     sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
     upload_stats: UploadStats = field(default_factory=UploadStats)
+    serial_device_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +304,7 @@ def capture_raw_serial(
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
     upload_stats = UploadStats()
+    serial_device_ids: list[str] = []
 
     def emit_progress(now: float, *, complete: bool = False) -> None:
         if progress_callback is None:
@@ -348,6 +351,18 @@ def capture_raw_serial(
             decoded_line = _decode_serial_line(line)
             if mirror_lines_to_events:
                 artifacts.append_event("serial_line", line=decoded_line)
+
+            serial_device_id = parse_identity_from_serial_line(decoded_line)
+            if (
+                serial_device_id is not None
+                and serial_device_id not in serial_device_ids
+            ):
+                serial_device_ids.append(serial_device_id)
+                artifacts.append_event(
+                    "device_identity_observed",
+                    source="serial_log",
+                    device_id=serial_device_id,
+                )
 
             keyword_alerts.extend(
                 _append_keyword_alerts(
@@ -403,4 +418,5 @@ def capture_raw_serial(
         sensor_samples_count=sensor_series.count(),
         sensor_series=sensor_series,
         upload_stats=upload_stats,
+        serial_device_ids=tuple(serial_device_ids),
     )

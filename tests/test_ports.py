@@ -26,6 +26,9 @@ def test_list_serial_ports_sorts_detected_ports(monkeypatch):
                 vid=None,
                 pid=None,
                 manufacturer=None,
+                product=None,
+                serial_number=None,
+                location=None,
             ),
             SimpleNamespace(
                 device="/dev/ttyUSB0",
@@ -34,6 +37,9 @@ def test_list_serial_ports_sorts_detected_ports(monkeypatch):
                 vid=0x1111,
                 pid=0x2222,
                 manufacturer="Example",
+                product="Example USB Serial",
+                serial_number="ABC123",
+                location="1-1",
             ),
             SimpleNamespace(
                 device="/dev/ttyACM0",
@@ -42,6 +48,9 @@ def test_list_serial_ports_sorts_detected_ports(monkeypatch):
                 vid=0x303A,
                 pid=0x1001,
                 manufacturer="Espressif",
+                product="USB JTAG/serial debug unit",
+                serial_number="10:51:DB:01:0C:70",
+                location="1-2",
             ),
         ],
     )
@@ -51,3 +60,4 @@ def test_list_serial_ports_sorts_detected_ports(monkeypatch):
     assert [port.device for port in ports] == ["/dev/ttyACM0", "/dev/ttyUSB0"]
     assert ports[0].description == "CDC device"
     assert ports[0].manufacturer == "Espressif"
+    assert ports[0].serial_number == "10:51:DB:01:0C:70"

@@ -11,6 +11,7 @@ from altruist_tester import __version__
 from altruist_tester.artifacts import create_run_artifacts, utc_now
 from altruist_tester.config import ConfigError, TesterConfig, load_tester_config
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
+from altruist_tester.identity import detect_device_identity, normalize_device_id
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
 from altruist_tester.rules.engine import (
     RuleEngineConfig,
@@ -72,8 +73,17 @@ def _format_port_info(port: SerialPortInfo) -> str:
         details.append(port.description)
     if port.manufacturer:
         details.append(port.manufacturer)
+    if port.product and port.product != port.description:
+        details.append(port.product)
     if port.vid_pid:
         details.append(f"VID:PID={port.vid_pid}")
+    if port.serial_number:
+        details.append(f"SER={port.serial_number}")
+        device_id = normalize_device_id(port.serial_number)
+        if device_id is not None:
+            details.append(f"device_id={device_id}")
+    if port.location:
+        details.append(f"LOCATION={port.location}")
     if port.hwid:
         details.append(f"HWID={port.hwid}")
     if details:
@@ -340,12 +350,21 @@ def run(
 
     # Create run artifacts only after static CLI/config validation; from this
     # point on, hardware failures are part of the run record.
+    device_identity = detect_device_identity(
+        resolved_port,
+        port_infos=list_serial_ports(),
+    )
     artifacts = create_run_artifacts(
         output_dir,
         port=resolved_port,
         baud=baud,
         duration_input=duration,
         duration_seconds=duration_seconds,
+        device_identity=device_identity.as_dict(),
+    )
+    artifacts.append_event(
+        "device_identity_detected",
+        **device_identity.as_dict(),
     )
 
     if not resolved_port.exists():
@@ -385,6 +404,17 @@ def run(
         raise typer.Exit(code=2) from exc
 
     finished_at = utc_now()
+    serial_log_device_id = (
+        stats.serial_device_ids[0] if len(stats.serial_device_ids) == 1 else None
+    )
+    device_identity = device_identity.with_serial_log_device_id(serial_log_device_id)
+    final_device_identity = device_identity.as_dict()
+    final_device_identity["serial_log_device_ids"] = list(stats.serial_device_ids)
+    artifacts.device_identity = final_device_identity
+    artifacts.append_event(
+        "device_identity_resolved",
+        **final_device_identity,
+    )
     rule_result = evaluate_rules(
         stats,
         _rule_engine_config(
@@ -452,6 +482,7 @@ def run(
         "serial_silence": serial_silence.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
         "upload_health": upload_health.as_dict(),
+        "device_identity": final_device_identity,
     }
     artifacts.write_summary(
         run_status,
