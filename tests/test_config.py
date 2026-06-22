@@ -238,6 +238,168 @@ duration = "1h"
         load_batch_config(path)
 
 
+def test_load_batch_config_rejects_missing_effective_device_config(tmp_path):
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="devices\\[0\\]\\.config is required"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_missing_referenced_device_config(tmp_path):
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+config = "missing.toml"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="devices\\[0\\]\\.config does not exist"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_missing_referenced_default_config(tmp_path):
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "missing.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="batch\\.device_config does not exist"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_duplicate_slots(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-02"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Duplicate device slot"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_duplicate_ports(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Duplicate device port"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_unknown_model(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "unknown"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="devices\\[0\\]\\.model"):
+        load_batch_config(path)
+
+
+def test_load_batch_config_rejects_shared_config_for_mixed_models(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "1h"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/slot-02"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Mixed device models"):
+        load_batch_config(path)
+
+
 def test_batch_usb_example_config_loads():
     config = load_batch_config(Path("configs/batch.usb.example.toml"))
 

@@ -16,6 +16,8 @@ from altruist_tester.rules.defaults import (
 )
 from altruist_tester.rules.uploads import UploadChannelConfig, UploadMode
 
+BATCH_DEVICE_MODELS = frozenset({"urban", "insight"})
+
 
 class ConfigError(ValueError):
     """Raised when a tester config file cannot be loaded or validated."""
@@ -223,7 +225,18 @@ def _optional_model(value: object, name: str) -> str | None:
     model = _optional_string(value, name)
     if model is None:
         return None
-    return model.lower()
+    model = model.lower()
+    if model not in BATCH_DEVICE_MODELS:
+        allowed = ", ".join(sorted(BATCH_DEVICE_MODELS))
+        raise ConfigError(f"{name} must be one of: {allowed}")
+    return model
+
+
+def _ensure_file_exists(path: Path, name: str) -> None:
+    if not path.exists():
+        raise ConfigError(f"{name} does not exist: {path}")
+    if not path.is_file():
+        raise ConfigError(f"{name} is not a file: {path}")
 
 
 def _sensor_range_from_table(
@@ -352,6 +365,56 @@ def _batch_device_config(
     )
 
 
+def _validate_unique_batch_values(
+    values: tuple[tuple[object, str], ...],
+    *,
+    name: str,
+) -> None:
+    seen: dict[object, str] = {}
+    for value, slot in values:
+        previous_slot = seen.get(value)
+        if previous_slot is not None:
+            raise ConfigError(
+                f"Duplicate device {name}: {value} used by {previous_slot} and {slot}"
+            )
+        seen[value] = slot
+
+
+def _validate_batch_config(config: BatchConfig) -> None:
+    if config.device_config is not None:
+        _ensure_file_exists(config.device_config, "batch.device_config")
+
+    for index, device in enumerate(config.devices):
+        name = f"devices[{index}]"
+        if device.config is not None:
+            _ensure_file_exists(device.config, f"{name}.config")
+        if device.effective_config is None:
+            raise ConfigError(
+                f"{name}.config is required because no batch.device_config is set"
+            )
+
+    _validate_unique_batch_values(
+        tuple((device.slot, device.slot) for device in config.devices),
+        name="slot",
+    )
+    _validate_unique_batch_values(
+        tuple((device.port, device.slot) for device in config.devices),
+        name="port",
+    )
+
+    models = {device.model for device in config.devices if device.model is not None}
+    if len(models) > 1:
+        devices_without_config = [
+            device.slot for device in config.devices if device.config is None
+        ]
+        if devices_without_config:
+            slots = ", ".join(devices_without_config)
+            raise ConfigError(
+                "Mixed device models require per-device config for every slot; "
+                f"missing config for: {slots}"
+            )
+
+
 def load_batch_config(path: Path) -> BatchConfig:
     """Load a USB batch TOML configuration.
 
@@ -382,7 +445,7 @@ def load_batch_config(path: Path) -> BatchConfig:
     if not devices_value:
         raise ConfigError("devices must contain at least one device")
 
-    return BatchConfig(
+    config = BatchConfig(
         duration_input=duration_input,
         duration_seconds=duration_seconds,
         baud=_int_value(batch.get("baud"), "batch.baud", 115200),
@@ -401,6 +464,8 @@ def load_batch_config(path: Path) -> BatchConfig:
             for index, device in enumerate(devices_value)
         ),
     )
+    _validate_batch_config(config)
+    return config
 
 
 def load_tester_config(path: Path | None) -> TesterConfig:

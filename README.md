@@ -326,6 +326,16 @@ to the same Raspberry Pi, set `config` explicitly for every device. The shared
 `[batch].device_config` field is only a fallback for homogeneous batches where
 all slots use the same tester profile.
 
+Batch config validation rejects:
+
+- empty or duplicate `slot` values;
+- duplicate `port` values;
+- missing referenced tester profile files;
+- devices without an effective profile config;
+- unknown `model` values;
+- mixed Urban and Insight batches that rely on one shared
+  `[batch].device_config`.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.
