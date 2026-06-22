@@ -171,6 +171,38 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     assert stats.upload_stats.channel("datalog").failures == 1
 
 
+def test_capture_raw_serial_counts_datalog_api_status_blocks(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
+    serial = FakeSerial(
+        [
+            b"API Name: Robonomics Datalog\n",
+            b"  Count Sends: 0\n",
+            b"  Last Send Time: Thu Jan  1 00:00:00 1970\n",
+            b"  Is OK: Yes\n",
+            b"API Name: Robonomics Datalog\n",
+            b"  Count Sends: 1\n",
+            b"  Last Send Time: Mon Jun 22 10:10:30 2026\n",
+            b"  Is OK: Yes\n",
+            b"API Name: Robonomics Datalog\n",
+            b"  Count Sends: 1\n",
+            b"  Last Send Time: Mon Jun 22 10:10:30 2026\n",
+            b"  Is OK: Yes\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    upload_events = [event for event in events if event["type"] == "upload_event"]
+    datalog_events = [event for event in upload_events if event["channel"] == "datalog"]
+    assert [event["status"] for event in datalog_events] == ["success"]
+    assert datalog_events[0]["sequence"] == 1
+    assert stats.upload_stats.channel("datalog").successes == 1
+    assert stats.upload_stats.channel("datalog").attempts == 0
+
+
 def test_capture_raw_serial_records_device_identity(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)

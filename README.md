@@ -182,6 +182,8 @@ Upload delivery:
   skipped sends, targets, and failure reasons;
 - parses Robonomics Datalog success and failure lines when that firmware API is
   enabled and logs them;
+- also reads Datalog delivery from development `Device Status` blocks by
+  tracking `Robonomics Datalog` `Count Sends` increases and `Is OK`;
 - checks upload delivery only when the config marks a channel as `optional` or
   `required`;
 - keeps channels `disabled` by default because many devices are tested before
