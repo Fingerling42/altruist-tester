@@ -380,7 +380,13 @@ def _validate_unique_batch_values(
         seen[value] = slot
 
 
-def _validate_batch_config(config: BatchConfig) -> None:
+def validate_batch_config(config: BatchConfig) -> None:
+    """Validate an already constructed USB batch configuration.
+
+    :raises ConfigError: If slots, ports, profile paths, or mixed-model config
+        rules are invalid.
+    """
+
     if config.device_config is not None:
         _ensure_file_exists(config.device_config, "batch.device_config")
 
@@ -464,7 +470,7 @@ def load_batch_config(path: Path) -> BatchConfig:
             for index, device in enumerate(devices_value)
         ),
     )
-    _validate_batch_config(config)
+    validate_batch_config(config)
     return config
 
 

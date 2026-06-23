@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -254,6 +255,153 @@ config = "insight.toml"
     assert f"port: {insight_port}" in output
     assert "port_exists: no" in output
     assert f"config: {insight_profile}" in output
+
+
+def test_batch_explicit_ports_dry_run_generates_device_slots(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    first_port = tmp_path / "ttyACM0"
+    first_port.touch()
+    second_port = tmp_path / "ttyACM1"
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "batch",
+            "--port",
+            str(first_port),
+            "--port",
+            str(second_port),
+            "--duration",
+            "10s",
+            "--device-config",
+            str(profile),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    output = _plain_output(result)
+    assert "Batch dry-run" in output
+    assert "- duration: 10s (10s)" in output
+    assert "- default_config:" in output
+    assert "device-01" in output
+    assert "device-02" in output
+    assert f"port: {first_port}" in output
+    assert f"port: {second_port}" in output
+    assert "port_exists: yes" in output
+    assert "port_exists: no" in output
+    assert f"config: {profile}" in output
+
+
+def test_batch_explicit_ports_run_uses_shared_device_config(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    first_port = Path("/dev/serial/by-path/first")
+    second_port = Path("/dev/serial/by-path/second")
+    started = []
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            self.args = list(args)
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+            started.append(self)
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "batch",
+            "--port",
+            str(first_port),
+            "--port",
+            str(second_port),
+            "--duration",
+            "10s",
+            "--device-config",
+            str(profile),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(started) == 2
+    assert started[0].args[started[0].args.index("--port") + 1] == str(first_port)
+    assert started[1].args[started[1].args.index("--port") + 1] == str(second_port)
+    assert started[0].args[started[0].args.index("--config") + 1] == str(profile)
+    assert started[1].args[started[1].args.index("--config") + 1] == str(profile)
+    assert started[0].args[started[0].args.index("--duration") + 1] == "10s"
+
+    batch_dir = next(output_dir.iterdir())
+    assert (batch_dir / "devices" / "device-01").exists()
+    assert (batch_dir / "devices" / "device-02").exists()
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["devices"][0]["slot"] == "device-01"
+    assert summary["devices"][1]["slot"] == "device-02"
+
+
+def test_batch_explicit_ports_requires_duration(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "batch",
+            "--port",
+            "/dev/serial/by-path/first",
+            "--device-config",
+            str(profile),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Specify --duration" in _plain_output(result)
+
+
+def test_batch_rejects_config_mixed_with_explicit_ports(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+device_config = "{profile}"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+""",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "batch",
+            "--config",
+            str(batch_config),
+            "--port",
+            "/dev/serial/by-path/other",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Use either --config or explicit --port mode" in _plain_output(result)
 
 
 def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):

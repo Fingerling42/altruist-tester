@@ -353,6 +353,21 @@ Run the batch:
 uv run altruist-tester batch --config configs/batch.usb.example.toml
 ```
 
+For a quick homogeneous batch, pass ports explicitly and use one shared tester
+profile:
+
+```bash
+uv run altruist-tester batch \
+  --port /dev/serial/by-path/pci-0000:00:14.0-usb-0:1.1:1.0 \
+  --port /dev/serial/by-path/pci-0000:00:14.0-usb-0:1.2:1.0 \
+  --duration 2h \
+  --device-config configs/urban.example.toml
+```
+
+Explicit port mode generates slot names as `device-01`, `device-02`, and so on.
+Use TOML config for mixed Urban and Insight batches where devices need different
+profiles.
+
 The batch runner starts one `altruist-tester run` subprocess per device and
 waits for all workers to finish. Each batch run creates a top-level directory
 that separates batch files from per-device worker output:

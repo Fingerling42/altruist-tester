@@ -19,10 +19,12 @@ from altruist_tester.artifacts import (
 )
 from altruist_tester.config import (
     BatchConfig,
+    BatchDeviceConfig,
     ConfigError,
     TesterConfig,
     load_batch_config,
     load_tester_config,
+    validate_batch_config,
 )
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.identity import detect_device_identity, normalize_device_id
@@ -164,6 +166,86 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
         typer.echo(f"    port_exists: {port_exists}")
         typer.echo(f"    config: {_format_optional_path(device.effective_config)}")
         typer.echo(f"    identity: {_format_batch_identity(device.port, port_infos)}")
+
+
+def _explicit_batch_config(
+    *,
+    ports: list[Path] | None,
+    duration: str | None,
+    baud: int,
+    output_dir: Path,
+    device_config: Path | None,
+) -> BatchConfig:
+    if not ports:
+        raise typer.BadParameter(
+            "Specify --config or at least one --port.",
+            param_hint="--port",
+        )
+    if duration is None:
+        raise typer.BadParameter(
+            "Specify --duration when using explicit --port mode.",
+            param_hint="--duration",
+        )
+    if device_config is None:
+        raise typer.BadParameter(
+            "Specify --device-config when using explicit --port mode.",
+            param_hint="--device-config",
+        )
+
+    try:
+        duration_seconds = parse_duration_seconds(duration)
+    except DurationParseError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--duration") from exc
+
+    config = BatchConfig(
+        duration_input=duration,
+        duration_seconds=duration_seconds,
+        baud=baud,
+        output_dir=output_dir,
+        device_config=device_config,
+        devices=tuple(
+            BatchDeviceConfig(
+                slot=f"device-{index:02d}",
+                port=port,
+                effective_config=device_config,
+            )
+            for index, port in enumerate(ports, start=1)
+        ),
+    )
+    try:
+        validate_batch_config(config)
+    except ConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--device-config") from exc
+    return config
+
+
+def _load_batch_cli_config(
+    *,
+    config: Path | None,
+    ports: list[Path] | None,
+    duration: str | None,
+    baud: int,
+    output_dir: Path,
+    device_config: Path | None,
+) -> BatchConfig:
+    if config is not None:
+        if ports or duration is not None or device_config is not None:
+            raise typer.BadParameter(
+                "Use either --config or explicit --port mode, not both.",
+                param_hint="--config",
+            )
+        try:
+            return load_batch_config(config)
+        except ConfigError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--config") from exc
+
+    return _explicit_batch_config(
+        ports=ports,
+        duration=duration,
+        baud=baud,
+        output_dir=output_dir,
+        device_config=device_config,
+    )
 
 
 def _batch_worker_command(
@@ -423,7 +505,7 @@ def ports() -> None:
 @app.command()
 def batch(
     config: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--config",
             help="TOML batch config describing USB slots and device profiles.",
@@ -433,7 +515,60 @@ def batch(
             readable=True,
             resolve_path=False,
         ),
-    ],
+    ] = None,
+    port: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--port",
+            help=(
+                "Serial port path for homogeneous explicit batch mode. "
+                "Repeat the option for multiple devices."
+            ),
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            writable=False,
+            readable=False,
+            resolve_path=False,
+        ),
+    ] = None,
+    duration: Annotated[
+        str | None,
+        typer.Option(
+            "--duration",
+            help="Batch duration for explicit --port mode.",
+        ),
+    ] = None,
+    baud: Annotated[
+        int,
+        typer.Option(
+            "--baud",
+            min=1,
+            help="Serial baud rate for explicit --port mode.",
+        ),
+    ] = 115200,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Directory where batch artifacts will be written in explicit mode.",
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=False,
+        ),
+    ] = DEFAULT_OUTPUT_DIR,
+    device_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--device-config",
+            help="Shared tester profile for explicit homogeneous batch mode.",
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=False,
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -444,10 +579,14 @@ def batch(
 ) -> None:
     """Run or preview a USB batch burn-in using one worker per device."""
 
-    try:
-        batch_config = load_batch_config(config)
-    except ConfigError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--config") from exc
+    batch_config = _load_batch_cli_config(
+        config=config,
+        ports=port,
+        duration=duration,
+        baud=baud,
+        output_dir=output_dir,
+        device_config=device_config,
+    )
 
     if dry_run:
         _print_batch_dry_run(batch_config)
