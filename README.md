@@ -299,6 +299,13 @@ tester profile: the batch config maps physical USB slots to ports and profiles,
 while `configs/urban.example.toml` and `configs/insight.example.toml` keep the
 actual health rules for each device type.
 
+For a Raspberry Pi stand with several devices, use a powered USB hub, USB-C
+data cables, and visible labels for every physical hub port. Prefer
+`/dev/serial/by-path/...` in the batch config because it follows the physical
+hub port. `/dev/serial/by-id/...` is useful for identifying a concrete device
+and is recorded in reports, but it is less convenient for saying "slot 3 on the
+hub". See `docs/raspberry-pi-24h-runbook.md` for the full Pi + USB hub setup.
+
 Example:
 
 ```toml
@@ -367,6 +374,11 @@ uv run altruist-tester batch \
 Explicit port mode generates slot names as `device-01`, `device-02`, and so on.
 Use TOML config for mixed Urban and Insight batches where devices need different
 profiles.
+
+USB metadata does not tell the tester whether a device is Urban or Insight.
+For mixed batches, set `model` and `config` for every slot explicitly. The
+identity fields answer which concrete device was connected; the profile answers
+how that device was tested.
 
 The batch runner starts one `altruist-tester run` subprocess per device and
 waits for all workers to finish. Each batch run creates a top-level directory

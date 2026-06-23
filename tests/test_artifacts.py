@@ -115,6 +115,78 @@ def test_create_batch_artifacts_initializes_batch_skeleton(tmp_path):
     assert "model: insight" in report
 
 
+def test_batch_report_includes_aggregate_device_details(tmp_path):
+    started_at = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    config = BatchConfig(
+        duration_input="24h",
+        duration_seconds=24 * 60 * 60,
+        baud=115200,
+        output_dir=tmp_path,
+        devices=(
+            BatchDeviceConfig(
+                slot="slot-01",
+                port=Path("/dev/serial/by-path/urban"),
+                model="urban",
+                config=Path("configs/urban.example.toml"),
+                effective_config=Path("configs/urban.example.toml"),
+            ),
+        ),
+    )
+    artifacts = create_batch_artifacts(tmp_path, config=config, started_at=started_at)
+
+    artifacts.write_report(
+        "completed",
+        message="Batch completed: 1/1 workers succeeded.",
+        finished_at=datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+        worker_results=(
+            {
+                "slot": "slot-01",
+                "status": "completed",
+                "returncode": 0,
+                "stdout_log": "worker.stdout.log",
+                "stderr_log": "worker.stderr.log",
+            },
+        ),
+        aggregate={
+            "verdict": "PASS_CANDIDATE",
+            "devices_total": 1,
+            "devices_passed": 1,
+            "devices_warned": 0,
+            "devices_failed": 0,
+            "devices": [
+                {
+                    "slot": "slot-01",
+                    "model": "urban",
+                    "port": "/dev/serial/by-path/urban",
+                    "config": "configs/urban.example.toml",
+                    "device_id": "588C8140B8EC",
+                    "mac": "58:8C:81:40:B8:EC",
+                    "usb_serial": "58:8C:81:40:B8:EC",
+                    "by_id": "/dev/serial/by-id/usb-Espressif_588C8140B8EC",
+                    "by_path": "/dev/serial/by-path/urban",
+                    "identity_conflicts": [],
+                    "run_dir": "runs/slot-01/run",
+                    "report_txt": "runs/slot-01/run/report.txt",
+                    "status": "completed",
+                    "verdict": "PASS_CANDIDATE",
+                    "findings_count": 0,
+                    "finding_messages": [],
+                    "failed_checks": [],
+                }
+            ],
+        },
+    )
+
+    report = artifacts.report_txt.read_text(encoding="utf-8")
+    assert "Verdict: PASS_CANDIDATE" in report
+    assert "Devices: 1 total, 1 pass, 0 warn, 0 fail" in report
+    assert "- slot-01 588C8140B8EC PASS_CANDIDATE (urban, 0 findings)" in report
+    assert "usb serial: 58:8C:81:40:B8:EC" in report
+    assert "by-id: /dev/serial/by-id/usb-Espressif_588C8140B8EC" in report
+    assert "by-path: /dev/serial/by-path/urban" in report
+    assert "stdout: worker.stdout.log" in report
+
+
 def test_append_sample_writes_timestamped_sensor_sample(tmp_path):
     artifacts = create_run_artifacts(
         tmp_path,
