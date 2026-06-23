@@ -541,6 +541,121 @@ config = "insight.toml"
     assert summary["workers"][0]["returncode"] == 0
     assert summary["workers"][1]["returncode"] == 1
     assert summary["workers"][1]["status"] == "failed"
+    assert summary["workers"][1]["failure_kind"] == "health_check_failed"
+
+
+def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/missing"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/working"
+""",
+        encoding="utf-8",
+    )
+    returncodes = {
+        "/dev/serial/by-path/missing": 2,
+        "/dev/serial/by-path/working": 0,
+    }
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            port = args[args.index("--port") + 1]
+            self.returncode = returncodes[port]
+            stdout.write(f"stdout {port}\n")
+            stderr.write(f"stderr {port}\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 1
+    assert "slot-01 finished with exit code 2." in result.output
+    assert "slot-02 finished with exit code 0." in result.output
+    assert "Batch completed: 1/2 workers succeeded." in result.output
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["workers"][0]["slot"] == "slot-01"
+    assert summary["workers"][0]["returncode"] == 2
+    assert summary["workers"][0]["failure_kind"] == "infrastructure_or_config_failed"
+    assert summary["workers"][1]["slot"] == "slot-02"
+    assert summary["workers"][1]["returncode"] == 0
+
+
+def test_batch_records_worker_start_failure_and_continues(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/start-fails"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/working"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            port = args[args.index("--port") + 1]
+            if port == "/dev/serial/by-path/start-fails":
+                raise OSError("cannot exec worker")
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 1
+    assert "slot-01 could not start: cannot exec worker" in result.output
+    assert "slot-02 finished with exit code 0." in result.output
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["workers"][0]["slot"] == "slot-01"
+    assert summary["workers"][0]["returncode"] is None
+    assert summary["workers"][0]["failure_kind"] == "worker_start_failed"
+    assert summary["workers"][0]["error"] == "cannot exec worker"
+    assert summary["workers"][1]["slot"] == "slot-02"
+    assert summary["workers"][1]["returncode"] == 0
+    stderr_log = batch_dir / "devices" / "slot-01" / "worker.stderr.log"
+    assert stderr_log.read_text() == "Could not start worker: cannot exec worker\n"
 
 
 def test_batch_dry_run_rejects_invalid_config(tmp_path):

@@ -62,6 +62,18 @@ class BatchWorkerProcess:
     process: subprocess.Popen[str]
 
 
+@dataclass(frozen=True, slots=True)
+class BatchWorkerStartFailure:
+    """A batch worker that could not be launched."""
+
+    slot: str
+    command: list[str]
+    output_dir: Path
+    stdout_log: Path
+    stderr_log: Path
+    error: str
+
+
 app = typer.Typer(
     help=(
         "Post-assembly burn-in tester for Altruist devices. "
@@ -303,18 +315,48 @@ def _start_batch_worker(
     )
 
 
+def _batch_worker_failure_kind(returncode: int | None) -> str | None:
+    if returncode == 0:
+        return None
+    if returncode == 1:
+        return "health_check_failed"
+    if returncode == 2:
+        return "infrastructure_or_config_failed"
+    if returncode is None:
+        return "worker_start_failed"
+    return "worker_failed"
+
+
 def _batch_worker_result(
     worker: BatchWorkerProcess,
     returncode: int,
 ) -> dict[str, object]:
+    failure_kind = _batch_worker_failure_kind(returncode)
     return {
         "slot": worker.slot,
         "status": "completed" if returncode == 0 else "failed",
+        "failure_kind": failure_kind,
         "returncode": returncode,
         "command": list(worker.command),
         "output_dir": str(worker.output_dir),
         "stdout_log": str(worker.stdout_log),
         "stderr_log": str(worker.stderr_log),
+    }
+
+
+def _batch_worker_start_failure_result(
+    failure: BatchWorkerStartFailure,
+) -> dict[str, object]:
+    return {
+        "slot": failure.slot,
+        "status": "failed",
+        "failure_kind": _batch_worker_failure_kind(None),
+        "returncode": None,
+        "command": list(failure.command),
+        "output_dir": str(failure.output_dir),
+        "stdout_log": str(failure.stdout_log),
+        "stderr_log": str(failure.stderr_log),
+        "error": failure.error,
     }
 
 
@@ -325,12 +367,31 @@ def _run_batch(config: BatchConfig) -> int:
     )
 
     workers = []
-    for device_artifacts in artifacts.devices:
-        worker = _start_batch_worker(config, device_artifacts)
-        workers.append(worker)
-        typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
-
     worker_results = []
+    for device_artifacts in artifacts.devices:
+        try:
+            worker = _start_batch_worker(config, device_artifacts)
+        except OSError as exc:
+            stdout_log = device_artifacts.output_dir / "worker.stdout.log"
+            stderr_log = device_artifacts.output_dir / "worker.stderr.log"
+            command = _batch_worker_command(config, device_artifacts)
+            stdout_log.touch()
+            stderr_log.write_text(f"Could not start worker: {exc}\n", encoding="utf-8")
+            failure = BatchWorkerStartFailure(
+                slot=device_artifacts.slot,
+                command=command,
+                output_dir=device_artifacts.output_dir,
+                stdout_log=stdout_log,
+                stderr_log=stderr_log,
+                error=str(exc),
+            )
+            worker_results.append(_batch_worker_start_failure_result(failure))
+            typer.echo(f"{device_artifacts.slot} could not start: {exc}")
+            continue
+        else:
+            workers.append(worker)
+            typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
+
     for worker in workers:
         returncode = worker.process.wait()
         result = _batch_worker_result(worker, returncode)

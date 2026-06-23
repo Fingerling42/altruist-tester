@@ -391,6 +391,14 @@ worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 area. If any worker exits with a non-zero code, the batch command exits with
 code `1` after every worker has finished.
 
+Worker failures are recorded per slot in `batch_summary.json`:
+
+- exit code `1` is treated as a device health-check failure;
+- exit code `2` is treated as an infrastructure or config failure, for example
+  a missing or unopenable serial port;
+- worker start errors are recorded for that slot and do not stop the remaining
+  slots.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.
