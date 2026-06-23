@@ -565,6 +565,92 @@ port = "/dev/serial/by-path/slot-02"
     assert "Slots: slot-01=completed slot-02=completed" in output
 
 
+def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/completes"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/running"
+""",
+        encoding="utf-8",
+    )
+    processes = []
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            self.args = list(args)
+            self.port = args[args.index("--port") + 1]
+            self.returncode = None
+            self.summary_written = False
+            self.terminated = False
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+            processes.append(self)
+
+        def poll(self):
+            if self.port == "/dev/serial/by-path/completes":
+                if not self.summary_written:
+                    _write_fake_worker_summary(self.args)
+                    self.summary_written = True
+                self.returncode = 0
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    sleep_calls = {"count": 0}
+
+    def fake_sleep(seconds):
+        if sleep_calls["count"] == 0:
+            sleep_calls["count"] += 1
+            raise KeyboardInterrupt
+        sleep_calls["count"] += 1
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    monkeypatch.setattr("altruist_tester.cli.time.sleep", fake_sleep)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 130
+    assert "Batch interrupted: 1/2 workers completed before shutdown." in result.output
+    assert processes[1].terminated is True
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "interrupted"
+    assert summary["message"] == (
+        "Batch interrupted: 1/2 workers completed before shutdown."
+    )
+    assert summary["workers"][0]["slot"] == "slot-01"
+    assert summary["workers"][0]["status"] == "completed"
+    assert summary["workers"][1]["slot"] == "slot-02"
+    assert summary["workers"][1]["status"] == "interrupted"
+    assert summary["workers"][1]["failure_kind"] == "interrupted"
+    assert summary["device_results"][0]["slot"] == "slot-01"
+    assert summary["device_results"][0]["verdict"] == "PASS_CANDIDATE"
+    assert summary["device_results"][1]["slot"] == "slot-02"
+    assert summary["device_results"][1]["summary_error"] == "summary.json not found"
+    assert (batch_dir / "batch_report.txt").exists()
+
+
 def test_batch_returns_failure_when_any_worker_fails(monkeypatch, tmp_path):
     urban_profile = tmp_path / "urban.toml"
     insight_profile = tmp_path / "insight.toml"

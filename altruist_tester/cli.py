@@ -1,6 +1,7 @@
 """Command line interface for the Altruist tester."""
 
 import json
+import signal
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ import typer
 
 from altruist_tester import __version__
 from altruist_tester.artifacts import (
+    BatchArtifacts,
     BatchDeviceArtifacts,
     create_batch_artifacts,
     create_run_artifacts,
@@ -44,6 +46,11 @@ from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
 BATCH_PROGRESS_INTERVAL_SECONDS = 10.0
+BATCH_TERMINATE_GRACE_SECONDS = 5.0
+
+
+class BatchInterrupted(RuntimeError):
+    """Raised when a batch run receives an external interruption signal."""
 
 
 class RuleReportMessage(Protocol):
@@ -361,6 +368,10 @@ def _batch_worker_start_failure_result(
         "stderr_log": str(failure.stderr_log),
         "error": failure.error,
     }
+
+
+def _handle_batch_signal(signum, frame) -> None:
+    raise BatchInterrupted(f"Received signal {signum}")
 
 
 def _find_device_summary(output_dir: Path) -> Path | None:
@@ -691,6 +702,78 @@ def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
     return worker.process.wait()
 
 
+def _process_current_returncode(process: subprocess.Popen[str]) -> int | None:
+    poll = getattr(process, "poll", None)
+    if callable(poll):
+        return poll()
+    return getattr(process, "returncode", None)
+
+
+def _interrupted_worker_result(
+    worker: BatchWorkerProcess,
+    *,
+    returncode: int | None,
+) -> dict[str, object]:
+    return {
+        "slot": worker.slot,
+        "status": "interrupted",
+        "failure_kind": "interrupted",
+        "returncode": returncode,
+        "command": list(worker.command),
+        "output_dir": str(worker.output_dir),
+        "stdout_log": str(worker.stdout_log),
+        "stderr_log": str(worker.stderr_log),
+    }
+
+
+def _unfinished_workers(
+    workers: list[BatchWorkerProcess],
+    worker_results: list[dict[str, object]],
+) -> list[BatchWorkerProcess]:
+    finished_slots = {
+        str(result["slot"]) for result in worker_results if "slot" in result
+    }
+    return [
+        worker
+        for worker in workers
+        if worker.slot not in finished_slots
+        and _process_current_returncode(worker.process) is None
+    ]
+
+
+def _terminate_batch_workers(
+    workers: list[BatchWorkerProcess],
+    worker_results: list[dict[str, object]],
+) -> None:
+    running_workers = _unfinished_workers(workers, worker_results)
+    if not running_workers:
+        return
+
+    typer.echo("Stopping running batch workers...", err=True)
+    for worker in running_workers:
+        terminate = getattr(worker.process, "terminate", None)
+        if callable(terminate):
+            terminate()
+
+    deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if all(
+            _process_current_returncode(worker.process) is not None
+            for worker in running_workers
+        ):
+            break
+        time.sleep(0.1)
+
+    for worker in running_workers:
+        returncode = _process_current_returncode(worker.process)
+        if returncode is None:
+            kill = getattr(worker.process, "kill", None)
+            if callable(kill):
+                kill()
+            returncode = _process_current_returncode(worker.process)
+        worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
+
+
 def _wait_for_batch_workers(
     workers: list[BatchWorkerProcess],
     worker_results: list[dict[str, object]],
@@ -740,57 +823,18 @@ def _wait_for_batch_workers(
     )
 
 
-def _run_batch(config: BatchConfig) -> int:
-    artifacts = create_batch_artifacts(config.output_dir, config=config)
-    typer.echo(
-        f"Started batch {artifacts.batch_id} with {len(artifacts.devices)} devices."
-    )
-
-    workers = []
-    worker_results = []
-    for device_artifacts in artifacts.devices:
-        try:
-            worker = _start_batch_worker(config, device_artifacts)
-        except OSError as exc:
-            stdout_log = device_artifacts.output_dir / "worker.stdout.log"
-            stderr_log = device_artifacts.output_dir / "worker.stderr.log"
-            command = _batch_worker_command(config, device_artifacts)
-            stdout_log.touch()
-            stderr_log.write_text(f"Could not start worker: {exc}\n", encoding="utf-8")
-            failure = BatchWorkerStartFailure(
-                slot=device_artifacts.slot,
-                command=command,
-                output_dir=device_artifacts.output_dir,
-                stdout_log=stdout_log,
-                stderr_log=stderr_log,
-                error=str(exc),
-            )
-            worker_results.append(_batch_worker_start_failure_result(failure))
-            typer.echo(f"{device_artifacts.slot} could not start: {exc}")
-            continue
-        else:
-            workers.append(worker)
-            typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
-
-    _wait_for_batch_workers(
-        workers,
-        worker_results,
-        duration_seconds=config.duration_seconds,
-        batch_dir=artifacts.batch_dir,
-        slots=tuple(device.slot for device in artifacts.devices),
-    )
-
-    failed_workers = [result for result in worker_results if result["returncode"] != 0]
-    status = "failed" if failed_workers else "completed"
-    message = (
-        f"Batch completed: {len(worker_results) - len(failed_workers)}/"
-        f"{len(worker_results)} workers succeeded."
-    )
+def _write_final_batch_artifacts(
+    artifacts: BatchArtifacts,
+    *,
+    status: str,
+    message: str,
+    worker_results: list[dict[str, object]],
+) -> dict[str, object]:
     finished_at = utc_now()
     worker_results_tuple = tuple(worker_results)
     device_results = _collect_device_results(artifacts.devices, worker_results_tuple)
     aggregate = _batch_aggregate(device_results)
-    if aggregate["verdict"] == "FAIL":
+    if status != "interrupted" and aggregate["verdict"] == "FAIL":
         status = "failed"
     artifacts.write_summary(
         status,
@@ -807,6 +851,87 @@ def _run_batch(config: BatchConfig) -> int:
         worker_results=worker_results_tuple,
         device_results=device_results,
         aggregate=aggregate,
+    )
+    return aggregate
+
+
+def _run_batch(config: BatchConfig) -> int:
+    artifacts = create_batch_artifacts(config.output_dir, config=config)
+    typer.echo(
+        f"Started batch {artifacts.batch_id} with {len(artifacts.devices)} devices."
+    )
+    previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _handle_batch_signal)
+
+    workers = []
+    worker_results = []
+    try:
+        for device_artifacts in artifacts.devices:
+            try:
+                worker = _start_batch_worker(config, device_artifacts)
+            except OSError as exc:
+                stdout_log = device_artifacts.output_dir / "worker.stdout.log"
+                stderr_log = device_artifacts.output_dir / "worker.stderr.log"
+                command = _batch_worker_command(config, device_artifacts)
+                stdout_log.touch()
+                stderr_log.write_text(
+                    f"Could not start worker: {exc}\n",
+                    encoding="utf-8",
+                )
+                failure = BatchWorkerStartFailure(
+                    slot=device_artifacts.slot,
+                    command=command,
+                    output_dir=device_artifacts.output_dir,
+                    stdout_log=stdout_log,
+                    stderr_log=stderr_log,
+                    error=str(exc),
+                )
+                worker_results.append(_batch_worker_start_failure_result(failure))
+                typer.echo(f"{device_artifacts.slot} could not start: {exc}")
+                continue
+            else:
+                workers.append(worker)
+                typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
+
+        _wait_for_batch_workers(
+            workers,
+            worker_results,
+            duration_seconds=config.duration_seconds,
+            batch_dir=artifacts.batch_dir,
+            slots=tuple(device.slot for device in artifacts.devices),
+        )
+    except (BatchInterrupted, KeyboardInterrupt):
+        _terminate_batch_workers(workers, worker_results)
+        completed_workers = sum(
+            1 for result in worker_results if result["status"] == "completed"
+        )
+        message = (
+            f"Batch interrupted: {completed_workers}/"
+            f"{len(artifacts.devices)} workers completed before shutdown."
+        )
+        _write_final_batch_artifacts(
+            artifacts,
+            status="interrupted",
+            message=message,
+            worker_results=worker_results,
+        )
+        typer.echo(message, err=True)
+        typer.echo(f"Batch artifacts were written under {artifacts.batch_dir}.")
+        return 130
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
+
+    failed_workers = [result for result in worker_results if result["returncode"] != 0]
+    status = "failed" if failed_workers else "completed"
+    message = (
+        f"Batch completed: {len(worker_results) - len(failed_workers)}/"
+        f"{len(worker_results)} workers succeeded."
+    )
+    aggregate = _write_final_batch_artifacts(
+        artifacts,
+        status=status,
+        message=message,
+        worker_results=worker_results,
     )
 
     typer.echo(message)

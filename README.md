@@ -395,6 +395,11 @@ While a batch is running, the CLI prints live progress with elapsed time,
 planned duration, running/completed/failed worker counts, per-slot state, and
 the batch artifact directory.
 
+If the batch command receives Ctrl+C or SIGTERM, it asks running workers to
+terminate, waits briefly, kills any remaining workers, and writes
+`batch_summary.json`/`batch_report.txt` with status `interrupted`. Summaries
+from devices that already finished are still included when available.
+
 Worker failures are recorded per slot in `batch_summary.json`:
 
 - exit code `1` is treated as a device health-check failure;
