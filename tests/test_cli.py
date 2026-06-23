@@ -117,6 +117,26 @@ def _plain_output(result) -> str:
     return _ANSI_ESCAPE_RE.sub("", result.output)
 
 
+def _write_fake_worker_summary(
+    args,
+    *,
+    verdict: str = "PASS_CANDIDATE",
+    status: str = "completed",
+) -> None:
+    output = Path(args[args.index("--output-dir") + 1])
+    run_dir = output / f"run-{output.name}"
+    run_dir.mkdir()
+    summary = {
+        "status": status,
+        "run_dir": str(run_dir),
+        "verdict": verdict,
+        "device_identity": {},
+        "findings": [{"severity": "warn"}] if verdict == "WARN" else [],
+        "rules": {"failed_checks": []},
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
 def test_package_version_is_available():
     assert isinstance(__version__, str)
     assert __version__
@@ -307,6 +327,7 @@ def test_batch_explicit_ports_run_uses_shared_device_config(monkeypatch, tmp_pat
         def __init__(self, args, stdout, stderr, text):
             self.args = list(args)
             self.returncode = 0
+            _write_fake_worker_summary(args)
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
             started.append(self)
@@ -440,6 +461,7 @@ expected_metrics = ["co2"]
         def __init__(self, args, stdout, stderr, text):
             self.args = list(args)
             self.returncode = 0
+            _write_fake_worker_summary(args)
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
             started.append(self)
@@ -618,10 +640,21 @@ config = "insight.toml"
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     batch_dir = next(output_dir.iterdir())
     summary = json.loads((batch_dir / "batch_summary.json").read_text())
-    assert summary["status"] == "completed"
+    assert summary["status"] == "failed"
+    assert summary["verdict"] == "FAIL"
+    assert summary["devices_total"] == 2
+    assert summary["devices_passed"] == 1
+    assert summary["devices_warned"] == 0
+    assert summary["devices_failed"] == 1
+    assert summary["devices"][0]["slot"] == "slot-01"
+    assert summary["devices"][0]["device_id"] == "588C8140B8EC"
+    assert summary["devices"][0]["verdict"] == "PASS_CANDIDATE"
+    assert summary["devices"][1]["slot"] == "slot-02"
+    assert summary["devices"][1]["device_id"] == "1051DB010C70"
+    assert summary["devices"][1]["verdict"] == "FAIL"
     assert len(summary["device_results"]) == 2
     assert summary["device_results"][0]["slot"] == "slot-01"
     assert summary["device_results"][0]["model"] == "urban"
@@ -637,9 +670,74 @@ config = "insight.toml"
     assert summary["device_results"][1]["upload_health"]["status"] == "warn"
     assert summary["device_results"][1]["sensor_presence"]["status"] == "fail"
     report = (batch_dir / "batch_report.txt").read_text()
+    assert "Verdict: FAIL" in report
+    assert "Devices: 2 total, 1 pass, 0 warn, 1 fail" in report
     assert "Device Results:" in report
     assert "verdict: PASS_CANDIDATE" in report
     assert "verdict: FAIL" in report
+
+
+def test_batch_summary_verdict_warns_without_failures(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/pass"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/warn"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            port = args[args.index("--port") + 1]
+            output = Path(args[args.index("--output-dir") + 1])
+            run_dir = output / f"run-{output.name}"
+            run_dir.mkdir()
+            verdict = "WARN" if port.endswith("/warn") else "PASS_CANDIDATE"
+            summary = {
+                "status": "completed",
+                "run_dir": str(run_dir),
+                "verdict": verdict,
+                "device_identity": {},
+                "findings": [{"severity": "warn"}] if verdict == "WARN" else [],
+                "rules": {"failed_checks": []},
+            }
+            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 0
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["verdict"] == "WARN"
+    assert summary["devices_total"] == 2
+    assert summary["devices_passed"] == 1
+    assert summary["devices_warned"] == 1
+    assert summary["devices_failed"] == 0
 
 
 def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_path):
@@ -675,6 +773,8 @@ port = "/dev/serial/by-path/working"
         def __init__(self, args, stdout, stderr, text):
             port = args[args.index("--port") + 1]
             self.returncode = returncodes[port]
+            if self.returncode == 0:
+                _write_fake_worker_summary(args)
             stdout.write(f"stdout {port}\n")
             stderr.write(f"stderr {port}\n")
 
@@ -697,6 +797,8 @@ port = "/dev/serial/by-path/working"
     assert summary["workers"][0]["failure_kind"] == "infrastructure_or_config_failed"
     assert summary["workers"][1]["slot"] == "slot-02"
     assert summary["workers"][1]["returncode"] == 0
+    assert summary["verdict"] == "FAIL"
+    assert summary["devices_failed"] == 1
 
 
 def test_batch_records_worker_start_failure_and_continues(monkeypatch, tmp_path):
@@ -730,6 +832,7 @@ port = "/dev/serial/by-path/working"
             if port == "/dev/serial/by-path/start-fails":
                 raise OSError("cannot exec worker")
             self.returncode = 0
+            _write_fake_worker_summary(args)
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
@@ -752,6 +855,8 @@ port = "/dev/serial/by-path/working"
     assert summary["workers"][0]["error"] == "cannot exec worker"
     assert summary["workers"][1]["slot"] == "slot-02"
     assert summary["workers"][1]["returncode"] == 0
+    assert summary["verdict"] == "FAIL"
+    assert summary["devices_failed"] == 1
     stderr_log = batch_dir / "devices" / "slot-01" / "worker.stderr.log"
     assert stderr_log.read_text() == "Could not start worker: cannot exec worker\n"
 

@@ -383,6 +383,7 @@ class BatchArtifacts:
         finished_at: datetime | None = None,
         worker_results: tuple[dict[str, Any], ...] = (),
         device_results: tuple[dict[str, Any], ...] = (),
+        aggregate: dict[str, Any] | None = None,
     ) -> None:
         """Write the current machine-readable batch summary."""
 
@@ -393,6 +394,7 @@ class BatchArtifacts:
             finished_at=finished_at,
             worker_results=worker_results,
             device_results=device_results,
+            aggregate=aggregate,
         )
 
     def write_report(
@@ -403,6 +405,7 @@ class BatchArtifacts:
         finished_at: datetime | None = None,
         worker_results: tuple[dict[str, Any], ...] = (),
         device_results: tuple[dict[str, Any], ...] = (),
+        aggregate: dict[str, Any] | None = None,
     ) -> None:
         """Write the current human-readable batch report."""
 
@@ -413,6 +416,7 @@ class BatchArtifacts:
             finished_at=finished_at,
             worker_results=worker_results,
             device_results=device_results,
+            aggregate=aggregate,
         )
 
 
@@ -437,6 +441,7 @@ def _write_batch_summary(
     finished_at: datetime | None = None,
     worker_results: tuple[dict[str, Any], ...] = (),
     device_results: tuple[dict[str, Any], ...] = (),
+    aggregate: dict[str, Any] | None = None,
 ) -> None:
     summary = {
         "status": status,
@@ -470,6 +475,8 @@ def _write_batch_summary(
         summary["workers"] = list(worker_results)
     if device_results:
         summary["device_results"] = list(device_results)
+    if aggregate is not None:
+        summary.update(aggregate)
     artifacts.summary_json.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -484,6 +491,7 @@ def _write_batch_report(
     finished_at: datetime | None = None,
     worker_results: tuple[dict[str, Any], ...] = (),
     device_results: tuple[dict[str, Any], ...] = (),
+    aggregate: dict[str, Any] | None = None,
 ) -> None:
     lines = [
         "Altruist Tester Batch Report",
@@ -505,6 +513,18 @@ def _write_batch_report(
     )
     if message is not None:
         lines.extend(["", message])
+    if aggregate is not None:
+        lines.extend(
+            [
+                "",
+                f"Verdict: {aggregate.get('verdict')}",
+                "Devices: "
+                f"{aggregate.get('devices_total')} total, "
+                f"{aggregate.get('devices_passed')} pass, "
+                f"{aggregate.get('devices_warned')} warn, "
+                f"{aggregate.get('devices_failed')} fail",
+            ]
+        )
     lines.extend(["", "Devices:"])
     for device_artifacts in artifacts.devices:
         device = device_artifacts.device

@@ -499,6 +499,84 @@ def _collect_device_results(
     )
 
 
+def _device_identity_value(device_result: dict[str, object], field: str) -> object:
+    identity = device_result.get("device_identity")
+    if isinstance(identity, dict):
+        return identity.get(field)
+    return None
+
+
+def _batch_device_entry(device_result: dict[str, object]) -> dict[str, object]:
+    return {
+        "slot": device_result.get("slot"),
+        "model": device_result.get("model"),
+        "port": device_result.get("port"),
+        "config": device_result.get("config"),
+        "device_id": _device_identity_value(device_result, "device_id"),
+        "mac": _device_identity_value(device_result, "mac"),
+        "run_dir": device_result.get("run_dir"),
+        "status": device_result.get("status"),
+        "verdict": device_result.get("verdict"),
+        "findings_count": device_result.get("findings_count"),
+        "failed_checks": device_result.get("failed_checks"),
+        "failure_kind": device_result.get("failure_kind"),
+        "summary_error": device_result.get("summary_error"),
+    }
+
+
+def _is_failed_device(device_result: dict[str, object]) -> bool:
+    if device_result.get("worker_returncode") not in (0, None):
+        return True
+    if device_result.get("failure_kind") == "worker_start_failed":
+        return True
+    if device_result.get("summary_error") is not None:
+        return True
+    if device_result.get("status") == "failed":
+        return True
+    return device_result.get("verdict") == "FAIL"
+
+
+def _is_warned_device(device_result: dict[str, object]) -> bool:
+    return device_result.get("verdict") == "WARN"
+
+
+def _is_passed_device(device_result: dict[str, object]) -> bool:
+    return (
+        not _is_failed_device(device_result)
+        and not _is_warned_device(device_result)
+        and device_result.get("verdict") == "PASS_CANDIDATE"
+    )
+
+
+def _batch_aggregate(
+    device_results: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    devices = [_batch_device_entry(device_result) for device_result in device_results]
+    devices_failed = sum(
+        1 for device_result in device_results if _is_failed_device(device_result)
+    )
+    devices_warned = sum(
+        1 for device_result in device_results if _is_warned_device(device_result)
+    )
+    devices_passed = sum(
+        1 for device_result in device_results if _is_passed_device(device_result)
+    )
+    verdict = "PASS_CANDIDATE"
+    if devices_failed:
+        verdict = "FAIL"
+    elif devices_warned:
+        verdict = "WARN"
+
+    return {
+        "verdict": verdict,
+        "devices_total": len(device_results),
+        "devices_passed": devices_passed,
+        "devices_warned": devices_warned,
+        "devices_failed": devices_failed,
+        "devices": devices,
+    }
+
+
 def _run_batch(config: BatchConfig) -> int:
     artifacts = create_batch_artifacts(config.output_dir, config=config)
     typer.echo(
@@ -546,12 +624,16 @@ def _run_batch(config: BatchConfig) -> int:
     finished_at = utc_now()
     worker_results_tuple = tuple(worker_results)
     device_results = _collect_device_results(artifacts.devices, worker_results_tuple)
+    aggregate = _batch_aggregate(device_results)
+    if aggregate["verdict"] == "FAIL":
+        status = "failed"
     artifacts.write_summary(
         status,
         message=message,
         finished_at=finished_at,
         worker_results=worker_results_tuple,
         device_results=device_results,
+        aggregate=aggregate,
     )
     artifacts.write_report(
         status,
@@ -559,11 +641,12 @@ def _run_batch(config: BatchConfig) -> int:
         finished_at=finished_at,
         worker_results=worker_results_tuple,
         device_results=device_results,
+        aggregate=aggregate,
     )
 
     typer.echo(message)
     typer.echo(f"Batch artifacts were written under {artifacts.batch_dir}.")
-    return 1 if failed_workers else 0
+    return 1 if aggregate["verdict"] == "FAIL" else 0
 
 
 def _format_elapsed(seconds: float) -> str:

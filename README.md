@@ -405,6 +405,12 @@ model, port, profile, run directory, device identity, status, verdict, finding
 count, failed checks, upload health, and sensor presence summary. Batch logic
 does not parse raw serial logs.
 
+`batch_summary.json` also contains a top-level batch `verdict` and device
+counters: `devices_total`, `devices_passed`, `devices_warned`, and
+`devices_failed`. A batch verdict is `FAIL` when any device fails or a worker
+cannot provide a valid summary, `WARN` when at least one device warns and none
+fail, and `PASS_CANDIDATE` only when all devices pass.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.
