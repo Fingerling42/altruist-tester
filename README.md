@@ -399,6 +399,12 @@ Worker failures are recorded per slot in `batch_summary.json`:
 - worker start errors are recorded for that slot and do not stop the remaining
   slots.
 
+After workers finish, the batch runner reads each per-device `summary.json` and
+adds `device_results` to `batch_summary.json`. These results include the slot,
+model, port, profile, run directory, device identity, status, verdict, finding
+count, failed checks, upload health, and sensor presence summary. Batch logic
+does not parse raw serial logs.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.

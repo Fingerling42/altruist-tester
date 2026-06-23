@@ -1,5 +1,6 @@
 """Command line interface for the Altruist tester."""
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -360,6 +361,144 @@ def _batch_worker_start_failure_result(
     }
 
 
+def _find_device_summary(output_dir: Path) -> Path | None:
+    candidates = sorted(
+        (
+            child / "summary.json"
+            for child in output_dir.iterdir()
+            if child.is_dir() and (child / "summary.json").is_file()
+        ),
+        key=lambda path: path.parent.name,
+    )
+    if not candidates:
+        return None
+    return candidates[-1]
+
+
+def _load_device_summary(path: Path) -> dict[str, object]:
+    with path.open(encoding="utf-8") as handle:
+        summary = json.load(handle)
+    if not isinstance(summary, dict):
+        raise ValueError("summary.json must contain an object")
+    return summary
+
+
+def _device_identity_from_summary(summary: dict[str, object]) -> object:
+    identity = summary.get("device_identity")
+    if isinstance(identity, dict):
+        return identity
+    return None
+
+
+def _findings_count(summary: dict[str, object]) -> int | None:
+    findings = summary.get("findings")
+    if isinstance(findings, list):
+        return len(findings)
+    return None
+
+
+def _device_result_from_summary(
+    device_artifacts: BatchDeviceArtifacts,
+    worker_result: dict[str, object],
+    summary_path: Path,
+    summary: dict[str, object],
+) -> dict[str, object]:
+    device = device_artifacts.device
+    rules = summary.get("rules")
+    failed_checks = []
+    if isinstance(rules, dict):
+        raw_failed_checks = rules.get("failed_checks")
+        if isinstance(raw_failed_checks, list):
+            failed_checks = raw_failed_checks
+
+    return {
+        "slot": device.slot,
+        "model": device.model,
+        "port": str(device.port),
+        "config": str(device.effective_config) if device.effective_config else None,
+        "worker_status": worker_result.get("status"),
+        "worker_returncode": worker_result.get("returncode"),
+        "failure_kind": worker_result.get("failure_kind"),
+        "summary_json": str(summary_path),
+        "run_dir": summary.get("run_dir"),
+        "status": summary.get("status"),
+        "verdict": summary.get("verdict"),
+        "device_identity": _device_identity_from_summary(summary),
+        "findings_count": _findings_count(summary),
+        "failed_checks": failed_checks,
+        "upload_health": summary.get("upload_health"),
+        "sensor_presence": summary.get("sensor_presence"),
+    }
+
+
+def _device_result_without_summary(
+    device_artifacts: BatchDeviceArtifacts,
+    worker_result: dict[str, object],
+    reason: str,
+) -> dict[str, object]:
+    device = device_artifacts.device
+    return {
+        "slot": device.slot,
+        "model": device.model,
+        "port": str(device.port),
+        "config": str(device.effective_config) if device.effective_config else None,
+        "worker_status": worker_result.get("status"),
+        "worker_returncode": worker_result.get("returncode"),
+        "failure_kind": worker_result.get("failure_kind"),
+        "summary_json": None,
+        "run_dir": None,
+        "status": "failed",
+        "verdict": None,
+        "device_identity": None,
+        "findings_count": None,
+        "failed_checks": [],
+        "upload_health": None,
+        "sensor_presence": None,
+        "summary_error": reason,
+    }
+
+
+def _collect_device_result(
+    device_artifacts: BatchDeviceArtifacts,
+    worker_result: dict[str, object],
+) -> dict[str, object]:
+    summary_path = _find_device_summary(device_artifacts.output_dir)
+    if summary_path is None:
+        return _device_result_without_summary(
+            device_artifacts,
+            worker_result,
+            "summary.json not found",
+        )
+
+    try:
+        summary = _load_device_summary(summary_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return _device_result_without_summary(
+            device_artifacts,
+            worker_result,
+            f"Could not read summary.json: {exc}",
+        )
+
+    return _device_result_from_summary(
+        device_artifacts,
+        worker_result,
+        summary_path,
+        summary,
+    )
+
+
+def _collect_device_results(
+    artifacts_devices: tuple[BatchDeviceArtifacts, ...],
+    worker_results: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    by_slot = {device.slot: device for device in artifacts_devices}
+    return tuple(
+        _collect_device_result(by_slot[str(result["slot"])], result)
+        for result in worker_results
+        if result.get("slot") in by_slot
+    )
+
+
 def _run_batch(config: BatchConfig) -> int:
     artifacts = create_batch_artifacts(config.output_dir, config=config)
     typer.echo(
@@ -406,17 +545,20 @@ def _run_batch(config: BatchConfig) -> int:
     )
     finished_at = utc_now()
     worker_results_tuple = tuple(worker_results)
+    device_results = _collect_device_results(artifacts.devices, worker_results_tuple)
     artifacts.write_summary(
         status,
         message=message,
         finished_at=finished_at,
         worker_results=worker_results_tuple,
+        device_results=device_results,
     )
     artifacts.write_report(
         status,
         message=message,
         finished_at=finished_at,
         worker_results=worker_results_tuple,
+        device_results=device_results,
     )
 
     typer.echo(message)

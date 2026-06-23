@@ -382,6 +382,7 @@ class BatchArtifacts:
         message: str | None = None,
         finished_at: datetime | None = None,
         worker_results: tuple[dict[str, Any], ...] = (),
+        device_results: tuple[dict[str, Any], ...] = (),
     ) -> None:
         """Write the current machine-readable batch summary."""
 
@@ -391,6 +392,7 @@ class BatchArtifacts:
             message=message,
             finished_at=finished_at,
             worker_results=worker_results,
+            device_results=device_results,
         )
 
     def write_report(
@@ -400,6 +402,7 @@ class BatchArtifacts:
         message: str | None = None,
         finished_at: datetime | None = None,
         worker_results: tuple[dict[str, Any], ...] = (),
+        device_results: tuple[dict[str, Any], ...] = (),
     ) -> None:
         """Write the current human-readable batch report."""
 
@@ -409,6 +412,7 @@ class BatchArtifacts:
             message=message,
             finished_at=finished_at,
             worker_results=worker_results,
+            device_results=device_results,
         )
 
 
@@ -432,6 +436,7 @@ def _write_batch_summary(
     message: str | None = None,
     finished_at: datetime | None = None,
     worker_results: tuple[dict[str, Any], ...] = (),
+    device_results: tuple[dict[str, Any], ...] = (),
 ) -> None:
     summary = {
         "status": status,
@@ -463,6 +468,8 @@ def _write_batch_summary(
         summary["message"] = message
     if worker_results:
         summary["workers"] = list(worker_results)
+    if device_results:
+        summary["device_results"] = list(device_results)
     artifacts.summary_json.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -476,6 +483,7 @@ def _write_batch_report(
     message: str | None = None,
     finished_at: datetime | None = None,
     worker_results: tuple[dict[str, Any], ...] = (),
+    device_results: tuple[dict[str, Any], ...] = (),
 ) -> None:
     lines = [
         "Altruist Tester Batch Report",
@@ -518,6 +526,17 @@ def _write_batch_report(
                     f"  return code: {result.get('returncode')}",
                     f"  stdout: {result.get('stdout_log')}",
                     f"  stderr: {result.get('stderr_log')}",
+                ]
+            )
+    if device_results:
+        lines.extend(["", "Device Results:"])
+        for result in device_results:
+            lines.extend(
+                [
+                    f"- {result.get('slot')}: {result.get('status')}",
+                    f"  verdict: {result.get('verdict') or 'unknown'}",
+                    f"  run dir: {result.get('run_dir') or 'unknown'}",
+                    f"  findings: {result.get('findings_count')}",
                 ]
             )
     lines.extend(

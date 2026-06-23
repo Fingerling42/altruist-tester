@@ -544,6 +544,104 @@ config = "insight.toml"
     assert summary["workers"][1]["failure_kind"] == "health_check_failed"
 
 
+def test_batch_collects_per_device_summary_results(monkeypatch, tmp_path):
+    urban_profile = tmp_path / "urban.toml"
+    insight_profile = tmp_path / "insight.toml"
+    urban_profile.touch()
+    insight_profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/urban"
+config = "urban.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/insight"
+config = "insight.toml"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            port = args[args.index("--port") + 1]
+            output = Path(args[args.index("--output-dir") + 1])
+            run_dir = output / f"run-{output.name}"
+            run_dir.mkdir()
+            if port == "/dev/serial/by-path/urban":
+                summary = {
+                    "status": "completed",
+                    "run_dir": str(run_dir),
+                    "verdict": "PASS_CANDIDATE",
+                    "device_identity": {
+                        "device_id": "588C8140B8EC",
+                        "mac": "58:8C:81:40:B8:EC",
+                    },
+                    "findings": [],
+                    "rules": {"failed_checks": []},
+                    "upload_health": {"status": "ok"},
+                    "sensor_presence": {"status": "ok"},
+                }
+            else:
+                summary = {
+                    "status": "failed",
+                    "run_dir": str(run_dir),
+                    "verdict": "FAIL",
+                    "device_identity": {
+                        "device_id": "1051DB010C70",
+                        "mac": "10:51:DB:01:0C:70",
+                    },
+                    "findings": [{"severity": "fail"}],
+                    "rules": {"failed_checks": ["sensor_presence"]},
+                    "upload_health": {"status": "warn"},
+                    "sensor_presence": {"status": "fail"},
+                }
+            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 0
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert len(summary["device_results"]) == 2
+    assert summary["device_results"][0]["slot"] == "slot-01"
+    assert summary["device_results"][0]["model"] == "urban"
+    assert summary["device_results"][0]["verdict"] == "PASS_CANDIDATE"
+    assert summary["device_results"][0]["device_identity"]["device_id"] == (
+        "588C8140B8EC"
+    )
+    assert summary["device_results"][0]["findings_count"] == 0
+    assert summary["device_results"][1]["slot"] == "slot-02"
+    assert summary["device_results"][1]["model"] == "insight"
+    assert summary["device_results"][1]["verdict"] == "FAIL"
+    assert summary["device_results"][1]["failed_checks"] == ["sensor_presence"]
+    assert summary["device_results"][1]["upload_health"]["status"] == "warn"
+    assert summary["device_results"][1]["sensor_presence"]["status"] == "fail"
+    report = (batch_dir / "batch_report.txt").read_text()
+    assert "Device Results:" in report
+    assert "verdict: PASS_CANDIDATE" in report
+    assert "verdict: FAIL" in report
+
+
 def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_path):
     profile = tmp_path / "urban.toml"
     profile.touch()
