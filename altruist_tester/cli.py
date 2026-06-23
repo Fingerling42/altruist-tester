@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ from altruist_tester.rules.presence import (
 from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 
 DEFAULT_OUTPUT_DIR = Path("runs")
+BATCH_PROGRESS_INTERVAL_SECONDS = 10.0
 
 
 class RuleReportMessage(Protocol):
@@ -609,6 +611,135 @@ def _batch_aggregate(
     }
 
 
+def _batch_progress_line(
+    *,
+    elapsed_seconds: float,
+    duration_seconds: int,
+    running_count: int,
+    completed_count: int,
+    failed_count: int,
+    batch_dir: Path,
+) -> str:
+    percent = 100.0
+    if duration_seconds > 0:
+        percent = min(100.0, elapsed_seconds / duration_seconds * 100.0)
+    return (
+        f"Batch {percent:5.1f}% "
+        f"({_format_elapsed(elapsed_seconds)}/{_format_elapsed(duration_seconds)}) "
+        f"| running={running_count} "
+        f"completed={completed_count} "
+        f"failed={failed_count} "
+        f"| dir={batch_dir}"
+    )
+
+
+def _batch_slot_states(
+    slots: tuple[str, ...],
+    running_slots: set[str],
+    worker_results: list[dict[str, object]],
+) -> str:
+    results_by_slot = {
+        str(result["slot"]): result for result in worker_results if "slot" in result
+    }
+    states = []
+    for slot in slots:
+        if slot in running_slots:
+            states.append(f"{slot}=running")
+            continue
+        result = results_by_slot.get(slot)
+        if result is None:
+            states.append(f"{slot}=pending")
+        elif result.get("status") == "completed":
+            states.append(f"{slot}=completed")
+        else:
+            failure_kind = result.get("failure_kind") or "failed"
+            states.append(f"{slot}=failed({failure_kind})")
+    return "Slots: " + " ".join(states)
+
+
+def _emit_batch_progress(
+    *,
+    started_monotonic: float,
+    now_monotonic: float,
+    duration_seconds: int,
+    batch_dir: Path,
+    slots: tuple[str, ...],
+    running_slots: set[str],
+    worker_results: list[dict[str, object]],
+) -> None:
+    completed_count = sum(
+        1 for result in worker_results if result["status"] == "completed"
+    )
+    failed_count = sum(1 for result in worker_results if result["status"] == "failed")
+    typer.echo(
+        _batch_progress_line(
+            elapsed_seconds=now_monotonic - started_monotonic,
+            duration_seconds=duration_seconds,
+            running_count=len(running_slots),
+            completed_count=completed_count,
+            failed_count=failed_count,
+            batch_dir=batch_dir,
+        )
+    )
+    typer.echo(_batch_slot_states(slots, running_slots, worker_results))
+
+
+def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
+    poll = getattr(worker.process, "poll", None)
+    if callable(poll):
+        return poll()
+    return worker.process.wait()
+
+
+def _wait_for_batch_workers(
+    workers: list[BatchWorkerProcess],
+    worker_results: list[dict[str, object]],
+    *,
+    duration_seconds: int,
+    batch_dir: Path,
+    slots: tuple[str, ...],
+) -> None:
+    running = {worker.slot: worker for worker in workers}
+    started_monotonic = time.monotonic()
+    next_progress_monotonic = started_monotonic
+
+    while running:
+        now_monotonic = time.monotonic()
+        if now_monotonic >= next_progress_monotonic:
+            _emit_batch_progress(
+                started_monotonic=started_monotonic,
+                now_monotonic=now_monotonic,
+                duration_seconds=duration_seconds,
+                batch_dir=batch_dir,
+                slots=slots,
+                running_slots=set(running),
+                worker_results=worker_results,
+            )
+            next_progress_monotonic = now_monotonic + BATCH_PROGRESS_INTERVAL_SECONDS
+
+        for worker in tuple(running.values()):
+            returncode = _worker_returncode(worker)
+            if returncode is None:
+                continue
+            result = _batch_worker_result(worker, returncode)
+            worker_results.append(result)
+            del running[worker.slot]
+            typer.echo(f"{worker.slot} finished with exit code {returncode}.")
+
+        if running:
+            time.sleep(min(1.0, BATCH_PROGRESS_INTERVAL_SECONDS))
+
+    _emit_batch_progress(
+        started_monotonic=started_monotonic,
+        now_monotonic=time.monotonic(),
+        duration_seconds=duration_seconds,
+        batch_dir=batch_dir,
+        slots=slots,
+        running_slots=set(),
+        worker_results=worker_results,
+    )
+
+
 def _run_batch(config: BatchConfig) -> int:
     artifacts = create_batch_artifacts(config.output_dir, config=config)
     typer.echo(
@@ -641,11 +772,13 @@ def _run_batch(config: BatchConfig) -> int:
             workers.append(worker)
             typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
 
-    for worker in workers:
-        returncode = worker.process.wait()
-        result = _batch_worker_result(worker, returncode)
-        worker_results.append(result)
-        typer.echo(f"{worker.slot} finished with exit code {returncode}.")
+    _wait_for_batch_workers(
+        workers,
+        worker_results,
+        duration_seconds=config.duration_seconds,
+        batch_dir=artifacts.batch_dir,
+        slots=tuple(device.slot for device in artifacts.devices),
+    )
 
     failed_workers = [result for result in worker_results if result["returncode"] != 0]
     status = "failed" if failed_workers else "completed"

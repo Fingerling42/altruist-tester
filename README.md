@@ -391,6 +391,10 @@ worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 area. If any worker exits with a non-zero code, the batch command exits with
 code `1` after every worker has finished.
 
+While a batch is running, the CLI prints live progress with elapsed time,
+planned duration, running/completed/failed worker counts, per-slot state, and
+the batch artifact directory.
+
 Worker failures are recorded per slot in `batch_summary.json`:
 
 - exit code `1` is treated as a device health-check failure;

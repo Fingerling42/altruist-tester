@@ -509,6 +509,62 @@ expected_metrics = ["co2"]
     )
 
 
+def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/slot-01"
+
+[[devices]]
+slot = "slot-02"
+model = "urban"
+port = "/dev/serial/by-path/slot-02"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            self.args = list(args)
+            self.poll_count = 0
+            self.summary_written = False
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                return None
+            if not self.summary_written:
+                _write_fake_worker_summary(self.args)
+                self.summary_written = True
+            return 0
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    monkeypatch.setattr("altruist_tester.cli.time.sleep", lambda seconds: None)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 0
+    output = _plain_output(result)
+    assert "Batch   0.0% (00:00/1:00:00)" in output
+    assert "running=2 completed=0 failed=0" in output
+    assert "Slots: slot-01=running slot-02=running" in output
+    assert "running=0 completed=2 failed=0" in output
+    assert "Slots: slot-01=completed slot-02=completed" in output
+
+
 def test_batch_returns_failure_when_any_worker_fails(monkeypatch, tmp_path):
     urban_profile = tmp_path / "urban.toml"
     insight_profile = tmp_path / "insight.toml"
