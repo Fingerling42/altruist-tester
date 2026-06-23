@@ -750,6 +750,9 @@ config = "insight.toml"
                     "device_identity": {
                         "device_id": "588C8140B8EC",
                         "mac": "58:8C:81:40:B8:EC",
+                        "usb_serial": "58:8C:81:40:B8:EC",
+                        "by_id": "/dev/serial/by-id/usb-Espressif_588C8140B8EC",
+                        "by_path": "/dev/serial/by-path/urban",
                     },
                     "findings": [],
                     "rules": {"failed_checks": []},
@@ -762,8 +765,15 @@ config = "insight.toml"
                     "run_dir": str(run_dir),
                     "verdict": "FAIL",
                     "device_identity": {
-                        "device_id": "1051DB010C70",
+                        "device_id": None,
                         "mac": "10:51:DB:01:0C:70",
+                        "usb_serial": "10:51:DB:01:0C:70",
+                        "by_id": "/dev/serial/by-id/usb-Espressif_1051DB010C70",
+                        "by_path": "/dev/serial/by-path/insight",
+                        "conflicts": [
+                            {"source": "serial_log", "device_id": "AABBCCDDEEFF"},
+                            {"source": "usb", "device_id": "1051DB010C70"},
+                        ],
                     },
                     "findings": [
                         {
@@ -800,9 +810,21 @@ config = "insight.toml"
     assert summary["devices_failed"] == 1
     assert summary["devices"][0]["slot"] == "slot-01"
     assert summary["devices"][0]["device_id"] == "588C8140B8EC"
+    assert summary["devices"][0]["usb_serial"] == "58:8C:81:40:B8:EC"
+    assert summary["devices"][0]["by_id"].endswith("usb-Espressif_588C8140B8EC")
+    assert summary["devices"][0]["by_path"] == "/dev/serial/by-path/urban"
+    assert summary["devices"][0]["identity_conflicts"] == []
     assert summary["devices"][0]["verdict"] == "PASS_CANDIDATE"
     assert summary["devices"][1]["slot"] == "slot-02"
-    assert summary["devices"][1]["device_id"] == "1051DB010C70"
+    assert summary["devices"][1]["device_id"] is None
+    assert summary["devices"][1]["mac"] == "10:51:DB:01:0C:70"
+    assert summary["devices"][1]["usb_serial"] == "10:51:DB:01:0C:70"
+    assert summary["devices"][1]["by_id"].endswith("usb-Espressif_1051DB010C70")
+    assert summary["devices"][1]["by_path"] == "/dev/serial/by-path/insight"
+    assert summary["devices"][1]["identity_conflicts"] == [
+        {"source": "serial_log", "device_id": "AABBCCDDEEFF"},
+        {"source": "usb", "device_id": "1051DB010C70"},
+    ]
     assert summary["devices"][1]["verdict"] == "FAIL"
     assert summary["devices"][1]["report_txt"].endswith("/report.txt")
     assert summary["devices"][1]["finding_messages"] == [
@@ -827,7 +849,12 @@ config = "insight.toml"
     assert "Verdict: FAIL" in report
     assert "Devices: 2 total, 1 pass, 0 warn, 1 fail" in report
     assert "- slot-01 588C8140B8EC PASS_CANDIDATE (urban, 0 findings)" in report
-    assert "- slot-02 1051DB010C70 FAIL (insight, 1 findings)" in report
+    assert "- slot-02 10:51:DB:01:0C:70 FAIL (insight, 1 findings)" in report
+    assert "usb serial: 58:8C:81:40:B8:EC" in report
+    assert "by-id: /dev/serial/by-id/usb-Espressif_588C8140B8EC" in report
+    assert "by-path: /dev/serial/by-path/insight" in report
+    assert "identity warning: conflicting identity sources" in report
+    assert "serial_log: AABBCCDDEEFF" in report
     assert "failed checks: sensor_presence" in report
     assert "report:" in report
     assert "MISSING_SENSOR_METRIC: Missing expected sensor metrics: co2" in report
@@ -894,6 +921,68 @@ port = "/dev/serial/by-path/warn"
     assert summary["devices_passed"] == 1
     assert summary["devices_warned"] == 1
     assert summary["devices_failed"] == 0
+
+
+def test_batch_warns_when_device_identity_is_missing(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/urban"
+""",
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            output = Path(args[args.index("--output-dir") + 1])
+            run_dir = output / f"run-{output.name}"
+            run_dir.mkdir()
+            summary = {
+                "status": "completed",
+                "run_dir": str(run_dir),
+                "verdict": "PASS_CANDIDATE",
+                "findings": [],
+                "rules": {"failed_checks": []},
+            }
+            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 0
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["verdict"] == "PASS_CANDIDATE"
+    assert summary["devices_failed"] == 0
+    assert summary["devices"][0]["slot"] == "slot-01"
+    assert summary["devices"][0]["device_id"] is None
+    assert summary["devices"][0]["mac"] is None
+    assert summary["devices"][0]["usb_serial"] is None
+    assert summary["devices"][0]["by_id"] is None
+    assert summary["devices"][0]["by_path"] is None
+    assert summary["devices"][0]["identity_conflicts"] == []
+    report = (batch_dir / "batch_report.txt").read_text()
+    assert "- slot-01 unknown-device PASS_CANDIDATE (urban, 0 findings)" in report
+    assert "identity warning: identity was not resolved" in report
 
 
 def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_path):

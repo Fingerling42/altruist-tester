@@ -508,6 +508,34 @@ def _append_batch_report_device_details(
             f"  report: {device.get('report_txt') or 'unknown'}",
         ]
     )
+    usb_serial = device.get("usb_serial")
+    by_id = device.get("by_id")
+    by_path = device.get("by_path")
+    identity_values = (
+        device.get("device_id"),
+        device.get("mac"),
+        usb_serial,
+        by_id,
+        by_path,
+    )
+    if not any(identity_values):
+        lines.append("  identity warning: identity was not resolved")
+    else:
+        if usb_serial:
+            lines.append(f"  usb serial: {usb_serial}")
+        if by_id:
+            lines.append(f"  by-id: {by_id}")
+        if by_path:
+            lines.append(f"  by-path: {by_path}")
+    conflicts = device.get("identity_conflicts")
+    if isinstance(conflicts, list) and conflicts:
+        lines.append("  identity warning: conflicting identity sources")
+        for conflict in conflicts:
+            if not isinstance(conflict, dict):
+                continue
+            source = conflict.get("source") or "unknown"
+            device_id = conflict.get("device_id") or "unknown"
+            lines.append(f"    - {source}: {device_id}")
     failed_checks = device.get("failed_checks")
     if isinstance(failed_checks, list) and failed_checks:
         checks = ", ".join(str(check) for check in failed_checks)

@@ -410,9 +410,11 @@ Worker failures are recorded per slot in `batch_summary.json`:
 
 After workers finish, the batch runner reads each per-device `summary.json` and
 adds `device_results` to `batch_summary.json`. These results include the slot,
-model, port, profile, run directory, device identity, status, verdict, finding
-count, failed checks, upload health, and sensor presence summary. Batch logic
-does not parse raw serial logs.
+model, port, profile, run directory, full device identity, status, verdict,
+finding count, failed checks, upload health, and sensor presence summary. The
+compact top-level device list also includes `device_id`, `mac`, `usb_serial`,
+`by_id`, `by_path`, and identity conflicts when the worker observed them. Batch
+logic does not parse raw serial logs.
 
 `batch_summary.json` also contains a top-level batch `verdict` and device
 counters: `devices_total`, `devices_passed`, `devices_warned`, and
@@ -422,8 +424,10 @@ fail, and `PASS_CANDIDATE` only when all devices pass.
 
 `batch_report.txt` is the SSH-friendly companion report. It shows the batch
 verdict, device counters, and one compact section per slot with model, profile,
-device id or MAC, port, verdict, short findings, failed checks, and the path to
-the per-device `report.txt`.
+device id or MAC, USB identity details, port, verdict, short findings, failed
+checks, and the path to the per-device `report.txt`. Missing identity and
+conflicting identity sources are shown as warnings in the report, but they do
+not fail the batch by themselves.
 
 ## Firmware Notes
 
