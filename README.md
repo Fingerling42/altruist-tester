@@ -411,6 +411,11 @@ counters: `devices_total`, `devices_passed`, `devices_warned`, and
 cannot provide a valid summary, `WARN` when at least one device warns and none
 fail, and `PASS_CANDIDATE` only when all devices pass.
 
+`batch_report.txt` is the SSH-friendly companion report. It shows the batch
+verdict, device counters, and one compact section per slot with model, profile,
+device id or MAC, port, verdict, short findings, failed checks, and the path to
+the per-device `report.txt`.
+
 ## Firmware Notes
 
 - The default baud rate is `115200`.

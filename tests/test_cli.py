@@ -623,12 +623,19 @@ config = "insight.toml"
                         "device_id": "1051DB010C70",
                         "mac": "10:51:DB:01:0C:70",
                     },
-                    "findings": [{"severity": "fail"}],
+                    "findings": [
+                        {
+                            "severity": "fail",
+                            "code": "MISSING_SENSOR_METRIC",
+                            "message": "Missing expected sensor metrics: co2",
+                        }
+                    ],
                     "rules": {"failed_checks": ["sensor_presence"]},
                     "upload_health": {"status": "warn"},
                     "sensor_presence": {"status": "fail"},
                 }
             (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            (run_dir / "report.txt").write_text("device report\n", encoding="utf-8")
             self.returncode = 0
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
@@ -655,6 +662,10 @@ config = "insight.toml"
     assert summary["devices"][1]["slot"] == "slot-02"
     assert summary["devices"][1]["device_id"] == "1051DB010C70"
     assert summary["devices"][1]["verdict"] == "FAIL"
+    assert summary["devices"][1]["report_txt"].endswith("/report.txt")
+    assert summary["devices"][1]["finding_messages"] == [
+        "MISSING_SENSOR_METRIC: Missing expected sensor metrics: co2"
+    ]
     assert len(summary["device_results"]) == 2
     assert summary["device_results"][0]["slot"] == "slot-01"
     assert summary["device_results"][0]["model"] == "urban"
@@ -667,14 +678,17 @@ config = "insight.toml"
     assert summary["device_results"][1]["model"] == "insight"
     assert summary["device_results"][1]["verdict"] == "FAIL"
     assert summary["device_results"][1]["failed_checks"] == ["sensor_presence"]
+    assert summary["device_results"][1]["report_txt"].endswith("/report.txt")
     assert summary["device_results"][1]["upload_health"]["status"] == "warn"
     assert summary["device_results"][1]["sensor_presence"]["status"] == "fail"
     report = (batch_dir / "batch_report.txt").read_text()
     assert "Verdict: FAIL" in report
     assert "Devices: 2 total, 1 pass, 0 warn, 1 fail" in report
-    assert "Device Results:" in report
-    assert "verdict: PASS_CANDIDATE" in report
-    assert "verdict: FAIL" in report
+    assert "- slot-01 588C8140B8EC PASS_CANDIDATE (urban, 0 findings)" in report
+    assert "- slot-02 1051DB010C70 FAIL (insight, 1 findings)" in report
+    assert "failed checks: sensor_presence" in report
+    assert "report:" in report
+    assert "MISSING_SENSOR_METRIC: Missing expected sensor metrics: co2" in report
 
 
 def test_batch_summary_verdict_warns_without_failures(monkeypatch, tmp_path):

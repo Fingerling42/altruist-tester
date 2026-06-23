@@ -397,6 +397,32 @@ def _findings_count(summary: dict[str, object]) -> int | None:
     return None
 
 
+def _finding_messages(summary: dict[str, object], *, limit: int = 3) -> list[str]:
+    findings = summary.get("findings")
+    if not isinstance(findings, list):
+        return []
+
+    messages = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        message = finding.get("message")
+        code = finding.get("code")
+        severity = finding.get("severity")
+        if isinstance(message, str) and message:
+            if isinstance(code, str) and code:
+                messages.append(f"{code}: {message}")
+            elif isinstance(severity, str) and severity:
+                messages.append(f"{severity}: {message}")
+            else:
+                messages.append(message)
+        elif isinstance(code, str) and code:
+            messages.append(code)
+        if len(messages) >= limit:
+            break
+    return messages
+
+
 def _device_result_from_summary(
     device_artifacts: BatchDeviceArtifacts,
     worker_result: dict[str, object],
@@ -420,11 +446,13 @@ def _device_result_from_summary(
         "worker_returncode": worker_result.get("returncode"),
         "failure_kind": worker_result.get("failure_kind"),
         "summary_json": str(summary_path),
+        "report_txt": str(summary_path.parent / "report.txt"),
         "run_dir": summary.get("run_dir"),
         "status": summary.get("status"),
         "verdict": summary.get("verdict"),
         "device_identity": _device_identity_from_summary(summary),
         "findings_count": _findings_count(summary),
+        "finding_messages": _finding_messages(summary),
         "failed_checks": failed_checks,
         "upload_health": summary.get("upload_health"),
         "sensor_presence": summary.get("sensor_presence"),
@@ -446,11 +474,13 @@ def _device_result_without_summary(
         "worker_returncode": worker_result.get("returncode"),
         "failure_kind": worker_result.get("failure_kind"),
         "summary_json": None,
+        "report_txt": None,
         "run_dir": None,
         "status": "failed",
         "verdict": None,
         "device_identity": None,
         "findings_count": None,
+        "finding_messages": [],
         "failed_checks": [],
         "upload_health": None,
         "sensor_presence": None,
@@ -515,9 +545,11 @@ def _batch_device_entry(device_result: dict[str, object]) -> dict[str, object]:
         "device_id": _device_identity_value(device_result, "device_id"),
         "mac": _device_identity_value(device_result, "mac"),
         "run_dir": device_result.get("run_dir"),
+        "report_txt": device_result.get("report_txt"),
         "status": device_result.get("status"),
         "verdict": device_result.get("verdict"),
         "findings_count": device_result.get("findings_count"),
+        "finding_messages": device_result.get("finding_messages"),
         "failed_checks": device_result.get("failed_checks"),
         "failure_kind": device_result.get("failure_kind"),
         "summary_error": device_result.get("summary_error"),

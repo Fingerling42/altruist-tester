@@ -483,6 +483,45 @@ def _write_batch_summary(
     )
 
 
+def _batch_report_device_line(device: dict[str, Any]) -> str:
+    identity = device.get("device_id") or device.get("mac") or "unknown-device"
+    verdict = device.get("verdict") or "unknown"
+    findings_count = device.get("findings_count")
+    findings_text = (
+        f"{findings_count} findings" if findings_count is not None else "n/a"
+    )
+    return (
+        f"- {device.get('slot')} {identity} {verdict} "
+        f"({device.get('model') or 'unspecified'}, {findings_text})"
+    )
+
+
+def _append_batch_report_device_details(
+    lines: list[str],
+    device: dict[str, Any],
+) -> None:
+    lines.extend(
+        [
+            f"  port: {device.get('port')}",
+            f"  config: {device.get('config')}",
+            f"  run dir: {device.get('run_dir') or 'unknown'}",
+            f"  report: {device.get('report_txt') or 'unknown'}",
+        ]
+    )
+    failed_checks = device.get("failed_checks")
+    if isinstance(failed_checks, list) and failed_checks:
+        checks = ", ".join(str(check) for check in failed_checks)
+        lines.append(f"  failed checks: {checks}")
+    finding_messages = device.get("finding_messages")
+    if isinstance(finding_messages, list) and finding_messages:
+        lines.append("  findings:")
+        for message in finding_messages:
+            lines.append(f"    - {message}")
+    summary_error = device.get("summary_error")
+    if summary_error:
+        lines.append(f"  summary error: {summary_error}")
+
+
 def _write_batch_report(
     artifacts: BatchArtifacts,
     status: str,
@@ -526,17 +565,24 @@ def _write_batch_report(
             ]
         )
     lines.extend(["", "Devices:"])
-    for device_artifacts in artifacts.devices:
-        device = device_artifacts.device
-        lines.extend(
-            [
-                f"- {device.slot}",
-                f"  model: {device.model or 'unspecified'}",
-                f"  port: {device.port}",
-                f"  config: {device.effective_config}",
-                f"  output dir: {device_artifacts.output_dir}",
-            ]
-        )
+    if aggregate is not None and isinstance(aggregate.get("devices"), list):
+        for device in aggregate["devices"]:
+            if not isinstance(device, dict):
+                continue
+            lines.append(_batch_report_device_line(device))
+            _append_batch_report_device_details(lines, device)
+    else:
+        for device_artifacts in artifacts.devices:
+            device = device_artifacts.device
+            lines.extend(
+                [
+                    f"- {device.slot}",
+                    f"  model: {device.model or 'unspecified'}",
+                    f"  port: {device.port}",
+                    f"  config: {device.effective_config}",
+                    f"  output dir: {device_artifacts.output_dir}",
+                ]
+            )
     if worker_results:
         lines.extend(["", "Workers:"])
         for result in worker_results:
@@ -546,17 +592,6 @@ def _write_batch_report(
                     f"  return code: {result.get('returncode')}",
                     f"  stdout: {result.get('stdout_log')}",
                     f"  stderr: {result.get('stderr_log')}",
-                ]
-            )
-    if device_results:
-        lines.extend(["", "Device Results:"])
-        for result in device_results:
-            lines.extend(
-                [
-                    f"- {result.get('slot')}: {result.get('status')}",
-                    f"  verdict: {result.get('verdict') or 'unknown'}",
-                    f"  run dir: {result.get('run_dir') or 'unknown'}",
-                    f"  findings: {result.get('findings_count')}",
                 ]
             )
     lines.extend(
