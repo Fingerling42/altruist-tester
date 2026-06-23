@@ -256,28 +256,143 @@ config = "insight.toml"
     assert f"config: {insight_profile}" in output
 
 
-def test_batch_requires_dry_run(tmp_path):
-    profile = tmp_path / "urban.toml"
-    profile.touch()
+def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):
+    urban_profile = tmp_path / "urban.toml"
+    insight_profile = tmp_path / "insight.toml"
+    urban_profile.touch()
+    insight_profile.touch()
+    output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
     batch_config.write_text(
-        """
+        f"""
 [batch]
-duration = "1h"
-device_config = "urban.toml"
+duration = "24h"
+baud = 9600
+output_dir = "{output_dir}"
 
 [[devices]]
 slot = "slot-01"
 model = "urban"
-port = "/dev/serial/by-path/slot-01"
+port = "/dev/serial/by-path/urban"
+config = "urban.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/insight"
+config = "insight.toml"
+expected_sensors = ["scd41"]
+expected_metrics = ["co2"]
 """,
         encoding="utf-8",
     )
+    started = []
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            self.args = list(args)
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+            started.append(self)
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 2
-    assert "Only --dry-run is supported" in _plain_output(result)
+    assert result.exit_code == 0
+    assert len(started) == 2
+    assert "Started batch" in result.output
+    assert "Batch completed: 2/2 workers succeeded." in result.output
+
+    urban_command = started[0].args
+    insight_command = started[1].args
+    assert urban_command[1:4] == ["-m", "altruist_tester.cli", "run"]
+    assert urban_command[urban_command.index("--port") + 1] == (
+        "/dev/serial/by-path/urban"
+    )
+    assert urban_command[urban_command.index("--duration") + 1] == "24h"
+    assert urban_command[urban_command.index("--baud") + 1] == "9600"
+    assert urban_command[urban_command.index("--config") + 1] == str(urban_profile)
+    assert insight_command[insight_command.index("--config") + 1] == str(
+        insight_profile
+    )
+    assert "--expect-sensor" in insight_command
+    assert insight_command[insight_command.index("--expect-sensor") + 1] == "scd41"
+    assert "--expect-metric" in insight_command
+    assert insight_command[insight_command.index("--expect-metric") + 1] == "co2"
+
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "completed"
+    assert summary["workers"][0]["returncode"] == 0
+    assert summary["workers"][0]["status"] == "completed"
+    assert summary["workers"][1]["returncode"] == 0
+    assert (batch_dir / "devices" / "slot-01" / "worker.stdout.log").read_text() == (
+        "worker stdout\n"
+    )
+    assert (batch_dir / "devices" / "slot-02" / "worker.stderr.log").read_text() == (
+        "worker stderr\n"
+    )
+
+
+def test_batch_returns_failure_when_any_worker_fails(monkeypatch, tmp_path):
+    urban_profile = tmp_path / "urban.toml"
+    insight_profile = tmp_path / "insight.toml"
+    urban_profile.touch()
+    insight_profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/urban"
+config = "urban.toml"
+
+[[devices]]
+slot = "slot-02"
+model = "insight"
+port = "/dev/serial/by-path/insight"
+config = "insight.toml"
+""",
+        encoding="utf-8",
+    )
+    returncodes = {
+        "/dev/serial/by-path/urban": 0,
+        "/dev/serial/by-path/insight": 1,
+    }
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            port = args[args.index("--port") + 1]
+            self.returncode = returncodes[port]
+            stdout.write(f"stdout {port}\n")
+            stderr.write(f"stderr {port}\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 1
+    assert "Batch completed: 1/2 workers succeeded." in result.output
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert summary["workers"][0]["returncode"] == 0
+    assert summary["workers"][1]["returncode"] == 1
+    assert summary["workers"][1]["status"] == "failed"
 
 
 def test_batch_dry_run_rejects_invalid_config(tmp_path):

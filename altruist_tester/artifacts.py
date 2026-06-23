@@ -375,6 +375,42 @@ class BatchArtifacts:
     devices_dir: Path
     devices: tuple[BatchDeviceArtifacts, ...]
 
+    def write_summary(
+        self,
+        status: str,
+        *,
+        message: str | None = None,
+        finished_at: datetime | None = None,
+        worker_results: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        """Write the current machine-readable batch summary."""
+
+        _write_batch_summary(
+            self,
+            status,
+            message=message,
+            finished_at=finished_at,
+            worker_results=worker_results,
+        )
+
+    def write_report(
+        self,
+        status: str,
+        *,
+        message: str | None = None,
+        finished_at: datetime | None = None,
+        worker_results: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        """Write the current human-readable batch report."""
+
+        _write_batch_report(
+            self,
+            status,
+            message=message,
+            finished_at=finished_at,
+            worker_results=worker_results,
+        )
+
 
 def _batch_device_summary(device_artifacts: BatchDeviceArtifacts) -> dict[str, Any]:
     device = device_artifacts.device
@@ -389,7 +425,14 @@ def _batch_device_summary(device_artifacts: BatchDeviceArtifacts) -> dict[str, A
     }
 
 
-def _write_batch_summary(artifacts: BatchArtifacts, status: str) -> None:
+def _write_batch_summary(
+    artifacts: BatchArtifacts,
+    status: str,
+    *,
+    message: str | None = None,
+    finished_at: datetime | None = None,
+    worker_results: tuple[dict[str, Any], ...] = (),
+) -> None:
     summary = {
         "status": status,
         "batch_id": artifacts.batch_id,
@@ -414,13 +457,26 @@ def _write_batch_summary(artifacts: BatchArtifacts, status: str) -> None:
             for device_artifacts in artifacts.devices
         ],
     }
+    if finished_at is not None:
+        summary["finished_at"] = format_timestamp(finished_at)
+    if message is not None:
+        summary["message"] = message
+    if worker_results:
+        summary["workers"] = list(worker_results)
     artifacts.summary_json.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
 
-def _write_batch_report(artifacts: BatchArtifacts, status: str) -> None:
+def _write_batch_report(
+    artifacts: BatchArtifacts,
+    status: str,
+    *,
+    message: str | None = None,
+    finished_at: datetime | None = None,
+    worker_results: tuple[dict[str, Any], ...] = (),
+) -> None:
     lines = [
         "Altruist Tester Batch Report",
         "============================",
@@ -428,13 +484,20 @@ def _write_batch_report(artifacts: BatchArtifacts, status: str) -> None:
         f"Batch ID: {artifacts.batch_id}",
         f"Status: {status}",
         f"Started at: {format_timestamp(artifacts.started_at)}",
-        f"Duration: {artifacts.config.duration_input} "
-        f"({artifacts.config.duration_seconds}s)",
-        f"Baud: {artifacts.config.baud}",
-        f"Output dir: {artifacts.config.output_dir}",
-        "",
-        "Devices:",
     ]
+    if finished_at is not None:
+        lines.append(f"Finished at: {format_timestamp(finished_at)}")
+    lines.extend(
+        [
+            f"Duration: {artifacts.config.duration_input} "
+            f"({artifacts.config.duration_seconds}s)",
+            f"Baud: {artifacts.config.baud}",
+            f"Output dir: {artifacts.config.output_dir}",
+        ]
+    )
+    if message is not None:
+        lines.extend(["", message])
+    lines.extend(["", "Devices:"])
     for device_artifacts in artifacts.devices:
         device = device_artifacts.device
         lines.extend(
@@ -446,6 +509,17 @@ def _write_batch_report(artifacts: BatchArtifacts, status: str) -> None:
                 f"  output dir: {device_artifacts.output_dir}",
             ]
         )
+    if worker_results:
+        lines.extend(["", "Workers:"])
+        for result in worker_results:
+            lines.extend(
+                [
+                    f"- {result.get('slot')}: {result.get('status')}",
+                    f"  return code: {result.get('returncode')}",
+                    f"  stdout: {result.get('stdout_log')}",
+                    f"  stderr: {result.get('stderr_log')}",
+                ]
+            )
     lines.extend(
         [
             "",
@@ -503,8 +577,8 @@ def create_batch_artifacts(
         devices_dir=devices_dir,
         devices=device_artifacts,
     )
-    _write_batch_summary(artifacts, "initialized")
-    _write_batch_report(artifacts, "initialized")
+    artifacts.write_summary("initialized")
+    artifacts.write_report("initialized")
     return artifacts
 
 

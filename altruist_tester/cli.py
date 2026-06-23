@@ -1,5 +1,8 @@
 """Command line interface for the Altruist tester."""
 
+import subprocess
+import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Protocol
@@ -8,7 +11,12 @@ import serial
 import typer
 
 from altruist_tester import __version__
-from altruist_tester.artifacts import create_run_artifacts, utc_now
+from altruist_tester.artifacts import (
+    BatchDeviceArtifacts,
+    create_batch_artifacts,
+    create_run_artifacts,
+    utc_now,
+)
 from altruist_tester.config import (
     BatchConfig,
     ConfigError,
@@ -38,6 +46,18 @@ class RuleReportMessage(Protocol):
 
     status: str
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class BatchWorkerProcess:
+    """One subprocess worker launched for a batch device slot."""
+
+    slot: str
+    command: list[str]
+    output_dir: Path
+    stdout_log: Path
+    stderr_log: Path
+    process: subprocess.Popen[str]
 
 
 app = typer.Typer(
@@ -144,6 +164,121 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
         typer.echo(f"    port_exists: {port_exists}")
         typer.echo(f"    config: {_format_optional_path(device.effective_config)}")
         typer.echo(f"    identity: {_format_batch_identity(device.port, port_infos)}")
+
+
+def _batch_worker_command(
+    config: BatchConfig,
+    device_artifacts: BatchDeviceArtifacts,
+) -> list[str]:
+    device = device_artifacts.device
+    command = [
+        sys.executable,
+        "-m",
+        "altruist_tester.cli",
+        "run",
+        "--port",
+        str(device.port),
+        "--duration",
+        config.duration_input,
+        "--baud",
+        str(config.baud),
+        "--output-dir",
+        str(device_artifacts.output_dir),
+    ]
+    if device.effective_config is not None:
+        command.extend(["--config", str(device.effective_config)])
+    for sensor in device.expected_sensors:
+        command.extend(["--expect-sensor", sensor])
+    for metric in device.expected_metrics:
+        command.extend(["--expect-metric", metric])
+    return command
+
+
+def _start_batch_worker(
+    config: BatchConfig,
+    device_artifacts: BatchDeviceArtifacts,
+) -> BatchWorkerProcess:
+    stdout_log = device_artifacts.output_dir / "worker.stdout.log"
+    stderr_log = device_artifacts.output_dir / "worker.stderr.log"
+    command = _batch_worker_command(config, device_artifacts)
+
+    with stdout_log.open("w", encoding="utf-8") as stdout:
+        with stderr_log.open("w", encoding="utf-8") as stderr:
+            process = subprocess.Popen(
+                command,
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+            )
+
+    return BatchWorkerProcess(
+        slot=device_artifacts.slot,
+        command=command,
+        output_dir=device_artifacts.output_dir,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        process=process,
+    )
+
+
+def _batch_worker_result(
+    worker: BatchWorkerProcess,
+    returncode: int,
+) -> dict[str, object]:
+    return {
+        "slot": worker.slot,
+        "status": "completed" if returncode == 0 else "failed",
+        "returncode": returncode,
+        "command": list(worker.command),
+        "output_dir": str(worker.output_dir),
+        "stdout_log": str(worker.stdout_log),
+        "stderr_log": str(worker.stderr_log),
+    }
+
+
+def _run_batch(config: BatchConfig) -> int:
+    artifacts = create_batch_artifacts(config.output_dir, config=config)
+    typer.echo(
+        f"Started batch {artifacts.batch_id} with {len(artifacts.devices)} devices."
+    )
+
+    workers = []
+    for device_artifacts in artifacts.devices:
+        worker = _start_batch_worker(config, device_artifacts)
+        workers.append(worker)
+        typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
+
+    worker_results = []
+    for worker in workers:
+        returncode = worker.process.wait()
+        result = _batch_worker_result(worker, returncode)
+        worker_results.append(result)
+        typer.echo(f"{worker.slot} finished with exit code {returncode}.")
+
+    failed_workers = [result for result in worker_results if result["returncode"] != 0]
+    status = "failed" if failed_workers else "completed"
+    message = (
+        f"Batch completed: {len(worker_results) - len(failed_workers)}/"
+        f"{len(worker_results)} workers succeeded."
+    )
+    finished_at = utc_now()
+    worker_results_tuple = tuple(worker_results)
+    artifacts.write_summary(
+        status,
+        message=message,
+        finished_at=finished_at,
+        worker_results=worker_results_tuple,
+    )
+    artifacts.write_report(
+        status,
+        message=message,
+        finished_at=finished_at,
+        worker_results=worker_results_tuple,
+    )
+
+    typer.echo(message)
+    typer.echo(f"Batch artifacts were written under {artifacts.batch_dir}.")
+    return 1 if failed_workers else 0
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -307,20 +442,26 @@ def batch(
         ),
     ] = False,
 ) -> None:
-    """Validate and preview a USB batch run without opening serial ports."""
-
-    if not dry_run:
-        raise typer.BadParameter(
-            "Only --dry-run is supported for batch mode for now.",
-            param_hint="--dry-run",
-        )
+    """Run or preview a USB batch burn-in using one worker per device."""
 
     try:
         batch_config = load_batch_config(config)
     except ConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="--config") from exc
 
-    _print_batch_dry_run(batch_config)
+    if dry_run:
+        _print_batch_dry_run(batch_config)
+        return
+
+    try:
+        exit_code = _run_batch(batch_config)
+    except OSError as exc:
+        raise typer.BadParameter(
+            f"Could not start batch worker: {exc}",
+            param_hint="--config",
+        ) from exc
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command()

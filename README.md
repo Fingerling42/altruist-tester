@@ -347,8 +347,15 @@ ports, models, effective tester profiles, port presence, and USB identity when
 metadata is available. It does not open serial ports and does not create run
 artifacts.
 
-When batch execution is enabled, each batch run will create a top-level
-directory that separates batch files from per-device worker output:
+Run the batch:
+
+```bash
+uv run altruist-tester batch --config configs/batch.usb.example.toml
+```
+
+The batch runner starts one `altruist-tester run` subprocess per device and
+waits for all workers to finish. Each batch run creates a top-level directory
+that separates batch files from per-device worker output:
 
 ```text
 runs/batch_<timestamp>/
@@ -356,13 +363,18 @@ runs/batch_<timestamp>/
   batch_report.txt
   devices/
     slot-01/
+      worker.stdout.log
+      worker.stderr.log
     slot-02/
+      worker.stdout.log
+      worker.stderr.log
 ```
 
 Each slot directory is reserved as the output directory for its single-device
 worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 `samples.jsonl`, `summary.json`, and `report.txt` inside that slot-specific
-area.
+area. If any worker exits with a non-zero code, the batch command exits with
+code `1` after every worker has finished.
 
 ## Firmware Notes
 
