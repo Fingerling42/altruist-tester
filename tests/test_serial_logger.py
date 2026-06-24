@@ -370,4 +370,29 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
         "last_tx_age_sec": 1,
         "errors": {"wifi": 3, "sensor": 0, "sd": 1},
         "esp_temp_c": 36.1,
+        "free_heap": None,
+        "error_count": None,
     }
+
+
+def test_capture_raw_serial_writes_compact_health_event(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(
+        tmp_path,
+        duration_input="2s",
+        duration_seconds=2,
+    )
+    serial = FakeSerial(
+        [b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0\n"],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    metrics_events = [event for event in events if event["type"] == "dev_metrics"]
+    assert len(metrics_events) == 1
+    assert metrics_events[0]["free_heap"] == 219584
+    assert metrics_events[0]["error_count"] == 0
+    assert stats.dev_metrics.count == 1
+    assert stats.dev_metrics.last_metrics["status"] == "ALIVE"

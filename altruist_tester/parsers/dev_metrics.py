@@ -20,6 +20,15 @@ _ERRORS_RE = re.compile(
 )
 _ESP_TEMP_RE = re.compile(r"^ESP Temp:\s*(?P<temp>-?\d+(?:\.\d+)?)")
 _FOOTER_PREFIX = "=========================="
+_HEALTH_RE = re.compile(
+    r"^\[HEALTH\]\s+"
+    r"uptime=(?P<uptime>\d+)\s+"
+    r"boot=(?P<boot>\d+)\s+"
+    r"heap=(?P<heap>\d+)\s+"
+    r"rssi=(?P<rssi>-?\d+)\s+"
+    r"tx=(?P<tx>\d+)\s+"
+    r"errors=(?P<errors>\d+)\s*$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +68,8 @@ class DevMetrics:
     last_tx_age_sec: int | None = None
     errors: DevMetricsErrors = DevMetricsErrors()
     esp_temp_c: float | None = None
+    free_heap: int | None = None
+    error_count: int | None = None
 
     def as_event_payload(self) -> dict[str, object]:
         """Return metrics as an event payload."""
@@ -74,7 +85,28 @@ class DevMetrics:
             "last_tx_age_sec": self.last_tx_age_sec,
             "errors": self.errors.as_dict(),
             "esp_temp_c": self.esp_temp_c,
+            "free_heap": self.free_heap,
+            "error_count": self.error_count,
         }
+
+
+def _parse_health_line(line: str) -> DevMetrics | None:
+    match = _HEALTH_RE.match(line.strip())
+    if match is None:
+        return None
+
+    rssi = int(match.group("rssi"))
+    error_count = int(match.group("errors"))
+    return DevMetrics(
+        status="ERROR" if error_count else "ALIVE",
+        uptime_sec=int(match.group("uptime")),
+        boot=int(match.group("boot")),
+        wifi_state="DISCONNECTED" if rssi == 0 else "OK",
+        rssi=rssi,
+        tx=int(match.group("tx")),
+        free_heap=int(match.group("heap")),
+        error_count=error_count,
+    )
 
 
 def parse_dev_metrics_block(lines: Iterable[str]) -> DevMetrics | None:
@@ -84,6 +116,12 @@ def parse_dev_metrics_block(lines: Iterable[str]) -> DevMetrics | None:
     :returns: Parsed metrics when a block header is present, otherwise
         ``None``.
     """
+
+    normalized_lines = [line.strip() for line in lines if line.strip()]
+    if len(normalized_lines) == 1:
+        health_metrics = _parse_health_line(normalized_lines[0])
+        if health_metrics is not None:
+            return health_metrics
 
     model: str | None = None
     status: str | None = None
@@ -96,11 +134,7 @@ def parse_dev_metrics_block(lines: Iterable[str]) -> DevMetrics | None:
     errors = DevMetricsErrors()
     esp_temp_c: float | None = None
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-
+    for line in normalized_lines:
         if header_match := _HEADER_RE.match(line):
             model = header_match.group("model")
             continue
@@ -172,6 +206,10 @@ def parse_dev_metrics_blocks(lines: Iterable[str]) -> list[DevMetrics]:
 
     for raw_line in lines:
         line = raw_line.rstrip("\r\n")
+        if health_metrics := _parse_health_line(line):
+            metrics.append(health_metrics)
+            continue
+
         if _HEADER_RE.match(line):
             # A new header closes the previous block even if the footer was
             # dropped or the capture started/stopped mid-print.
@@ -218,6 +256,9 @@ class DevMetricsStreamParser:
         """
 
         line = line.rstrip("\r\n")
+        if health_metrics := _parse_health_line(line):
+            return health_metrics
+
         if _HEADER_RE.match(line):
             # Treat a fresh header as an implicit boundary so a missing footer
             # does not make us discard the previous metrics snapshot.

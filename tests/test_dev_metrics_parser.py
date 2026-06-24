@@ -36,6 +36,34 @@ def test_parse_full_urban_metrics_block():
     )
 
 
+def test_parse_compact_health_line():
+    metrics = parse_dev_metrics_block(
+        ["[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"]
+    )
+
+    assert metrics == DevMetrics(
+        status="ALIVE",
+        uptime_sec=3600,
+        boot=4,
+        wifi_state="OK",
+        rssi=-62,
+        tx=12,
+        free_heap=219584,
+        error_count=0,
+    )
+
+
+def test_parse_compact_health_line_with_errors_and_disconnected_wifi():
+    metrics = parse_dev_metrics_block(
+        ["[HEALTH] uptime=61 boot=5 heap=180000 rssi=0 tx=0 errors=3"]
+    )
+
+    assert metrics is not None
+    assert metrics.status == "ERROR"
+    assert metrics.wifi_state == "DISCONNECTED"
+    assert metrics.error_count == 3
+
+
 def test_parse_metrics_block_without_unicode_status_symbols():
     metrics = parse_dev_metrics_block(
         [
@@ -98,6 +126,8 @@ def test_metrics_event_payload_is_json_friendly():
         "last_tx_age_sec": None,
         "errors": {"wifi": 0, "sensor": 0, "sd": 0},
         "esp_temp_c": None,
+        "free_heap": None,
+        "error_count": None,
     }
 
 
@@ -133,6 +163,19 @@ def test_dev_metrics_stream_parser_returns_blocks_as_they_close():
     assert metrics is not None
     assert metrics.model == "URBAN"
     assert metrics.uptime_sec == 121
+    assert parser.finish() is None
+
+
+def test_dev_metrics_stream_parser_returns_compact_health_line_immediately():
+    parser = DevMetricsStreamParser()
+
+    metrics = parser.feed(
+        "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"
+    )
+
+    assert metrics is not None
+    assert metrics.uptime_sec == 3600
+    assert metrics.free_heap == 219584
     assert parser.finish() is None
 
 
