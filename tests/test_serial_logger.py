@@ -274,9 +274,8 @@ def test_capture_raw_serial_reports_progress(tmp_path):
         [
             b'{"BME280":{"temperature":{"value":25.5,"units":"C"}}}\n',
             b"Guru Meditation Error: Core 0 panic'ed\n",
-            b"=== [URBAN] METRICS ===\n",
-            b"Status: ALIVE\n",
-            b"==========================\n",
+            b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+            b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0\n",
         ],
         clock,
     )
@@ -295,7 +294,7 @@ def test_capture_raw_serial_reports_progress(tmp_path):
     # The logger always emits a final complete update even when the interval
     # callback cadence does not land exactly on the run duration.
     assert progress_updates[-1].complete is True
-    assert progress_updates[-1].lines_read == 5
+    assert progress_updates[-1].lines_read == 3
     assert progress_updates[-1].dev_metrics_count == 1
     assert progress_updates[-1].keyword_alerts_count == 2
     assert progress_updates[-1].sensor_samples_count == 1
@@ -311,24 +310,10 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     )
     serial = FakeSerial(
         [
-            b"=== [URBAN] METRICS ===\n",
-            b"Status: \xe2\x9c\x93 ALIVE\n",
-            b"Uptime: 2m 1s (121s total)\n",
-            b"Boot: 7\n",
-            b"WiFi: \xe2\x9c\x93 OK (RSSI: -81 dBm)\n",
-            b"TX: 1 (last: 65s ago)\n",
-            b"Errors: WiFi=0 Sensor=1 SD=2\n",
-            b"ESP Temp: 35.6\xc2\xb0C\n",
-            b"==========================\n",
-            b"=== [URBAN] METRICS ===\n",
-            b"Status: \xe2\x9c\x93 ALIVE\n",
-            b"Uptime: 2m 4s (124s total)\n",
-            b"Boot: 7\n",
-            b"WiFi: \xe2\x9c\x93 OK (RSSI: -79 dBm)\n",
-            b"TX: 2 (last: 1s ago)\n",
-            b"Errors: WiFi=3 Sensor=0 SD=1\n",
-            b"ESP Temp: 36.1\xc2\xb0C\n",
-            b"==========================\n",
+            b"[HEALTH] uptime=121 boot=7 heap=220000 rssi=-81 tx=1 "
+            b"errors=3 wifi=1 wifi_errors=0 sensor_errors=1 sd_errors=2\n",
+            b"[HEALTH] uptime=124 boot=7 heap=219584 rssi=-79 tx=2 "
+            b"errors=4 wifi=1 wifi_errors=3 sensor_errors=0 sd_errors=1\n",
         ],
         clock,
     )
@@ -356,26 +341,26 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     assert stats.dev_metrics.max_uptime_sec == 124
     assert stats.dev_metrics.min_rssi == -81
     assert stats.dev_metrics.max_rssi == -79
-    assert stats.dev_metrics.min_esp_temp_c == 35.6
-    assert stats.dev_metrics.max_esp_temp_c == 36.1
+    assert stats.dev_metrics.min_esp_temp_c is None
+    assert stats.dev_metrics.max_esp_temp_c is None
     assert stats.dev_metrics.max_errors == {"wifi": 3, "sensor": 1, "sd": 2}
     assert stats.dev_metrics.last_metrics == {
-        "model": "URBAN",
-        "status": "ALIVE",
+        "model": None,
+        "status": "ERROR",
         "uptime_sec": 124,
         "boot": 7,
         "wifi_state": "OK",
         "rssi": -79,
         "tx": 2,
-        "last_tx_age_sec": 1,
+        "last_tx_age_sec": None,
         "errors": {"wifi": 3, "sensor": 0, "sd": 1},
-        "esp_temp_c": 36.1,
-        "free_heap": None,
-        "error_count": None,
+        "esp_temp_c": None,
+        "free_heap": 219584,
+        "error_count": 4,
     }
 
 
-def test_capture_raw_serial_writes_compact_health_event(tmp_path):
+def test_capture_raw_serial_ignores_short_health_event(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(
         tmp_path,
@@ -391,8 +376,30 @@ def test_capture_raw_serial_writes_compact_health_event(tmp_path):
 
     events = _read_jsonl(artifacts.events_jsonl)
     metrics_events = [event for event in events if event["type"] == "dev_metrics"]
+    assert metrics_events == []
+    assert stats.dev_metrics.count == 0
+
+
+def test_capture_raw_serial_writes_extended_health_event(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(
+        tmp_path,
+        duration_input="2s",
+        duration_seconds=2,
+    )
+    serial = FakeSerial(
+        [
+            b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+            b"errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0\n"
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    metrics_events = [event for event in events if event["type"] == "dev_metrics"]
     assert len(metrics_events) == 1
-    assert metrics_events[0]["free_heap"] == 219584
-    assert metrics_events[0]["error_count"] == 0
-    assert stats.dev_metrics.count == 1
-    assert stats.dev_metrics.last_metrics["status"] == "ALIVE"
+    assert metrics_events[0]["errors"] == {"wifi": 1, "sensor": 2, "sd": 0}
+    assert metrics_events[0]["error_count"] == 3
+    assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}

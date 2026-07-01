@@ -6,7 +6,6 @@ Run summary:
 
 - duration: `10m`
 - serial lines: `2392`
-- development metrics blocks: `200`
 - keyword alerts: `0`
 - observed full sensor JSON snapshots: `17`
 - observed compact datalog sensor lines: `13`

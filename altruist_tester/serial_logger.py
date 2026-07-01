@@ -36,7 +36,7 @@ class SerialReader(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DevMetricsSummary:
-    """Aggregate parsed development metrics for a run.
+    """Aggregate parsed firmware health telemetry for a run.
 
     The summary keeps min/max values needed by reports while
     ``dev_metrics_records`` keeps the individual snapshots for runtime rules.
@@ -59,7 +59,7 @@ class DevMetricsSummary:
 
     @property
     def seen(self) -> bool:
-        """Return whether at least one metrics block was parsed."""
+        """Return whether at least one health telemetry line was parsed."""
 
         return self.count > 0
 
@@ -278,7 +278,7 @@ def capture_raw_serial(
     """Capture raw serial output until the requested duration elapses.
 
     Every received byte is appended to ``serial.log``. Decoded lines are also
-    parsed for keyword alerts, development metrics blocks, and sensor samples;
+    parsed for keyword alerts, health telemetry, and sensor samples;
     those structured observations are written to ``events.jsonl`` or
     ``samples.jsonl`` as appropriate.
 
@@ -399,17 +399,6 @@ def capture_raw_serial(
             if now >= next_progress_at:
                 emit_progress(now)
                 next_progress_at = now + progress_interval_seconds
-
-    trailing_metrics = metrics_parser.finish()
-    if trailing_metrics is not None:
-        # Do not lose a metrics block that was being printed when the timed
-        # capture ended.
-        metrics_summary = _append_dev_metrics(
-            artifacts,
-            trailing_metrics,
-            metrics_records,
-            metrics_summary,
-        )
 
     emit_progress(clock(), complete=True)
 

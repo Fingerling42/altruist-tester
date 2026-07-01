@@ -6,101 +6,65 @@ from altruist_tester.parsers.dev_metrics import (
     parse_dev_metrics_blocks,
 )
 
+HEALTH_LINE = (
+    "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+    "errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0"
+)
 
-def test_parse_full_urban_metrics_block():
-    metrics = parse_dev_metrics_block(
-        [
-            "=== [URBAN] METRICS ===",
-            "Status: ✓ ALIVE",
-            "Uptime: 1h 2m 3s (3723s total)",
-            "Boot: 1",
-            "WiFi: ✓ OK (RSSI: -54 dBm)",
-            "TX: 42 (last: 12s ago)",
-            "Errors: WiFi=0 Sensor=1 SD=2",
-            "ESP Temp: 43.1°C",
-            "==========================",
-        ]
-    )
+
+def test_parse_current_health_line():
+    metrics = parse_dev_metrics_block([HEALTH_LINE])
 
     assert metrics == DevMetrics(
-        model="URBAN",
-        status="ALIVE",
-        uptime_sec=3723,
-        boot=1,
-        wifi_state="OK",
-        rssi=-54,
-        tx=42,
-        last_tx_age_sec=12,
-        errors=DevMetricsErrors(wifi=0, sensor=1, sd=2),
-        esp_temp_c=43.1,
-    )
-
-
-def test_parse_compact_health_line():
-    metrics = parse_dev_metrics_block(
-        ["[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"]
-    )
-
-    assert metrics == DevMetrics(
-        status="ALIVE",
+        status="ERROR",
         uptime_sec=3600,
         boot=4,
         wifi_state="OK",
         rssi=-62,
         tx=12,
+        errors=DevMetricsErrors(wifi=1, sensor=2, sd=0),
         free_heap=219584,
-        error_count=0,
+        error_count=3,
     )
 
 
-def test_parse_compact_health_line_with_errors_and_disconnected_wifi():
-    metrics = parse_dev_metrics_block(
-        ["[HEALTH] uptime=61 boot=5 heap=180000 rssi=0 tx=0 errors=3"]
-    )
-
-    assert metrics is not None
-    assert metrics.status == "ERROR"
-    assert metrics.wifi_state == "DISCONNECTED"
-    assert metrics.error_count == 3
-
-
-def test_parse_metrics_block_without_unicode_status_symbols():
+def test_parse_current_health_line_uses_wifi_field_for_link_state():
     metrics = parse_dev_metrics_block(
         [
-            "=== [INSIGHT] METRICS ===",
-            "Status: ? ERROR (WiFi Sensor)",
-            "Uptime: 5m 7s (307s total)",
-            "Boot: 12",
-            "WiFi: ? DISCONNECTED",
-            "TX: 0",
-            "Errors: WiFi=3 Sensor=4 SD=0",
-            "ESP Temp: 0.0°C",
+            "[HEALTH] uptime=61 boot=5 heap=180000 rssi=-62 tx=0 "
+            "errors=0 wifi=0 wifi_errors=0 sensor_errors=0 sd_errors=0"
         ]
     )
 
     assert metrics is not None
-    assert metrics.model == "INSIGHT"
-    assert metrics.status == "ERROR"
-    assert metrics.uptime_sec == 307
-    assert metrics.boot == 12
     assert metrics.wifi_state == "DISCONNECTED"
-    assert metrics.rssi is None
-    assert metrics.tx == 0
-    assert metrics.last_tx_age_sec is None
-    assert metrics.errors == DevMetricsErrors(wifi=3, sensor=4, sd=0)
-    assert metrics.esp_temp_c == 0.0
 
 
-def test_parse_partial_metrics_block_returns_available_fields():
+def test_parse_short_health_line_is_not_supported():
+    assert (
+        parse_dev_metrics_block(
+            ["[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"]
+        )
+        is None
+    )
+
+
+def test_parse_metrics_block_is_not_supported():
     metrics = parse_dev_metrics_block(
         [
             "=== [URBAN] METRICS ===",
             "Status: ALIVE",
-            "Boot: 7",
+            "Uptime: 1h 2m 3s (3723s total)",
+            "Boot: 1",
+            "WiFi: OK (RSSI: -54 dBm)",
+            "TX: 42",
+            "Errors: WiFi=0 Sensor=1 SD=2",
+            "ESP Temp: 43.1C",
+            "==========================",
         ]
     )
 
-    assert metrics == DevMetrics(model="URBAN", status="ALIVE", boot=7)
+    assert metrics is None
 
 
 def test_parse_non_metrics_text_returns_none():
@@ -109,14 +73,13 @@ def test_parse_non_metrics_text_returns_none():
 
 def test_metrics_event_payload_is_json_friendly():
     metrics = DevMetrics(
-        model="URBAN",
         status="ALIVE",
         uptime_sec=121,
         errors=DevMetricsErrors(wifi=0, sensor=0, sd=0),
     )
 
     assert metrics.as_event_payload() == {
-        "model": "URBAN",
+        "model": None,
         "status": "ALIVE",
         "uptime_sec": 121,
         "boot": None,
@@ -134,44 +97,24 @@ def test_metrics_event_payload_is_json_friendly():
 def test_parse_dev_metrics_blocks_from_line_stream():
     metrics = parse_dev_metrics_blocks(
         [
-            "noise before metrics",
-            "=== [URBAN] METRICS ===",
-            "Status: ✓ ALIVE",
-            "Uptime: 2m 1s (121s total)",
-            "Boot: 7",
-            "==========================",
+            "noise before health",
+            HEALTH_LINE,
             "[INFO] unrelated line",
-            "=== [URBAN] METRICS ===",
-            "Status: ✓ ALIVE",
-            "Uptime: 2m 4s (124s total)",
-            "Boot: 7",
+            (
+                "[HEALTH] uptime=3660 boot=4 heap=219000 rssi=-60 tx=13 "
+                "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0"
+            ),
         ]
     )
 
-    assert [item.uptime_sec for item in metrics] == [121, 124]
-    assert [item.boot for item in metrics] == [7, 7]
+    assert [item.uptime_sec for item in metrics] == [3600, 3660]
+    assert [item.boot for item in metrics] == [4, 4]
 
 
-def test_dev_metrics_stream_parser_returns_blocks_as_they_close():
+def test_dev_metrics_stream_parser_returns_current_health_line_immediately():
     parser = DevMetricsStreamParser()
 
-    assert parser.feed("not metrics") is None
-    assert parser.feed("=== [URBAN] METRICS ===") is None
-    assert parser.feed("Uptime: 2m 1s (121s total)") is None
-    metrics = parser.feed("==========================")
-
-    assert metrics is not None
-    assert metrics.model == "URBAN"
-    assert metrics.uptime_sec == 121
-    assert parser.finish() is None
-
-
-def test_dev_metrics_stream_parser_returns_compact_health_line_immediately():
-    parser = DevMetricsStreamParser()
-
-    metrics = parser.feed(
-        "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"
-    )
+    metrics = parser.feed(HEALTH_LINE)
 
     assert metrics is not None
     assert metrics.uptime_sec == 3600
@@ -179,12 +122,10 @@ def test_dev_metrics_stream_parser_returns_compact_health_line_immediately():
     assert parser.finish() is None
 
 
-def test_dev_metrics_stream_parser_returns_trailing_block_on_finish():
+def test_dev_metrics_stream_parser_ignores_legacy_blocks():
     parser = DevMetricsStreamParser()
 
-    parser.feed("=== [URBAN] METRICS ===")
-    parser.feed("Uptime: 2m 4s (124s total)")
-    metrics = parser.finish()
-
-    assert metrics is not None
-    assert metrics.uptime_sec == 124
+    assert parser.feed("=== [URBAN] METRICS ===") is None
+    assert parser.feed("Uptime: 2m 1s (121s total)") is None
+    assert parser.feed("==========================") is None
+    assert parser.finish() is None

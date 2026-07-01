@@ -7,15 +7,14 @@ host, Raspberry Pi, or development machine. The tester captures raw firmware
 logs, parses development metrics and sensor values, evaluates health rules, and
 writes machine-readable and human-readable run artifacts.
 
-Testing firmware emits a compact health snapshot once per minute:
+Firmware builds with health telemetry emit a compact snapshot once per minute:
 
 ```text
-[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0
+[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0
 ```
 
-The tester parses this format for runtime-counter and device-health checks. It
-also keeps support for the older multi-line `=== [MODEL] METRICS ===` blocks so
-existing logs remain readable.
+The tester expects this current format for runtime-counter and device-health
+checks.
 
 ## Quick Start
 
