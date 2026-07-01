@@ -36,6 +36,11 @@ _API_IS_OK_RE = re.compile(r"Is OK:\s*(?P<ok>Yes|No)")
 _DATALOG_API_NAME = "Robonomics Datalog"
 
 
+def _clean_result(value: str) -> str | None:
+    result = value.strip().removeprefix(":").strip()
+    return result or None
+
+
 @dataclass(frozen=True, slots=True)
 class UploadEvent:
     """One parsed upload status observation from firmware logs."""
@@ -111,13 +116,21 @@ def parse_upload_event(line: str) -> UploadEvent | None:
             reason=match.group("reason"),
         )
 
+    if _DATALOG_EXTRINSIC_ATTEMPT_RE.search(line):
+        return UploadEvent(channel="datalog", status="attempt")
+    if match := _DATALOG_EXTRINSIC_RESULT_RE.search(line):
+        return UploadEvent(
+            channel="datalog",
+            status="success",
+            reason=_clean_result(match.group("result")),
+        )
     if _DATALOG_SENDING_RE.search(line):
         return UploadEvent(channel="datalog", status="attempt")
     if match := _DATALOG_SUCCESS_RE.search(line):
         return UploadEvent(
             channel="datalog",
             status="success",
-            reason=match.group("result") or None,
+            reason=_clean_result(match.group("result")),
         )
     if _DATALOG_FAILURE_RE.search(line):
         return UploadEvent(channel="datalog", status="failure")
@@ -127,15 +140,6 @@ def parse_upload_event(line: str) -> UploadEvent | None:
             status="warning",
             reason=match.group("reason"),
         )
-    if _DATALOG_EXTRINSIC_ATTEMPT_RE.search(line):
-        return UploadEvent(channel="datalog", status="attempt")
-    if match := _DATALOG_EXTRINSIC_RESULT_RE.search(line):
-        return UploadEvent(
-            channel="datalog",
-            status="success",
-            reason=match.group("result"),
-        )
-
     return None
 
 

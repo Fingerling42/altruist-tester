@@ -27,6 +27,7 @@ class UploadChannelStats:
     warning_reasons: dict[str, int] = field(default_factory=dict)
     _current_consecutive_failures: int = 0
     _outcomes: int = 0
+    _pending_attempt: bool = False
 
     @property
     def observed(self) -> bool:
@@ -64,18 +65,23 @@ class UploadChannelStats:
             self.targets.add(event.target)
 
         if event.status == "attempt":
+            if self.channel == "datalog" and self._pending_attempt:
+                return
             self.attempts += 1
+            self._pending_attempt = True
             return
         if event.status == "target":
             return
         if event.status == "success":
             self.successes += 1
             self._outcomes += 1
+            self._pending_attempt = False
             self._current_consecutive_failures = 0
             return
         if event.status == "failure":
             self.failures += 1
             self._outcomes += 1
+            self._pending_attempt = False
             self._current_consecutive_failures += 1
             self.max_consecutive_failures = max(
                 self.max_consecutive_failures,

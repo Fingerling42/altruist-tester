@@ -431,3 +431,33 @@ def test_capture_raw_serial_counts_current_datalog_extrinsic_lines(tmp_path):
     ]
     assert stats.upload_stats.channel("datalog").attempts == 1
     assert stats.upload_stats.channel("datalog").successes == 1
+
+
+def test_capture_raw_serial_deduplicates_debug_datalog_attempt_lines(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(
+        tmp_path,
+        duration_input="2s",
+        duration_seconds=2,
+    )
+    serial = FakeSerial(
+        [
+            b"[DEBUG] [Datalog] Sending: : h:59.46,t:25.32\n",
+            b"Extrinsic Datalog: size 198\n",
+            b'Extrinsic result: "0xe1f85b"[DEBUG] [Datalog] OK, result: : "0xe1f85b"\n',
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    upload_events = [event for event in events if event["type"] == "upload_event"]
+    assert [(event["channel"], event["status"]) for event in upload_events] == [
+        ("datalog", "attempt"),
+        ("datalog", "attempt"),
+        ("datalog", "success"),
+    ]
+    assert stats.upload_stats.channel("datalog").attempts == 1
+    assert stats.upload_stats.channel("datalog").successes == 1
+    assert stats.upload_stats.channel("datalog").last_reason == '"0xe1f85b"'

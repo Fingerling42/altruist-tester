@@ -67,6 +67,21 @@ def test_parse_current_datalog_extrinsic_lines():
     }
 
 
+def test_parse_prefers_current_extrinsic_result_on_debug_combined_line():
+    event = parse_upload_event(
+        'Extrinsic result: "0xe1f85b"[DEBUG] [Datalog] OK, result: : "0xe1f85b"'
+    )
+
+    assert event is not None
+    assert event.as_event_payload() == {
+        "channel": "datalog",
+        "status": "success",
+        "sequence": None,
+        "target": None,
+        "reason": '"0xe1f85b"',
+    }
+
+
 def test_parse_upload_event_ignores_unrelated_lines():
     assert parse_upload_event("Status: ALIVE") is None
 
