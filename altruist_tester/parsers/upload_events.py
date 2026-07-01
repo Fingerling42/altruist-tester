@@ -25,6 +25,10 @@ _DATALOG_SENDING_RE = re.compile(r"\[Datalog\]\s+Sending:")
 _DATALOG_SUCCESS_RE = re.compile(r"\[Datalog\]\s+OK,\s*result:\s*(?P<result>.*)$")
 _DATALOG_FAILURE_RE = re.compile(r"\[Datalog\]\s+FAILED\b")
 _DATALOG_WARNING_RE = re.compile(r"\[Datalog\]\s+WARNING:\s*(?P<reason>.+)$")
+_DATALOG_EXTRINSIC_ATTEMPT_RE = re.compile(r"\bExtrinsic Datalog:\s*size\s+\d+")
+_DATALOG_EXTRINSIC_RESULT_RE = re.compile(
+    r'\bExtrinsic result:\s*(?P<result>"?0x[0-9a-fA-F]+"?)',
+)
 
 _API_NAME_RE = re.compile(r"API Name:\s*(?P<name>.+)$")
 _API_COUNT_SENDS_RE = re.compile(r"Count Sends:\s*(?P<count>\d+)")
@@ -122,6 +126,14 @@ def parse_upload_event(line: str) -> UploadEvent | None:
             channel="datalog",
             status="warning",
             reason=match.group("reason"),
+        )
+    if _DATALOG_EXTRINSIC_ATTEMPT_RE.search(line):
+        return UploadEvent(channel="datalog", status="attempt")
+    if match := _DATALOG_EXTRINSIC_RESULT_RE.search(line):
+        return UploadEvent(
+            channel="datalog",
+            status="success",
+            reason=match.group("result"),
         )
 
     return None

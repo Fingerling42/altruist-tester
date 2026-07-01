@@ -22,7 +22,7 @@ def test_parse_connectivity_upload_lines():
     )
     assert (
         parse_upload_event(
-            "[123] [INFO] [Map#42] OK, POST succeeded -> " \
+            "[123] [INFO] [Map#42] OK, POST succeeded -> "
             "1.connectivity.robonomics.network"
         ).status
         == "success"
@@ -41,6 +41,30 @@ def test_parse_datalog_upload_lines():
         parse_upload_event("[Datalog] WARNING: data string is empty").reason
         == "data string is empty"
     )
+
+
+def test_parse_current_datalog_extrinsic_lines():
+    attempt = parse_upload_event("Extrinsic Datalog: size 199")
+    success = parse_upload_event(
+        'Extrinsic result: "0x848cc48cd5d47200d08f3212976018e3e98eaf"'
+    )
+
+    assert attempt is not None
+    assert attempt.as_event_payload() == {
+        "channel": "datalog",
+        "status": "attempt",
+        "sequence": None,
+        "target": None,
+        "reason": None,
+    }
+    assert success is not None
+    assert success.as_event_payload() == {
+        "channel": "datalog",
+        "status": "success",
+        "sequence": None,
+        "target": None,
+        "reason": '"0x848cc48cd5d47200d08f3212976018e3e98eaf"',
+    }
 
 
 def test_parse_upload_event_ignores_unrelated_lines():

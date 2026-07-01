@@ -403,3 +403,31 @@ def test_capture_raw_serial_writes_extended_health_event(tmp_path):
     assert metrics_events[0]["errors"] == {"wifi": 1, "sensor": 2, "sd": 0}
     assert metrics_events[0]["error_count"] == 3
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
+
+
+def test_capture_raw_serial_counts_current_datalog_extrinsic_lines(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(
+        tmp_path,
+        duration_input="2s",
+        duration_seconds=2,
+    )
+    serial = FakeSerial(
+        [
+            b"Extrinsic Datalog: size 199\n",
+            b'Extrinsic result: "0x848cc48cd5d47200d08f3212976018e3e98eaf"'
+            b"[603364] [INFO] [Urban LED] mode: : GREEN\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    upload_events = [event for event in events if event["type"] == "upload_event"]
+    assert [(event["channel"], event["status"]) for event in upload_events] == [
+        ("datalog", "attempt"),
+        ("datalog", "success"),
+    ]
+    assert stats.upload_stats.channel("datalog").attempts == 1
+    assert stats.upload_stats.channel("datalog").successes == 1
