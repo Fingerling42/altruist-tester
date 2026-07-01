@@ -19,7 +19,7 @@ _SKIP_JSON_KEYS = frozenset({"service_data"})
 _DATALOG_ALIASES = {
     "h": ("humidity", "%"),
     "t": ("temperature", "°C"),
-    "p": ("pressure", "hPa"),
+    "p": ("pressure", "Pa"),
     "nm": ("noiseMax", "dB"),
     "na": ("noiseAvg", "dB"),
     "p1": ("P1", "ppm"),

@@ -99,7 +99,7 @@ Observed aliases in the 10-minute Urban run:
 
 - `h`: humidity
 - `t`: temperature
-- `p`: pressure
+- `p`: pressure, emitted in pascals by current compact datalog logs
 - `nm`: max noise
 - `na`: mean noise
 - `p1`: PM10

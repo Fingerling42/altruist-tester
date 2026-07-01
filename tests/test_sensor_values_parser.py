@@ -38,7 +38,7 @@ def test_parse_compact_datalog_line_from_fixture():
     ] == [
         ("datalog", "humidity", 65.99, "%"),
         ("datalog", "temperature", 25.51, "°C"),
-        ("datalog", "pressure", 101069.09, "hPa"),
+        ("datalog", "pressure", 101069.09, "Pa"),
         ("datalog", "noiseMax", 83.0, "dB"),
         ("datalog", "noiseAvg", 81.0, "dB"),
         ("datalog", "P1", 16.33, "ppm"),
