@@ -40,11 +40,18 @@ class KeywordAlert:
         }
 
 
-def _rule(code: str, keyword: str, pattern: str) -> KeywordRule:
+def _rule(
+    code: str,
+    keyword: str,
+    pattern: str,
+    *,
+    severity: str = "fail",
+) -> KeywordRule:
     return KeywordRule(
         code=code,
         keyword=keyword,
         pattern=re.compile(pattern, re.IGNORECASE),
+        severity=severity,
     )
 
 
@@ -60,7 +67,62 @@ KEYWORD_RULES = (
     _rule(
         "WIFI_RECOVERY_REBOOT",
         "WiFi recovery reboot",
-        r"\bsta link down too long; rebooting for recovery\b",
+        r"\bsta link down too long; rebooting for recovery\b|"
+        r"^\[SUBSYSTEM\]\s+event\s+subsystem=wifi\s+"
+        r"reason=sta_recovery_reboot\b",
+    ),
+    _rule(
+        "WIFI_RECOVERY",
+        "WiFi recovery",
+        r"^\[SUBSYSTEM\]\s+event\s+subsystem=wifi\s+reason=sta_recovery\b",
+        severity="warn",
+    ),
+    _rule(
+        "WIFI_CONFIG_TIMEOUT",
+        "WiFi config timeout",
+        r"\bwifi config timeout\b|"
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=wifi\s+reason=config_timeout\b",
+    ),
+    _rule(
+        "SD_ERROR",
+        "SD error",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=sd\b|"
+        r"\b(sd card not connected|card mount failed|no sd card attached)\b",
+    ),
+    _rule(
+        "CONFIG_ERROR",
+        "config error",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=config\b|"
+        r"\b(failed to mount fs|failed to load json config|"
+        r"failed to open config file)\b",
+    ),
+    _rule(
+        "OTA_ERROR",
+        "OTA error",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=ota\b|"
+        r"\b(ota failed after all attempts|update\.end failed|"
+        r"update not finished properly|md5 mismatch|ota stalled)\b",
+    ),
+    _rule(
+        "DISPLAY_STUCK",
+        "display stuck",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=display\s+reason=epd_stuck\b|"
+        r"\bdisplay stuck detected\b",
+        severity="warn",
+    ),
+    _rule(
+        "SENSOR_JSON_OVERFLOW",
+        "sensor JSON overflow",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=sensor\s+"
+        r"reason=json_overflow\b|"
+        r"\[Sensors\]\s+JSON overflow after fetch",
+    ),
+    _rule(
+        "API_JSON_OVERFLOW",
+        "API JSON overflow",
+        r"^\[SUBSYSTEM\]\s+error\s+subsystem=api\s+"
+        r"reason=json_snapshot_overflow\b|"
+        r"\[API\]\s+JSON snapshot overflow",
     ),
     _rule("GURU_MEDITATION", "Guru Meditation", r"\bguru meditation\b"),
     _rule("ABORT", "abort", r"\babort(?:ed)?\b"),
