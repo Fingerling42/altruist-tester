@@ -188,6 +188,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     sensor_ranges = details.get("sensor_ranges")
     sensor_flatlines = details.get("sensor_flatlines")
     sensor_cadence = details.get("sensor_cadence")
+    subsystem_health = details.get("subsystem_health")
     upload_health = details.get("upload_health")
     if isinstance(sensor_presence, dict):
         observed = sensor_presence.get("observed_metrics") or []
@@ -222,6 +223,18 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             f"{sensor_cadence.get('status')} "
             f"({sensor_cadence.get('failure_count')} failures, "
             f"{sensor_cadence.get('warning_count')} warnings)"
+        )
+    if isinstance(subsystem_health, dict):
+        lines.extend(
+            [
+                "",
+                "Subsystems:",
+                "- health: "
+                f"{subsystem_health.get('status')} "
+                f"({subsystem_health.get('events_count')} events, "
+                f"{subsystem_health.get('failure_count')} failures, "
+                f"{subsystem_health.get('warning_count')} warnings)",
+            ]
         )
     if isinstance(upload_health, dict):
         lines.extend(["", "Uploads:"])

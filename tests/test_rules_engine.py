@@ -122,6 +122,46 @@ def test_evaluate_rules_lets_fail_dominate_warn():
     assert any(finding.severity == "fail" for finding in result.findings)
 
 
+def test_evaluate_rules_includes_subsystem_health_findings():
+    stats = SerialLogStats(
+        lines_read=10,
+        bytes_read=100,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=50.0,
+        max_interline_gap_seconds=10.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            _sample("BME280", "temperature", 24.0, 0),
+            _sample("BME280", "temperature", 24.5, 60),
+        ),
+        subsystem_event_records=(
+            {
+                "ts": "2026-07-24T12:00:00.000Z",
+                "level": "error",
+                "subsystem": "sd",
+                "reason": "open_append_failed",
+            },
+        ),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("temperature",),
+            duration_seconds=60,
+        ),
+    )
+
+    assert result.verdict == "FAIL"
+    assert "subsystem_health" in result.failed_checks
+    assert result.reports.subsystem_health.status == "fail"
+    assert result.findings[-1].code == "SUBSYSTEM_SD_OPEN_APPEND_FAILED_FAIL"
+    assert result.findings[-1].rule == "subsystem_health"
+
+
 def test_evaluate_rules_can_require_upload_success():
     stats = SerialLogStats(
         lines_read=10,

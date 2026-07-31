@@ -168,6 +168,46 @@ def test_capture_raw_serial_writes_boot_events(tmp_path):
     assert stats.boot_event_records[0]["ts"] == boot_events[0]["ts"]
 
 
+def test_capture_raw_serial_writes_subsystem_events(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"[SUBSYSTEM] error subsystem=sd reason=open_append_failed "
+            b"path=/data/SDS011/2026-07-24.csv\n",
+            b"[SUBSYSTEM] event subsystem=wifi reason=sta_recovery "
+            b"mode=deep status=6 ip=0.0.0.0\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    subsystem_events = [event for event in events if event["type"] == "subsystem_event"]
+    assert len(subsystem_events) == 2
+    assert subsystem_events[0]["level"] == "error"
+    assert subsystem_events[0]["subsystem"] == "sd"
+    assert subsystem_events[0]["reason"] == "open_append_failed"
+    assert subsystem_events[0]["details"] == {"path": "/data/SDS011/2026-07-24.csv"}
+    assert subsystem_events[1]["level"] == "event"
+    assert subsystem_events[1]["subsystem"] == "wifi"
+    assert subsystem_events[1]["details"]["mode"] == "deep"
+
+    assert stats.subsystem_events.count == 2
+    assert stats.subsystem_events.first_seen == subsystem_events[0]["ts"]
+    assert stats.subsystem_events.last_seen == subsystem_events[1]["ts"]
+    assert stats.subsystem_events.by_subsystem == {"sd": 1, "wifi": 1}
+    assert stats.subsystem_events.by_reason == {
+        "open_append_failed": 1,
+        "sta_recovery": 1,
+    }
+    assert [record["reason"] for record in stats.subsystem_event_records] == [
+        "open_append_failed",
+        "sta_recovery",
+    ]
+
+
 def test_capture_raw_serial_writes_upload_events(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)

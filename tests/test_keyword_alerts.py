@@ -49,53 +49,6 @@ def test_detects_abnormal_firmware_reset_reasons():
     ]
 
 
-def test_detects_structured_wifi_recovery_events():
-    alerts = detect_keyword_alerts(
-        "[SUBSYSTEM] event subsystem=wifi reason=sta_recovery "
-        "mode=deep status=6 ip=0.0.0.0"
-    )
-
-    assert [alert.code for alert in alerts] == ["WIFI_RECOVERY"]
-    assert alerts[0].severity == "warn"
-
-
-def test_detects_structured_wifi_recovery_reboot():
-    alerts = detect_keyword_alerts(
-        "[SUBSYSTEM] event subsystem=wifi reason=sta_recovery_reboot down_ms=900000"
-    )
-
-    assert [alert.code for alert in alerts] == ["WIFI_RECOVERY_REBOOT"]
-    assert alerts[0].severity == "fail"
-
-
-def test_detects_wifi_config_timeout():
-    line = "[SUBSYSTEM] error subsystem=wifi reason=config_timeout"
-
-    assert [alert.code for alert in detect_keyword_alerts(line)] == [
-        "WIFI_CONFIG_TIMEOUT"
-    ]
-
-
-def test_detects_structured_subsystem_errors():
-    lines = [
-        "[SUBSYSTEM] error subsystem=sd reason=open_append_failed path=/data/x.csv",
-        "[SUBSYSTEM] error subsystem=config reason=json_parse_failed path=/config.json",
-        "[SUBSYSTEM] error subsystem=ota reason=http_get_failed host=example code=404",
-        "[SUBSYSTEM] error subsystem=display reason=epd_stuck action=recover",
-        "[SUBSYSTEM] error subsystem=sensor reason=json_overflow sensor=BME680",
-        "[SUBSYSTEM] error subsystem=api reason=json_snapshot_overflow memory=4096",
-    ]
-
-    assert [detect_keyword_alerts(line)[0].code for line in lines] == [
-        "SD_ERROR",
-        "CONFIG_ERROR",
-        "OTA_ERROR",
-        "DISPLAY_STUCK",
-        "SENSOR_JSON_OVERFLOW",
-        "API_JSON_OVERFLOW",
-    ]
-
-
 def test_ignores_human_readable_subsystem_error_lines():
     lines = [
         "[SDCardLogger] SD card NOT connected",
@@ -105,6 +58,16 @@ def test_ignores_human_readable_subsystem_error_lines():
         "[EPD] Display stuck detected - recovering and retrying with FULL refresh",
         "[Sensors] JSON overflow after fetch",
         "[API] JSON snapshot overflow; skipping send",
+    ]
+
+    assert [detect_keyword_alerts(line) for line in lines] == [[] for _ in lines]
+
+
+def test_ignores_structured_subsystem_lines():
+    lines = [
+        "[SUBSYSTEM] event subsystem=wifi reason=sta_recovery mode=deep",
+        "[SUBSYSTEM] error subsystem=sd reason=open_append_failed path=/data/x.csv",
+        "[SUBSYSTEM] error subsystem=sensor reason=json_overflow sensor=BME680",
     ]
 
     assert [detect_keyword_alerts(line) for line in lines] == [[] for _ in lines]

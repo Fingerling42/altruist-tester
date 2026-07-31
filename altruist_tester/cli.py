@@ -468,6 +468,7 @@ def _device_result_from_summary(
         "finding_messages": _finding_messages(summary),
         "failed_checks": failed_checks,
         "upload_health": summary.get("upload_health"),
+        "subsystem_health": summary.get("subsystem_health"),
         "sensor_presence": summary.get("sensor_presence"),
     }
 
@@ -496,6 +497,7 @@ def _device_result_without_summary(
         "finding_messages": [],
         "failed_checks": [],
         "upload_health": None,
+        "subsystem_health": None,
         "sensor_presence": None,
         "summary_error": reason,
     }
@@ -1049,6 +1051,7 @@ def _report_messages(rule_result: RuleEngineResult) -> tuple[RuleReportMessage, 
         reports.sensor_cadence,
         reports.runtime_counters,
         reports.serial_silence,
+        reports.subsystem_health,
         reports.upload_health,
     )
 
@@ -1375,6 +1378,7 @@ def run(
     sensor_cadence = rule_result.reports.sensor_cadence
     runtime_counters = rule_result.reports.runtime_counters
     serial_silence = rule_result.reports.serial_silence
+    subsystem_health = rule_result.reports.subsystem_health
     upload_health = rule_result.reports.upload_health
     message = (
         f"Captured {stats.lines_read} serial lines "
@@ -1416,6 +1420,8 @@ def run(
         **stats.dev_metrics.as_dict(),
         "boot_reset": stats.boot_events.as_dict(),
         "boot_event_records": list(stats.boot_event_records),
+        "subsystem_events": stats.subsystem_events.as_dict(),
+        "subsystem_event_records": list(stats.subsystem_event_records),
         "keyword_alerts_count": stats.keyword_alerts_count,
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,
@@ -1426,6 +1432,7 @@ def run(
         "sensor_cadence": sensor_cadence.as_dict(),
         "runtime_counters": runtime_counters.as_dict(),
         "serial_silence": serial_silence.as_dict(),
+        "subsystem_health": subsystem_health.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
         "upload_health": upload_health.as_dict(),
         "device_identity": final_device_identity,

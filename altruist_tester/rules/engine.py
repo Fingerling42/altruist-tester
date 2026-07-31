@@ -27,6 +27,10 @@ from altruist_tester.rules.flatline import (
 from altruist_tester.rules.presence import SensorPresenceReport, check_sensor_presence
 from altruist_tester.rules.runtime import RuntimeCounterReport, check_runtime_counters
 from altruist_tester.rules.silence import SerialSilenceReport, check_serial_silence
+from altruist_tester.rules.subsystems import (
+    SubsystemHealthReport,
+    check_subsystem_health,
+)
 from altruist_tester.rules.uploads import (
     UploadChannelConfig,
     UploadHealthReport,
@@ -105,6 +109,7 @@ class RuleEngineReports:
     sensor_cadence: SensorCadenceReport
     runtime_counters: RuntimeCounterReport
     serial_silence: SerialSilenceReport
+    subsystem_health: SubsystemHealthReport
     upload_health: UploadHealthReport
 
     def as_dict(self) -> dict[str, object]:
@@ -117,6 +122,7 @@ class RuleEngineReports:
             "sensor_cadence": self.sensor_cadence.as_dict(),
             "runtime_counters": self.runtime_counters.as_dict(),
             "serial_silence": self.serial_silence.as_dict(),
+            "subsystem_health": self.subsystem_health.as_dict(),
             "upload_health": self.upload_health.as_dict(),
         }
 
@@ -310,6 +316,31 @@ def _collect_upload_findings(report: UploadHealthReport) -> tuple[RuleFinding, .
     return () if finding is None else (finding,)
 
 
+def _subsystem_code(subsystem: str, reason: str, status: str) -> str:
+    code_parts = ("SUBSYSTEM", subsystem, reason, status)
+    return "_".join(
+        "".join(char if char.isalnum() else "_" for char in part.upper())
+        for part in code_parts
+    )
+
+
+def _collect_subsystem_findings(
+    report: SubsystemHealthReport,
+) -> tuple[RuleFinding, ...]:
+    return tuple(
+        RuleFinding(
+            severity=finding.status,
+            code=_subsystem_code(finding.subsystem, finding.reason, finding.status),
+            message=finding.message,
+            rule="subsystem_health",
+            first_seen=finding.first_seen,
+            last_seen=finding.last_seen,
+        )
+        for finding in report.findings
+        if finding.status in {"warn", "fail"}
+    )
+
+
 def evaluate_rules(
     stats: SerialLogStats,
     config: RuleEngineConfig,
@@ -360,6 +391,7 @@ def evaluate_rules(
         warn_after_seconds=config.silence_warn_after_seconds,
         fail_after_seconds=config.silence_fail_after_seconds,
     )
+    subsystem_health = check_subsystem_health(stats.subsystem_event_records)
     upload_health = check_upload_health(
         stats.upload_stats,
         connectivity=config.connectivity_upload,
@@ -372,6 +404,7 @@ def evaluate_rules(
         sensor_cadence=sensor_cadence,
         runtime_counters=runtime_counters,
         serial_silence=serial_silence,
+        subsystem_health=subsystem_health,
         upload_health=upload_health,
     )
 
@@ -396,6 +429,7 @@ def evaluate_rules(
             ),
             *_collect_runtime_findings(runtime_counters),
             *_collect_serial_silence_findings(serial_silence),
+            *_collect_subsystem_findings(subsystem_health),
             *_collect_upload_findings(upload_health),
         )
         if finding is not None
