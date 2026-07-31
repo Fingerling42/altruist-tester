@@ -43,6 +43,9 @@ fail_after_missed = 5
 silence_warn_after = "15s"
 silence_fail_after = "45s"
 
+[log_contract]
+startup_window = "3m"
+
 [uploads]
 connectivity = "required"
 datalog = "optional"
@@ -75,6 +78,7 @@ maximum = 60.0
     assert config.cadence_fail_after_missed == 5
     assert config.silence_warn_after_seconds == 15
     assert config.silence_fail_after_seconds == 45
+    assert config.log_contract_startup_window_seconds == 180
     assert config.connectivity_upload.mode == "required"
     assert config.connectivity_upload.min_successes == 2
     assert config.connectivity_upload.min_success_rate == 0.75

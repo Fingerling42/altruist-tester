@@ -1,5 +1,7 @@
 from altruist_tester.rules.severity import (
     severity_for_keyword_alert,
+    severity_for_missing_boot_context,
+    severity_for_missing_health_telemetry,
     severity_for_missing_sensor_metrics,
     severity_for_subsystem_event,
     severity_for_upload_mode,
@@ -13,6 +15,11 @@ def test_crash_and_reset_keywords_are_failures():
 
 def test_missing_sensor_metrics_are_failures():
     assert severity_for_missing_sensor_metrics() == "fail"
+
+
+def test_missing_release_log_context_has_explicit_severity():
+    assert severity_for_missing_health_telemetry() == "fail"
+    assert severity_for_missing_boot_context() == "warn"
 
 
 def test_upload_severity_depends_on_channel_mode():

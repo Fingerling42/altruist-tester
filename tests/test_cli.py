@@ -72,6 +72,25 @@ def _series_with_records(*records: SensorSampleRecord) -> SensorSampleSeries:
     return series
 
 
+def _release_log_stats(
+    *,
+    lines_read: int = 2,
+    bytes_read: int = 20,
+    sensor_series: SensorSampleSeries | None = None,
+    sensor_samples_count: int | None = None,
+) -> SerialLogStats:
+    series = sensor_series or _series_with_metrics("temperature")
+    return SerialLogStats(
+        lines_read=lines_read,
+        bytes_read=bytes_read,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10, "reset_reason": "power_on_reset"},
+        ),
+        sensor_samples_count=sensor_samples_count or series.count(),
+        sensor_series=series,
+    )
+
+
 def _patch_cli_capture(
     monkeypatch,
     stats: SerialLogStats,
@@ -1371,7 +1390,7 @@ def test_run_auto_uses_single_detected_port(monkeypatch, tmp_path):
     )
     _patch_cli_capture(
         monkeypatch,
-        SerialLogStats(lines_read=0, bytes_read=0),
+        _release_log_stats(lines_read=1, bytes_read=10),
         opened=opened,
     )
 
@@ -1401,9 +1420,7 @@ def test_run_passes_when_expected_metrics_are_seen(monkeypatch, tmp_path):
 
     _patch_cli_capture(
         monkeypatch,
-        SerialLogStats(
-            lines_read=2,
-            bytes_read=20,
+        _release_log_stats(
             sensor_samples_count=4,
             sensor_series=_series_with_metrics("temperature", "humidity", "P1", "P2"),
         ),
@@ -1445,9 +1462,7 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
 
     _patch_cli_capture(
         monkeypatch,
-        SerialLogStats(
-            lines_read=2,
-            bytes_read=20,
+        _release_log_stats(
             sensor_samples_count=7,
             sensor_series=_series_with_metrics(
                 "temperature",
@@ -1507,9 +1522,7 @@ sensors = ["bme280", "sds", "ics-43434"]
 
     _patch_cli_capture(
         monkeypatch,
-        SerialLogStats(
-            lines_read=2,
-            bytes_read=20,
+        _release_log_stats(
             sensor_samples_count=7,
             sensor_series=_series_with_metrics(
                 "temperature",

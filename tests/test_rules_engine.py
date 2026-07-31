@@ -48,7 +48,7 @@ def test_evaluate_rules_returns_pass_candidate_without_findings():
         max_interline_gap_seconds=10.0,
         dev_metrics_records=(
             {"boot": 1, "uptime_sec": 10},
-            {"boot": 1, "uptime_sec": 20},
+            {"boot": 1, "uptime_sec": 20, "reset_reason": "power_on_reset"},
         ),
         sensor_series=_series(
             _sample("BME280", "temperature", 24.0, 0),
@@ -77,6 +77,7 @@ def test_evaluate_rules_returns_warn_for_non_failing_findings():
         first_line_elapsed_seconds=1.0,
         last_line_elapsed_seconds=10.0,
         max_interline_gap_seconds=9.0,
+        dev_metrics_records=({"boot": 1, "uptime_sec": 10},),
         sensor_series=_series(
             _sample("BME280", "temperature", 24.0, 0),
         ),

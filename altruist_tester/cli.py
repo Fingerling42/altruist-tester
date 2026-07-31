@@ -1037,6 +1037,9 @@ def _rule_engine_config(
         silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
         connectivity_upload=tester_config.connectivity_upload,
         datalog_upload=tester_config.datalog_upload,
+        log_contract_startup_window_seconds=(
+            tester_config.log_contract_startup_window_seconds
+        ),
         reference_time=finished_at,
         max_tail_window_seconds=duration_seconds,
         duration_seconds=duration_seconds,
@@ -1378,6 +1381,7 @@ def run(
     sensor_cadence = rule_result.reports.sensor_cadence
     runtime_counters = rule_result.reports.runtime_counters
     serial_silence = rule_result.reports.serial_silence
+    log_contract = rule_result.reports.log_contract
     subsystem_health = rule_result.reports.subsystem_health
     upload_health = rule_result.reports.upload_health
     message = (
@@ -1413,6 +1417,7 @@ def run(
         "findings": [finding.as_dict() for finding in rule_result.findings],
         "serial_lines_read": stats.lines_read,
         "serial_bytes_read": stats.bytes_read,
+        "serial_capture_started_at": stats.capture_started_at,
         "first_serial_line_elapsed_seconds": stats.first_line_elapsed_seconds,
         "last_serial_line_elapsed_seconds": stats.last_line_elapsed_seconds,
         "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
@@ -1432,6 +1437,7 @@ def run(
         "sensor_cadence": sensor_cadence.as_dict(),
         "runtime_counters": runtime_counters.as_dict(),
         "serial_silence": serial_silence.as_dict(),
+        "log_contract": log_contract.as_dict(),
         "subsystem_health": subsystem_health.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
         "upload_health": upload_health.as_dict(),

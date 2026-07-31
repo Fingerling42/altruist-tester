@@ -27,6 +27,18 @@ def severity_for_missing_sensor_metrics() -> RuleSeverity:
     return "fail"
 
 
+def severity_for_missing_health_telemetry() -> RuleSeverity:
+    """Return severity for absent firmware health telemetry."""
+
+    return "fail"
+
+
+def severity_for_missing_boot_context() -> RuleSeverity:
+    """Return severity for absent reset/build context logs."""
+
+    return "warn"
+
+
 def severity_for_subsystem_event(
     *,
     level: str,

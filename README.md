@@ -187,16 +187,22 @@ Keyword alerts:
 
 Upload delivery:
 
-- parses Robonomics Map/connectivity upload attempts, successes, failures,
-  skipped sends, targets, and failure reasons;
-- parses Robonomics Datalog success and failure lines when that firmware API is
-  enabled and logs them;
-- also reads Datalog delivery from development `Device Status` blocks by
-  tracking `Robonomics Datalog` `Count Sends` increases and `Is OK`;
+- parses stable `[CONNECTIVITY]` upload attempts, successes, failures, targets,
+  and failure reasons;
+- parses stable `[DATALOG]` upload attempts, successes, failures, payload
+  metadata, and response lengths;
 - checks upload delivery only when the config marks a channel as `optional` or
   `required`;
 - keeps channels `disabled` by default because many devices are tested before
   `setDevices` or Robonomics subscription access is configured.
+
+Release log contract:
+
+- verifies that firmware logs contain enough stable, machine-readable telemetry
+  for acceptance testing;
+- fails when `[HEALTH]` telemetry or sensor payload samples are missing;
+- warns when boot/reset context is missing from `[BOOT]` or `[HEALTH]`;
+- requires upload telemetry only for channels enabled in `[uploads]`.
 
 ## Run Artifacts
 
@@ -223,6 +229,8 @@ top-level findings, counters, and per-rule sections:
   - `sensor_cadence`;
   - `runtime_counters`;
   - `serial_silence`;
+  - `log_contract`;
+  - `subsystem_health`;
   - `upload_health`;
   - `device_identity`.
 
@@ -249,7 +257,8 @@ sensor samples, and keyword alert count.
 - `[flatline]` for stuck-value thresholds;
 - `[cadence]` for update interval thresholds;
 - `[serial]` for serial silence thresholds;
-- `[uploads]` for Robonomics Map/connectivity and Datalog delivery checks.
+- `[log_contract]` for release-log sufficiency checks;
+- `[uploads]` for sensors-connectivity and Robonomics Datalog delivery checks.
 
 Durations in config files use the same format as CLI durations: `30s`, `10m`,
 `2h`, or raw seconds as a positive integer.
@@ -274,6 +283,9 @@ fail_after_missed = 4
 [serial]
 silence_warn_after = "2m"
 silence_fail_after = "10m"
+
+[log_contract]
+startup_window = "10m"
 
 [uploads]
 connectivity = "disabled" # disabled | optional | required
@@ -454,9 +466,10 @@ not fail the batch by themselves.
 
 - The default baud rate is `115200`.
 - Configure Wi-Fi before using a run as a burn-in signal.
-- Map or datalog HTTP failures can appear in `serial.log`. They are parsed as
-  upload observations and checked according to the `[uploads]` config, but they
-  are not treated as keyword-alert runtime failures.
+- Connectivity or datalog HTTP failures can appear in `serial.log`. Stable
+  `[CONNECTIVITY]` and `[DATALOG]` lines are parsed as upload observations and
+  checked according to the `[uploads]` config, but they are not treated as
+  keyword-alert runtime failures.
 
 ## Exit Codes
 

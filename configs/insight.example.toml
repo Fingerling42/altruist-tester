@@ -40,6 +40,9 @@ fail_after_missed = 4
 silence_warn_after = "2m"
 silence_fail_after = "10m"
 
+[log_contract]
+startup_window = "10m"
+
 [uploads]
 connectivity = "optional"
 datalog = "optional"

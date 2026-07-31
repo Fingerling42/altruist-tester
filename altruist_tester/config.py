@@ -73,6 +73,7 @@ class TesterConfig:
     cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
+    log_contract_startup_window_seconds: int = 10 * 60
     connectivity_upload: UploadChannelConfig = field(
         default_factory=UploadChannelConfig
     )
@@ -494,6 +495,7 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     flatline = _optional_table(data, "flatline")
     cadence = _optional_table(data, "cadence")
     serial = _optional_table(data, "serial")
+    log_contract = _optional_table(data, "log_contract")
     uploads = _optional_table(data, "uploads")
     connectivity_thresholds = _require_mapping(
         uploads.get("connectivity_thresholds", {}),
@@ -556,6 +558,11 @@ def load_tester_config(path: Path | None) -> TesterConfig:
         silence_fail_after_seconds=_duration_value(
             serial.get("silence_fail_after"),
             "serial.silence_fail_after",
+            10 * 60,
+        ),
+        log_contract_startup_window_seconds=_duration_value(
+            log_contract.get("startup_window"),
+            "log_contract.startup_window",
             10 * 60,
         ),
         connectivity_upload=_upload_channel_config(

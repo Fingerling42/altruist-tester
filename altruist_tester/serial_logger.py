@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from altruist_tester.artifacts import RunArtifacts
+from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
 from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
@@ -153,6 +153,7 @@ class SerialLogStats:
 
     lines_read: int
     bytes_read: int
+    capture_started_at: str | None = None
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
@@ -419,6 +420,7 @@ def capture_raw_serial(
     """
 
     started_at = clock()
+    capture_started_at = format_timestamp(utc_now())
     deadline = started_at + duration_seconds
     next_progress_at = started_at
     lines_read = 0
@@ -547,6 +549,7 @@ def capture_raw_serial(
     return SerialLogStats(
         lines_read=lines_read,
         bytes_read=bytes_read,
+        capture_started_at=capture_started_at,
         first_line_elapsed_seconds=first_line_elapsed_seconds,
         last_line_elapsed_seconds=last_line_elapsed_seconds,
         max_interline_gap_seconds=max_interline_gap_seconds,

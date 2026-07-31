@@ -24,6 +24,7 @@ from altruist_tester.rules.flatline import (
     SensorFlatlineReport,
     check_sensor_flatlines,
 )
+from altruist_tester.rules.log_contract import LogContractReport, check_log_contract
 from altruist_tester.rules.presence import SensorPresenceReport, check_sensor_presence
 from altruist_tester.rules.runtime import RuntimeCounterReport, check_runtime_counters
 from altruist_tester.rules.silence import SerialSilenceReport, check_serial_silence
@@ -70,6 +71,7 @@ class RuleEngineConfig:
         default_factory=UploadChannelConfig
     )
     datalog_upload: UploadChannelConfig = field(default_factory=UploadChannelConfig)
+    log_contract_startup_window_seconds: int = 10 * 60
     reference_time: datetime | None = None
     max_tail_window_seconds: int | None = None
     duration_seconds: int = 0
@@ -109,6 +111,7 @@ class RuleEngineReports:
     sensor_cadence: SensorCadenceReport
     runtime_counters: RuntimeCounterReport
     serial_silence: SerialSilenceReport
+    log_contract: LogContractReport
     subsystem_health: SubsystemHealthReport
     upload_health: UploadHealthReport
 
@@ -122,6 +125,7 @@ class RuleEngineReports:
             "sensor_cadence": self.sensor_cadence.as_dict(),
             "runtime_counters": self.runtime_counters.as_dict(),
             "serial_silence": self.serial_silence.as_dict(),
+            "log_contract": self.log_contract.as_dict(),
             "subsystem_health": self.subsystem_health.as_dict(),
             "upload_health": self.upload_health.as_dict(),
         }
@@ -300,6 +304,20 @@ def _collect_serial_silence_findings(
     return () if finding is None else (finding,)
 
 
+def _collect_log_contract_findings(
+    report: LogContractReport,
+) -> tuple[RuleFinding, ...]:
+    return tuple(
+        RuleFinding(
+            severity=finding.status,
+            code=finding.code,
+            message=finding.message,
+            rule="log_contract",
+        )
+        for finding in report.findings
+    )
+
+
 def _collect_upload_findings(report: UploadHealthReport) -> tuple[RuleFinding, ...]:
     if report.findings:
         return tuple(
@@ -391,6 +409,12 @@ def evaluate_rules(
         warn_after_seconds=config.silence_warn_after_seconds,
         fail_after_seconds=config.silence_fail_after_seconds,
     )
+    log_contract = check_log_contract(
+        stats,
+        startup_window_seconds=config.log_contract_startup_window_seconds,
+        connectivity_upload=config.connectivity_upload,
+        datalog_upload=config.datalog_upload,
+    )
     subsystem_health = check_subsystem_health(stats.subsystem_event_records)
     upload_health = check_upload_health(
         stats.upload_stats,
@@ -404,6 +428,7 @@ def evaluate_rules(
         sensor_cadence=sensor_cadence,
         runtime_counters=runtime_counters,
         serial_silence=serial_silence,
+        log_contract=log_contract,
         subsystem_health=subsystem_health,
         upload_health=upload_health,
     )
@@ -429,6 +454,7 @@ def evaluate_rules(
             ),
             *_collect_runtime_findings(runtime_counters),
             *_collect_serial_silence_findings(serial_silence),
+            *_collect_log_contract_findings(log_contract),
             *_collect_subsystem_findings(subsystem_health),
             *_collect_upload_findings(upload_health),
         )
