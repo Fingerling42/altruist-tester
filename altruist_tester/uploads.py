@@ -70,8 +70,6 @@ class UploadChannelStats:
             self.attempts += 1
             self._pending_attempt = True
             return
-        if event.status == "target":
-            return
         if event.status == "success":
             self.successes += 1
             self._outcomes += 1
@@ -92,19 +90,6 @@ class UploadChannelStats:
                     self.failure_reasons.get(event.reason, 0) + 1
                 )
             return
-        if event.status == "skipped":
-            self.skipped += 1
-            if event.reason:
-                self.warning_reasons[event.reason] = (
-                    self.warning_reasons.get(event.reason, 0) + 1
-                )
-            return
-        if event.status == "warning":
-            self.warnings += 1
-            if event.reason:
-                self.warning_reasons[event.reason] = (
-                    self.warning_reasons.get(event.reason, 0) + 1
-                )
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-friendly channel summary."""

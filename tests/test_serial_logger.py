@@ -213,14 +213,16 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
     serial = FakeSerial(
         [
-            b"[123] [INFO] [Map#7] Send attempt\n",
-            b"[124] [INFO] [Map#7] POST to connectivity.robonomics.network:65/\n",
+            b"[CONNECTIVITY] attempt channel=sensors-connectivity seq=7\n",
             (
-                b"[125] [INFO] [Map#7] OK, POST succeeded -> "
-                b"connectivity.robonomics.network\n"
+                b"[CONNECTIVITY] success channel=sensors-connectivity seq=7 "
+                b"host=connectivity.robonomics.network code=200\n"
             ),
-            b"[Datalog] Sending: h:45,t:24\n",
-            b"[Datalog] FAILED\n",
+            b"[DATALOG] attempt payload_len=55 payload_empty=0 owner_self_fallback=0\n",
+            (
+                b"[DATALOG] failed reason=rpc_error code=1010 "
+                b"message=Invalid Transaction response_len=111\n"
+            ),
         ],
         clock,
     )
@@ -231,7 +233,6 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     upload_events = [event for event in events if event["type"] == "upload_event"]
     assert [event["status"] for event in upload_events] == [
         "attempt",
-        "target",
         "success",
         "attempt",
         "failure",
@@ -241,7 +242,7 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     assert stats.upload_stats.channel("datalog").failures == 1
 
 
-def test_capture_raw_serial_counts_datalog_api_status_blocks(tmp_path):
+def test_capture_raw_serial_ignores_legacy_datalog_api_status_blocks(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
     serial = FakeSerial(
@@ -266,10 +267,8 @@ def test_capture_raw_serial_counts_datalog_api_status_blocks(tmp_path):
 
     events = _read_jsonl(artifacts.events_jsonl)
     upload_events = [event for event in events if event["type"] == "upload_event"]
-    datalog_events = [event for event in upload_events if event["channel"] == "datalog"]
-    assert [event["status"] for event in datalog_events] == ["success"]
-    assert datalog_events[0]["sequence"] == 1
-    assert stats.upload_stats.channel("datalog").successes == 1
+    assert upload_events == []
+    assert stats.upload_stats.channel("datalog").successes == 0
     assert stats.upload_stats.channel("datalog").attempts == 0
 
 
@@ -496,7 +495,7 @@ def test_capture_raw_serial_writes_health_event_with_reset_context(tmp_path):
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
 
 
-def test_capture_raw_serial_counts_current_datalog_extrinsic_lines(tmp_path):
+def test_capture_raw_serial_ignores_legacy_datalog_extrinsic_lines(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(
         tmp_path,
@@ -516,15 +515,12 @@ def test_capture_raw_serial_counts_current_datalog_extrinsic_lines(tmp_path):
 
     events = _read_jsonl(artifacts.events_jsonl)
     upload_events = [event for event in events if event["type"] == "upload_event"]
-    assert [(event["channel"], event["status"]) for event in upload_events] == [
-        ("datalog", "attempt"),
-        ("datalog", "success"),
-    ]
-    assert stats.upload_stats.channel("datalog").attempts == 1
-    assert stats.upload_stats.channel("datalog").successes == 1
+    assert upload_events == []
+    assert stats.upload_stats.channel("datalog").attempts == 0
+    assert stats.upload_stats.channel("datalog").successes == 0
 
 
-def test_capture_raw_serial_deduplicates_debug_datalog_attempt_lines(tmp_path):
+def test_capture_raw_serial_ignores_legacy_debug_datalog_lines(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(
         tmp_path,
@@ -544,11 +540,7 @@ def test_capture_raw_serial_deduplicates_debug_datalog_attempt_lines(tmp_path):
 
     events = _read_jsonl(artifacts.events_jsonl)
     upload_events = [event for event in events if event["type"] == "upload_event"]
-    assert [(event["channel"], event["status"]) for event in upload_events] == [
-        ("datalog", "attempt"),
-        ("datalog", "attempt"),
-        ("datalog", "success"),
-    ]
-    assert stats.upload_stats.channel("datalog").attempts == 1
-    assert stats.upload_stats.channel("datalog").successes == 1
-    assert stats.upload_stats.channel("datalog").last_reason == '"0xe1f85b"'
+    assert upload_events == []
+    assert stats.upload_stats.channel("datalog").attempts == 0
+    assert stats.upload_stats.channel("datalog").successes == 0
+    assert stats.upload_stats.channel("datalog").last_reason is None

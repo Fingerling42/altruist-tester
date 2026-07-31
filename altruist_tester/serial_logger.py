@@ -19,7 +19,6 @@ from altruist_tester.parsers.subsystem_events import (
 )
 from altruist_tester.parsers.upload_events import (
     UploadEvent,
-    UploadStatusStreamParser,
     parse_upload_event,
 )
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
@@ -428,7 +427,6 @@ def capture_raw_serial(
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
     metrics_parser = DevMetricsStreamParser()
-    upload_status_parser = UploadStatusStreamParser()
     metrics_summary = DevMetricsSummary()
     metrics_records: list[dict[str, object]] = []
     boot_events_summary = BootEventsSummary()
@@ -530,9 +528,6 @@ def capture_raw_serial(
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
-            upload_status_parser.record_explicit_event(upload_event)
-            for status_event in upload_status_parser.feed(decoded_line):
-                _append_upload_event(artifacts, status_event, upload_stats)
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
