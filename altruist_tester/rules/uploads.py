@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from altruist_tester.parsers.upload_events import UploadChannel
+from altruist_tester.rules.severity import severity_for_upload_mode
 from altruist_tester.uploads import UPLOAD_CHANNELS, UploadChannelStats, UploadStats
 
 UploadMode = Literal["disabled", "optional", "required"]
@@ -127,7 +128,7 @@ class UploadHealthReport:
 
 
 def _finding_status(mode: UploadMode) -> UploadStatus:
-    return "fail" if mode == "required" else "warn"
+    return severity_for_upload_mode(mode)
 
 
 def _finding(

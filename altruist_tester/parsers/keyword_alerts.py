@@ -6,6 +6,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from altruist_tester.rules.severity import severity_for_keyword_alert
+
 
 @dataclass(frozen=True, slots=True)
 class KeywordRule:
@@ -45,13 +47,13 @@ def _rule(
     keyword: str,
     pattern: str,
     *,
-    severity: str = "fail",
+    severity: str | None = None,
 ) -> KeywordRule:
     return KeywordRule(
         code=code,
         keyword=keyword,
         pattern=re.compile(pattern, re.IGNORECASE),
-        severity=severity,
+        severity=severity or severity_for_keyword_alert(code),
     )
 
 

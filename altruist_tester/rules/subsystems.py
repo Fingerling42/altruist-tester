@@ -6,15 +6,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 
-SubsystemStatus = Literal["ok", "warn", "fail"]
+from altruist_tester.rules.severity import severity_for_subsystem_event
 
-_WARN_EVENTS = {
-    ("event", "wifi", "sta_recovery"),
-    ("error", "display", "epd_stuck"),
-}
-_FAIL_EVENTS = {
-    ("event", "wifi", "sta_recovery_reboot"),
-}
+SubsystemStatus = Literal["ok", "warn", "fail"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +74,11 @@ class SubsystemHealthReport:
 
 
 def _status_for_event(level: str, subsystem: str, reason: str) -> SubsystemStatus:
-    event_key = (level, subsystem, reason)
-    if event_key in _FAIL_EVENTS:
-        return "fail"
-    if event_key in _WARN_EVENTS:
-        return "warn"
-    if level == "error":
-        return "fail"
-    if level == "event":
-        return "warn"
-    return "warn"
+    return severity_for_subsystem_event(
+        level=level,
+        subsystem=subsystem,
+        reason=reason,
+    )
 
 
 def _event_message(
