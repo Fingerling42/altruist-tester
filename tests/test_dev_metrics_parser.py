@@ -8,7 +8,9 @@ from altruist_tester.parsers.dev_metrics import (
 
 HEALTH_LINE = (
     "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
-    "errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0"
+    "errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0 "
+    "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+    "prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop"
 )
 
 
@@ -25,14 +27,45 @@ def test_parse_current_health_line():
         errors=DevMetricsErrors(wifi=1, sensor=2, sd=0),
         free_heap=219584,
         error_count=3,
+        reset_reason="power_on_reset",
+        reset_code=1,
+        crash_valid=False,
+        prev_uptime_sec=0,
+        prev_free_heap=0,
+        last_section_id=0,
+        last_section="Idle/MainLoop",
     )
+
+
+def test_parse_current_health_line_with_reset_context():
+    metrics = parse_dev_metrics_block(
+        [
+            "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+            "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+            "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            "prev_uptime=0 prev_heap=0 last_section_id=0 "
+            "last_section=Idle/MainLoop"
+        ]
+    )
+
+    assert metrics is not None
+    assert metrics.reset_reason == "power_on_reset"
+    assert metrics.reset_code == 1
+    assert metrics.crash_valid is False
+    assert metrics.prev_uptime_sec == 0
+    assert metrics.prev_free_heap == 0
+    assert metrics.last_section_id == 0
+    assert metrics.last_section == "Idle/MainLoop"
 
 
 def test_parse_current_health_line_uses_wifi_field_for_link_state():
     metrics = parse_dev_metrics_block(
         [
             "[HEALTH] uptime=61 boot=5 heap=180000 rssi=-62 tx=0 "
-            "errors=0 wifi=0 wifi_errors=0 sensor_errors=0 sd_errors=0"
+            "errors=0 wifi=0 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+            "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            "prev_uptime=0 prev_heap=0 last_section_id=0 "
+            "last_section=Idle/MainLoop"
         ]
     )
 
@@ -40,10 +73,13 @@ def test_parse_current_health_line_uses_wifi_field_for_link_state():
     assert metrics.wifi_state == "DISCONNECTED"
 
 
-def test_parse_short_health_line_is_not_supported():
+def test_parse_health_line_without_reset_context_is_not_supported():
     assert (
         parse_dev_metrics_block(
-            ["[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0"]
+            [
+                "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+                "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0"
+            ]
         )
         is None
     )
@@ -91,6 +127,13 @@ def test_metrics_event_payload_is_json_friendly():
         "esp_temp_c": None,
         "free_heap": None,
         "error_count": None,
+        "reset_reason": None,
+        "reset_code": None,
+        "crash_valid": None,
+        "prev_uptime_sec": None,
+        "prev_free_heap": None,
+        "last_section_id": None,
+        "last_section": None,
     }
 
 
@@ -102,7 +145,10 @@ def test_parse_dev_metrics_blocks_from_line_stream():
             "[INFO] unrelated line",
             (
                 "[HEALTH] uptime=3660 boot=4 heap=219000 rssi=-60 tx=13 "
-                "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0"
+                "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+                "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+                "prev_uptime=0 prev_heap=0 last_section_id=0 "
+                "last_section=Idle/MainLoop"
             ),
         ]
     )

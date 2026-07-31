@@ -17,7 +17,14 @@ _HEALTH_RE = re.compile(
     r"wifi=(?P<wifi>[01])\s+"
     r"wifi_errors=(?P<wifi_errors>\d+)\s+"
     r"sensor_errors=(?P<sensor_errors>\d+)\s+"
-    r"sd_errors=(?P<sd_errors>\d+)\s*$"
+    r"sd_errors=(?P<sd_errors>\d+)"
+    r"\s+reset_reason=(?P<reset_reason>\S+)"
+    r"\s+reset_code=(?P<reset_code>\d+)"
+    r"\s+crash_valid=(?P<crash_valid>[01])"
+    r"\s+prev_uptime=(?P<prev_uptime>\d+)"
+    r"\s+prev_heap=(?P<prev_heap>\d+)"
+    r"\s+last_section_id=(?P<last_section_id>\d+)"
+    r"\s+last_section=(?P<last_section>\S+)\s*$"
 )
 
 
@@ -59,6 +66,13 @@ class DevMetrics:
     esp_temp_c: float | None = None
     free_heap: int | None = None
     error_count: int | None = None
+    reset_reason: str | None = None
+    reset_code: int | None = None
+    crash_valid: bool | None = None
+    prev_uptime_sec: int | None = None
+    prev_free_heap: int | None = None
+    last_section_id: int | None = None
+    last_section: str | None = None
 
     def as_event_payload(self) -> dict[str, object]:
         """Return metrics as an event payload."""
@@ -76,6 +90,13 @@ class DevMetrics:
             "esp_temp_c": self.esp_temp_c,
             "free_heap": self.free_heap,
             "error_count": self.error_count,
+            "reset_reason": self.reset_reason,
+            "reset_code": self.reset_code,
+            "crash_valid": self.crash_valid,
+            "prev_uptime_sec": self.prev_uptime_sec,
+            "prev_free_heap": self.prev_free_heap,
+            "last_section_id": self.last_section_id,
+            "last_section": self.last_section,
         }
 
 
@@ -101,6 +122,13 @@ def _parse_health_line(line: str) -> DevMetrics | None:
         errors=errors,
         free_heap=int(match.group("heap")),
         error_count=error_count,
+        reset_reason=match.group("reset_reason"),
+        reset_code=int(match.group("reset_code")),
+        crash_valid=match.group("crash_valid") == "1",
+        prev_uptime_sec=int(match.group("prev_uptime")),
+        prev_free_heap=int(match.group("prev_heap")),
+        last_section_id=int(match.group("last_section_id")),
+        last_section=match.group("last_section"),
     )
 
 

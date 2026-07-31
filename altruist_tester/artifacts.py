@@ -77,6 +77,36 @@ def _format_last_dev_metrics(metrics: dict[str, Any]) -> str:
     )
 
 
+def _format_boot_context(context: dict[str, Any]) -> str:
+    if not context:
+        return "none"
+
+    return (
+        f"reset_reason={context.get('reset_reason') or 'unknown'}, "
+        f"reset_code={context.get('reset_code')}, "
+        f"boot={context.get('boot')}, "
+        f"crash_valid={context.get('crash_valid')}, "
+        f"prev_uptime={context.get('prev_uptime_sec')}s, "
+        f"prev_heap={context.get('prev_free_heap')}, "
+        f"last_section={context.get('last_section') or 'unknown'}"
+    )
+
+
+def _dev_metrics_boot_context(metrics: dict[str, Any]) -> dict[str, Any]:
+    if not metrics or metrics.get("reset_reason") is None:
+        return {}
+
+    return {
+        "reset_reason": metrics.get("reset_reason"),
+        "reset_code": metrics.get("reset_code"),
+        "boot": metrics.get("boot"),
+        "crash_valid": metrics.get("crash_valid"),
+        "prev_uptime_sec": metrics.get("prev_uptime_sec"),
+        "prev_free_heap": metrics.get("prev_free_heap"),
+        "last_section": metrics.get("last_section"),
+    }
+
+
 def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> None:
     identity = details.get("device_identity")
     if isinstance(identity, dict):
@@ -96,6 +126,27 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             lines.append("- identity conflicts: yes")
 
     last_metrics_text = _format_last_dev_metrics(details.get("last_dev_metrics") or {})
+    last_metrics = details.get("last_dev_metrics") or {}
+    boot_reset = details.get("boot_reset") or {}
+    if isinstance(boot_reset, dict):
+        last_boot = boot_reset.get("last_boot_event")
+        last_boot_context = last_boot if isinstance(last_boot, dict) else {}
+        health_boot_context = (
+            _dev_metrics_boot_context(last_metrics)
+            if isinstance(last_metrics, dict)
+            else {}
+        )
+        lines.extend(
+            [
+                "",
+                "Boot/reset:",
+                f"- boot events seen: {boot_reset.get('boot_events_count', 0)}",
+                f"- last boot event: {_format_boot_context(last_boot_context)}",
+                "- last health reset context: "
+                f"{_format_boot_context(health_boot_context)}",
+            ]
+        )
+
     rules = details.get("rules")
     if isinstance(rules, dict):
         lines.extend(

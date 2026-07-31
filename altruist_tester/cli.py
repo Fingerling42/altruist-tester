@@ -1414,6 +1414,8 @@ def run(
         "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
         "max_serial_silence_seconds": serial_silence.max_silence_seconds,
         **stats.dev_metrics.as_dict(),
+        "boot_reset": stats.boot_events.as_dict(),
+        "boot_event_records": list(stats.boot_event_records),
         "keyword_alerts_count": stats.keyword_alerts_count,
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,

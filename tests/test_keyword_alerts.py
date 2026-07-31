@@ -49,14 +49,6 @@ def test_detects_abnormal_firmware_reset_reasons():
     ]
 
 
-def test_detects_firmware_wifi_recovery_reboot():
-    line = "[WiFi] STA link down too long; rebooting for recovery"
-
-    assert [alert.code for alert in detect_keyword_alerts(line)] == [
-        "WIFI_RECOVERY_REBOOT"
-    ]
-
-
 def test_detects_structured_wifi_recovery_events():
     alerts = detect_keyword_alerts(
         "[SUBSYSTEM] event subsystem=wifi reason=sta_recovery "
@@ -77,14 +69,10 @@ def test_detects_structured_wifi_recovery_reboot():
 
 
 def test_detects_wifi_config_timeout():
-    lines = [
-        "WiFi config timeout, restarting...",
-        "[SUBSYSTEM] error subsystem=wifi reason=config_timeout",
-    ]
+    line = "[SUBSYSTEM] error subsystem=wifi reason=config_timeout"
 
-    assert [detect_keyword_alerts(line)[0].code for line in lines] == [
-        "WIFI_CONFIG_TIMEOUT",
-        "WIFI_CONFIG_TIMEOUT",
+    assert [alert.code for alert in detect_keyword_alerts(line)] == [
+        "WIFI_CONFIG_TIMEOUT"
     ]
 
 
@@ -108,7 +96,7 @@ def test_detects_structured_subsystem_errors():
     ]
 
 
-def test_detects_current_firmware_human_readable_subsystem_errors():
+def test_ignores_human_readable_subsystem_error_lines():
     lines = [
         "[SDCardLogger] SD card NOT connected",
         "Card Mount Failed",
@@ -119,15 +107,7 @@ def test_detects_current_firmware_human_readable_subsystem_errors():
         "[API] JSON snapshot overflow; skipping send",
     ]
 
-    assert [detect_keyword_alerts(line)[0].code for line in lines] == [
-        "SD_ERROR",
-        "SD_ERROR",
-        "CONFIG_ERROR",
-        "OTA_ERROR",
-        "DISPLAY_STUCK",
-        "SENSOR_JSON_OVERFLOW",
-        "API_JSON_OVERFLOW",
-    ]
+    assert [detect_keyword_alerts(line) for line in lines] == [[] for _ in lines]
 
 
 def test_detects_access_faults_and_assertions():

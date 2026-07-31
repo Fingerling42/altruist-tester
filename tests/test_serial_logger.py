@@ -138,6 +138,36 @@ def test_capture_raw_serial_writes_keyword_alert_events(tmp_path):
     ]
 
 
+def test_capture_raw_serial_writes_boot_events(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"[BOOT] reset_reason=usb_reset_flash_boot reset_code=11 boot=30 "
+            b"crash_valid=1 prev_uptime=11 prev_heap=227720 "
+            b"last_section_id=0 last_section=Idle/MainLoop heap=192072\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    boot_events = [event for event in events if event["type"] == "boot_event"]
+    assert len(boot_events) == 1
+    assert boot_events[0]["reset_reason"] == "usb_reset_flash_boot"
+    assert boot_events[0]["reset_code"] == 11
+    assert boot_events[0]["crash_valid"] is True
+    assert boot_events[0]["last_section"] == "Idle/MainLoop"
+
+    assert stats.boot_events.count == 1
+    assert stats.boot_events.first_seen == boot_events[0]["ts"]
+    assert stats.boot_events.last_seen == boot_events[0]["ts"]
+    assert stats.boot_events.last_boot is not None
+    assert stats.boot_events.last_boot["prev_uptime_sec"] == 11
+    assert stats.boot_event_records[0]["ts"] == boot_events[0]["ts"]
+
+
 def test_capture_raw_serial_writes_upload_events(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
@@ -275,7 +305,10 @@ def test_capture_raw_serial_reports_progress(tmp_path):
             b'{"BME280":{"temperature":{"value":25.5,"units":"C"}}}\n',
             b"Guru Meditation Error: Core 0 panic'ed\n",
             b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
-            b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0\n",
+            b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+            b"reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            b"prev_uptime=0 prev_heap=0 last_section_id=0 "
+            b"last_section=Idle/MainLoop\n",
         ],
         clock,
     )
@@ -311,9 +344,15 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     serial = FakeSerial(
         [
             b"[HEALTH] uptime=121 boot=7 heap=220000 rssi=-81 tx=1 "
-            b"errors=3 wifi=1 wifi_errors=0 sensor_errors=1 sd_errors=2\n",
+            b"errors=3 wifi=1 wifi_errors=0 sensor_errors=1 sd_errors=2 "
+            b"reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            b"prev_uptime=0 prev_heap=0 last_section_id=0 "
+            b"last_section=Idle/MainLoop\n",
             b"[HEALTH] uptime=124 boot=7 heap=219584 rssi=-79 tx=2 "
-            b"errors=4 wifi=1 wifi_errors=3 sensor_errors=0 sd_errors=1\n",
+            b"errors=4 wifi=1 wifi_errors=3 sensor_errors=0 sd_errors=1 "
+            b"reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            b"prev_uptime=0 prev_heap=0 last_section_id=0 "
+            b"last_section=Idle/MainLoop\n",
         ],
         clock,
     )
@@ -357,6 +396,13 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
         "esp_temp_c": None,
         "free_heap": 219584,
         "error_count": 4,
+        "reset_reason": "power_on_reset",
+        "reset_code": 1,
+        "crash_valid": False,
+        "prev_uptime_sec": 0,
+        "prev_free_heap": 0,
+        "last_section_id": 0,
+        "last_section": "Idle/MainLoop",
     }
 
 
@@ -380,7 +426,7 @@ def test_capture_raw_serial_ignores_short_health_event(tmp_path):
     assert stats.dev_metrics.count == 0
 
 
-def test_capture_raw_serial_writes_extended_health_event(tmp_path):
+def test_capture_raw_serial_writes_health_event_with_reset_context(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(
         tmp_path,
@@ -390,7 +436,10 @@ def test_capture_raw_serial_writes_extended_health_event(tmp_path):
     serial = FakeSerial(
         [
             b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
-            b"errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0\n"
+            b"errors=3 wifi=1 wifi_errors=1 sensor_errors=2 sd_errors=0 "
+            b"reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            b"prev_uptime=0 prev_heap=0 last_section_id=0 "
+            b"last_section=Idle/MainLoop\n"
         ],
         clock,
     )
@@ -402,6 +451,8 @@ def test_capture_raw_serial_writes_extended_health_event(tmp_path):
     assert len(metrics_events) == 1
     assert metrics_events[0]["errors"] == {"wifi": 1, "sensor": 2, "sd": 0}
     assert metrics_events[0]["error_count"] == 3
+    assert metrics_events[0]["reset_reason"] == "power_on_reset"
+    assert metrics_events[0]["last_section"] == "Idle/MainLoop"
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
 
 
