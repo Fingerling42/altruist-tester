@@ -80,6 +80,24 @@ Parser guidance:
   finite numeric `value`.
 - Keep sensor and metric names as printed by firmware at this step.
 
+## Health Contract
+
+Observed serial shape:
+
+```text
+[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 reset_reason=power_on_reset reset_code=1 crash_valid=0 prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop
+```
+
+Parser guidance:
+
+- Require the base runtime fields: `uptime`, `boot`, `heap`, `rssi`, `tx`,
+  `errors`, `wifi`, `wifi_errors`, `sensor_errors`, and `sd_errors`.
+- Parse reset-context fields when present.
+- Do not drop the whole health snapshot only because reset-context fields are
+  missing.
+- Let the release log contract warn separately when reset context is absent
+  from both `[BOOT]` and `[HEALTH]`.
+
 ## Build Contract
 
 Observed serial shape:

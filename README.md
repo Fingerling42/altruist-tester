@@ -10,11 +10,12 @@ writes machine-readable and human-readable run artifacts.
 Firmware builds with health telemetry emit a compact snapshot once per minute:
 
 ```text
-[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0
+[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 reset_reason=power_on_reset reset_code=1 crash_valid=0 prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop
 ```
 
-The tester expects this current format for runtime-counter and device-health
-checks.
+The tester parses the base runtime fields even if reset context is absent, but
+the release log contract warns when neither `[BOOT]` nor `[HEALTH]` exposes
+reset context.
 
 ## Quick Start
 

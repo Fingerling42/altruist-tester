@@ -6,6 +6,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from altruist_tester.parsers.boot_events import parse_key_value_fields
+
 _HEALTH_RE = re.compile(
     r"^\[HEALTH\]\s+"
     r"uptime=(?P<uptime>\d+)\s+"
@@ -18,13 +20,7 @@ _HEALTH_RE = re.compile(
     r"wifi_errors=(?P<wifi_errors>\d+)\s+"
     r"sensor_errors=(?P<sensor_errors>\d+)\s+"
     r"sd_errors=(?P<sd_errors>\d+)"
-    r"\s+reset_reason=(?P<reset_reason>\S+)"
-    r"\s+reset_code=(?P<reset_code>\d+)"
-    r"\s+crash_valid=(?P<crash_valid>[01])"
-    r"\s+prev_uptime=(?P<prev_uptime>\d+)"
-    r"\s+prev_heap=(?P<prev_heap>\d+)"
-    r"\s+last_section_id=(?P<last_section_id>\d+)"
-    r"\s+last_section=(?P<last_section>\S+)\s*$"
+    r"(?:\s+(?P<extra_fields>.*))?\s*$"
 )
 
 
@@ -100,11 +96,31 @@ class DevMetrics:
         }
 
 
+def _optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _optional_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    if value in {"0", "false", "False"}:
+        return False
+    if value in {"1", "true", "True"}:
+        return True
+    return None
+
+
 def _parse_health_line(line: str) -> DevMetrics | None:
     match = _HEALTH_RE.match(line.strip())
     if match is None:
         return None
 
+    extra_fields = parse_key_value_fields(match.group("extra_fields") or "")
     rssi = int(match.group("rssi"))
     error_count = int(match.group("errors"))
     errors = DevMetricsErrors(
@@ -122,13 +138,13 @@ def _parse_health_line(line: str) -> DevMetrics | None:
         errors=errors,
         free_heap=int(match.group("heap")),
         error_count=error_count,
-        reset_reason=match.group("reset_reason"),
-        reset_code=int(match.group("reset_code")),
-        crash_valid=match.group("crash_valid") == "1",
-        prev_uptime_sec=int(match.group("prev_uptime")),
-        prev_free_heap=int(match.group("prev_heap")),
-        last_section_id=int(match.group("last_section_id")),
-        last_section=match.group("last_section"),
+        reset_reason=extra_fields.get("reset_reason"),
+        reset_code=_optional_int(extra_fields.get("reset_code")),
+        crash_valid=_optional_bool(extra_fields.get("crash_valid")),
+        prev_uptime_sec=_optional_int(extra_fields.get("prev_uptime")),
+        prev_free_heap=_optional_int(extra_fields.get("prev_heap")),
+        last_section_id=_optional_int(extra_fields.get("last_section_id")),
+        last_section=extra_fields.get("last_section"),
     )
 
 
