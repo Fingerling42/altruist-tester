@@ -37,6 +37,11 @@ from altruist_tester.rules.uploads import (
     UploadHealthReport,
     check_upload_health,
 )
+from altruist_tester.rules.urban_pm import (
+    UrbanPmFinding,
+    UrbanPmReport,
+    check_urban_pm_nearly_zero,
+)
 from altruist_tester.serial_logger import SerialLogStats
 
 RuleStatus = Literal["ok", "warn", "fail"]
@@ -114,6 +119,7 @@ class RuleEngineReports:
     log_contract: LogContractReport
     subsystem_health: SubsystemHealthReport
     upload_health: UploadHealthReport
+    urban_pm: UrbanPmReport
 
     def as_dict(self) -> dict[str, object]:
         """Return JSON-friendly per-rule report payloads."""
@@ -128,6 +134,7 @@ class RuleEngineReports:
             "log_contract": self.log_contract.as_dict(),
             "subsystem_health": self.subsystem_health.as_dict(),
             "upload_health": self.upload_health.as_dict(),
+            "urban_pm": self.urban_pm.as_dict(),
         }
 
 
@@ -359,6 +366,44 @@ def _collect_subsystem_findings(
     )
 
 
+def _latest_build_model(stats: SerialLogStats) -> str | None:
+    build = stats.build_events.last_build
+    if build is None:
+        return None
+
+    model = build.get("model")
+    if model is None:
+        return None
+    return str(model).lower()
+
+
+def _has_expected_sds(config: RuleEngineConfig) -> bool:
+    return any(sensor.strip().lower() == "sds" for sensor in config.expected_sensors)
+
+
+def _should_check_urban_pm(stats: SerialLogStats, config: RuleEngineConfig) -> bool:
+    return _latest_build_model(stats) == "urban" or _has_expected_sds(config)
+
+
+def _collect_urban_pm_findings(
+    raw_findings: tuple[UrbanPmFinding, ...],
+) -> tuple[RuleFinding, ...]:
+    return tuple(
+        RuleFinding(
+            severity=finding.status,
+            code=_series_code(
+                "URBAN_PM_NEARLY_ZERO",
+                finding.sensor,
+                finding.metric,
+                finding.status,
+            ),
+            message=finding.message,
+            rule="urban_pm",
+        )
+        for finding in raw_findings
+    )
+
+
 def evaluate_rules(
     stats: SerialLogStats,
     config: RuleEngineConfig,
@@ -421,6 +466,10 @@ def evaluate_rules(
         connectivity=config.connectivity_upload,
         datalog=config.datalog_upload,
     )
+    urban_pm = check_urban_pm_nearly_zero(
+        stats.sensor_series,
+        enabled=_should_check_urban_pm(stats, config),
+    )
     reports = RuleEngineReports(
         sensor_presence=sensor_presence,
         sensor_ranges=sensor_ranges,
@@ -431,6 +480,7 @@ def evaluate_rules(
         log_contract=log_contract,
         subsystem_health=subsystem_health,
         upload_health=upload_health,
+        urban_pm=urban_pm,
     )
 
     findings = tuple(
@@ -457,6 +507,7 @@ def evaluate_rules(
             *_collect_log_contract_findings(log_contract),
             *_collect_subsystem_findings(subsystem_health),
             *_collect_upload_findings(upload_health),
+            *_collect_urban_pm_findings(urban_pm.findings),
         )
         if finding is not None
     )

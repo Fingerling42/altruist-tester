@@ -257,6 +257,69 @@ def test_evaluate_rules_fails_on_wifi_config_portal_timeout_event():
     assert result.findings[-1].code == "SUBSYSTEM_WIFI_CONFIG_TIMEOUT_FAIL"
 
 
+def test_evaluate_rules_warns_on_nearly_zero_urban_pm_series():
+    stats = SerialLogStats(
+        lines_read=120,
+        bytes_read=1200,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=120 * 60,
+        max_interline_gap_seconds=60.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(95)),
+            *(_sample("datalog", "P1", 0.18, index * 60) for index in range(95, 100)),
+        ),
+        build_events=_build_events(),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("pm10",),
+            duration_seconds=120 * 60,
+        ),
+    )
+
+    assert result.verdict == "WARN"
+    assert result.reports.urban_pm.status == "warn"
+    assert result.reports.urban_pm.warning_count == 1
+    assert result.findings[-1].code == "URBAN_PM_NEARLY_ZERO_DATALOG_P1_WARN"
+
+
+def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
+    stats = SerialLogStats(
+        lines_read=120,
+        bytes_read=1200,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=120 * 60,
+        max_interline_gap_seconds=60.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            *(_sample("datalog", "P1", 3.0, index * 60) for index in range(50)),
+            *(_sample("datalog", "P1", 4.0, index * 60) for index in range(50, 100)),
+            *(_sample("datalog", "P2", 0.0, index * 60) for index in range(100)),
+        ),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_sensors=("sds",),
+            duration_seconds=120 * 60,
+        ),
+    )
+
+    assert result.verdict == "WARN"
+    assert result.reports.urban_pm.status == "warn"
+    assert result.findings[-1].code == "URBAN_PM_NEARLY_ZERO_DATALOG_P2_WARN"
+
+
 def test_evaluate_rules_can_require_upload_success():
     stats = SerialLogStats(
         lines_read=10,
