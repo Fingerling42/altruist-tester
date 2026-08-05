@@ -6,12 +6,14 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from altruist_tester.parsers.boot_events import parse_key_value_fields
+
 UploadChannel = Literal["connectivity", "datalog"]
 UploadStatus = Literal["attempt", "success", "failure"]
 
 _CONNECTIVITY_ATTEMPT_RE = re.compile(
     r"^\[CONNECTIVITY\]\s+attempt\s+channel=sensors-connectivity\s+"
-    r"seq=(?P<sequence>\d+)\s*$"
+    r"seq=(?P<sequence>\d+)(?:\s+(?P<fields>.+?))?\s*$"
 )
 _CONNECTIVITY_SUCCESS_RE = re.compile(
     r"^\[CONNECTIVITY\]\s+success\s+channel=sensors-connectivity\s+"
@@ -25,11 +27,7 @@ _CONNECTIVITY_FAILURE_RE = re.compile(
     r"(?:\s+response_len=(?P<response_len>\d+))?\s*$"
 )
 
-_DATALOG_ATTEMPT_RE = re.compile(
-    r"^\[DATALOG\]\s+attempt\s+payload_len=(?P<payload_len>\d+)\s+"
-    r"payload_empty=(?P<payload_empty>[01])\s+"
-    r"owner_self_fallback=(?P<owner_self_fallback>[01])\s*$"
-)
+_DATALOG_ATTEMPT_RE = re.compile(r"^\[DATALOG\]\s+attempt(?:\s+(?P<fields>.+?))?\s*$")
 _DATALOG_SUCCESS_RE = re.compile(
     r"^\[DATALOG\]\s+success\s+response_len=(?P<response_len>\d+)\s*$"
 )
@@ -63,6 +61,12 @@ class UploadEvent:
         }
 
 
+def _format_fields(fields: dict[str, str]) -> str | None:
+    if not fields:
+        return None
+    return " ".join(f"{key}={value}" for key, value in fields.items())
+
+
 def parse_upload_event(line: str) -> UploadEvent | None:
     """Parse one firmware upload status line.
 
@@ -71,10 +75,12 @@ def parse_upload_event(line: str) -> UploadEvent | None:
     """
 
     if match := _CONNECTIVITY_ATTEMPT_RE.match(line):
+        details = _format_fields(parse_key_value_fields(match.group("fields") or ""))
         return UploadEvent(
             channel="connectivity",
             status="attempt",
             sequence=int(match.group("sequence")),
+            reason=details,
         )
     if match := _CONNECTIVITY_SUCCESS_RE.match(line):
         return UploadEvent(
@@ -99,15 +105,13 @@ def parse_upload_event(line: str) -> UploadEvent | None:
         )
 
     if match := _DATALOG_ATTEMPT_RE.match(line):
-        details = [
-            f"payload_len={match.group('payload_len')}",
-            f"payload_empty={match.group('payload_empty')}",
-            f"owner_self_fallback={match.group('owner_self_fallback')}",
-        ]
+        fields = parse_key_value_fields(match.group("fields") or "")
+        if not fields:
+            return None
         return UploadEvent(
             channel="datalog",
             status="attempt",
-            reason=" ".join(details),
+            reason=_format_fields(fields),
         )
     if match := _DATALOG_SUCCESS_RE.match(line):
         return UploadEvent(

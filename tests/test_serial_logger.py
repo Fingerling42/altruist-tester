@@ -248,7 +248,7 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
                 b"[CONNECTIVITY] success channel=sensors-connectivity seq=7 "
                 b"host=connectivity.robonomics.network code=200\n"
             ),
-            b"[DATALOG] attempt payload_len=55 payload_empty=0 owner_self_fallback=0\n",
+            b"[DATALOG] attempt payload_len=55 encoding=cps owner_self_fallback=0\n",
             (
                 b"[DATALOG] failed reason=rpc_error code=1010 "
                 b"message=Invalid Transaction response_len=111\n"

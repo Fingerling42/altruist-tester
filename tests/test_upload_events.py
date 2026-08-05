@@ -3,7 +3,8 @@ from altruist_tester.parsers.upload_events import parse_upload_event
 
 def test_parse_connectivity_upload_lines():
     attempt = parse_upload_event(
-        "[CONNECTIVITY] attempt channel=sensors-connectivity seq=42"
+        "[CONNECTIVITY] attempt channel=sensors-connectivity seq=42 "
+        "payload_len=128 encoding=mixed"
     )
     success = parse_upload_event(
         "[CONNECTIVITY] success channel=sensors-connectivity seq=42 "
@@ -21,7 +22,7 @@ def test_parse_connectivity_upload_lines():
         "status": "attempt",
         "sequence": 42,
         "target": None,
-        "reason": None,
+        "reason": "payload_len=128 encoding=mixed",
     }
     assert success is not None
     assert success.as_event_payload() == {
@@ -43,7 +44,7 @@ def test_parse_connectivity_upload_lines():
 
 def test_parse_datalog_upload_lines():
     attempt = parse_upload_event(
-        "[DATALOG] attempt payload_len=55 payload_empty=0 owner_self_fallback=0"
+        "[DATALOG] attempt payload_len=55 encoding=cps owner_self_fallback=0"
     )
     success = parse_upload_event("[DATALOG] success response_len=68")
     failure = parse_upload_event(
@@ -57,7 +58,7 @@ def test_parse_datalog_upload_lines():
         "status": "attempt",
         "sequence": None,
         "target": None,
-        "reason": "payload_len=55 payload_empty=0 owner_self_fallback=0",
+        "reason": "payload_len=55 encoding=cps owner_self_fallback=0",
     }
     assert success is not None
     assert success.as_event_payload() == {
@@ -75,6 +76,35 @@ def test_parse_datalog_upload_lines():
         "target": None,
         "reason": "rpc_error code=1010 message=Invalid Transaction response_len=111",
     }
+
+
+def test_parse_datalog_attempt_allows_optional_fields():
+    minimal = parse_upload_event("[DATALOG] attempt payload_len=55")
+    extended = parse_upload_event(
+        "[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=1 "
+        "batch_items=6"
+    )
+
+    assert minimal is not None
+    assert minimal.reason == "payload_len=55"
+    assert extended is not None
+    assert extended.reason == (
+        "payload_len=324 encoding=cps owner_self_fallback=1 batch_items=6"
+    )
+
+
+def test_parse_datalog_local_failure_reasons():
+    for reason in ("payload_empty", "encryption_failed", "payload_too_large"):
+        event = parse_upload_event(f"[DATALOG] failed reason={reason}")
+
+        assert event is not None
+        assert event.as_event_payload() == {
+            "channel": "datalog",
+            "status": "failure",
+            "sequence": None,
+            "target": None,
+            "reason": reason,
+        }
 
 
 def test_parse_upload_event_ignores_unrelated_and_legacy_lines():
