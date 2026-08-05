@@ -16,6 +16,7 @@ _DATALOG_ITEM_RE = re.compile(
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
 _SENSOR_SAMPLE_PAYLOAD_CHANNELS = frozenset({"datalog"})
+_SKIP_COMPACT_ALIASES = frozenset({"time"})
 
 _DATALOG_ALIASES = {
     "h": ("humidity", "%"),
@@ -101,6 +102,8 @@ def _samples_from_compact_payload(payload: str, *, source: str) -> list[SensorSa
     samples = []
     for item_match in _DATALOG_ITEM_RE.finditer(payload):
         alias = item_match.group("alias").lower()
+        if alias in _SKIP_COMPACT_ALIASES:
+            continue
         metric, unit = _DATALOG_ALIASES.get(alias, (alias, None))
         value = _finite_float(item_match.group("value"))
         if value is None:

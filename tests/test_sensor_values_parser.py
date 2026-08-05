@@ -105,6 +105,21 @@ def test_parse_encrypted_debug_payload_uses_plain_sample_only():
     ]
 
 
+def test_parse_payload_sample_ignores_service_time_field():
+    line = (
+        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=64 "
+        "sample_available=1 sample=h:65.15,t:25.84,time:17833545,p1:16.33"
+    )
+
+    samples = parse_sensor_values(line)
+
+    assert [(sample.metric, sample.value) for sample in samples] == [
+        ("humidity", 65.15),
+        ("temperature", 25.84),
+        ("P1", 16.33),
+    ]
+
+
 def test_parse_non_datalog_payload_does_not_create_sensor_samples():
     line = (
         "[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 "
@@ -117,6 +132,12 @@ def test_parse_non_datalog_payload_does_not_create_sensor_samples():
 
     assert parse_sensor_values(line) == []
     assert parse_sensor_values(custom_http_line) == []
+
+
+def test_parse_signature_payload_line_does_not_create_sensor_samples():
+    line = "Message to sign: h:59.46,t:25.32,p1:0.00,p2:0.00,time:17833545"
+
+    assert parse_sensor_values(line) == []
 
 
 def test_parse_sensor_json_snapshot_with_uart_text_around_it():
