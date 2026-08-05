@@ -136,24 +136,99 @@ def _plain_output(result) -> str:
     return _ANSI_ESCAPE_RE.sub("", result.output)
 
 
+def _worker_arg(args, option: str) -> str:
+    return str(args[args.index(option) + 1])
+
+
+def _fake_worker_run_dir(args) -> Path:
+    output = Path(_worker_arg(args, "--output-dir"))
+    return output / f"run-{output.name}"
+
+
 def _write_fake_worker_summary(
     args,
     *,
+    summary: dict[str, object] | None = None,
     verdict: str = "PASS_CANDIDATE",
     status: str = "completed",
-) -> None:
-    output = Path(args[args.index("--output-dir") + 1])
-    run_dir = output / f"run-{output.name}"
+) -> Path:
+    run_dir = _fake_worker_run_dir(args)
     run_dir.mkdir()
-    summary = {
-        "status": status,
-        "run_dir": str(run_dir),
-        "verdict": verdict,
-        "device_identity": {},
-        "findings": [{"severity": "warn"}] if verdict == "WARN" else [],
-        "rules": {"failed_checks": []},
-    }
+    if summary is None:
+        summary = {
+            "status": status,
+            "run_dir": str(run_dir),
+            "verdict": verdict,
+            "device_identity": {},
+            "findings": [{"severity": "warn"}] if verdict == "WARN" else [],
+            "rules": {"failed_checks": []},
+        }
+    else:
+        summary = {**summary, "run_dir": str(run_dir)}
     (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    return run_dir
+
+
+class _FakeBatchWorkerProcess:
+    def __init__(
+        self,
+        args,
+        stdout,
+        stderr,
+        text,
+        *,
+        returncode: int = 0,
+        summary: dict[str, object] | None = None,
+        report_text: str | None = None,
+        write_summary: bool = True,
+    ):
+        self.args = list(args)
+        self.returncode = returncode
+        if write_summary:
+            run_dir = _write_fake_worker_summary(self.args, summary=summary)
+            if report_text is not None:
+                (run_dir / "report.txt").write_text(report_text, encoding="utf-8")
+        stdout.write("worker stdout\n")
+        stderr.write("worker stderr\n")
+
+    def poll(self):
+        return self.returncode
+
+
+def _patch_batch_worker_processes(
+    monkeypatch,
+    *,
+    started: list[_FakeBatchWorkerProcess] | None = None,
+    returncodes_by_port: dict[str, int] | None = None,
+    summaries_by_port: dict[str, dict[str, object]] | None = None,
+    reports_by_port: dict[str, str] | None = None,
+    start_failures_by_port: dict[str, str] | None = None,
+) -> None:
+    returncodes_by_port = returncodes_by_port or {}
+    summaries_by_port = summaries_by_port or {}
+    reports_by_port = reports_by_port or {}
+    start_failures_by_port = start_failures_by_port or {}
+
+    class FakeProcess(_FakeBatchWorkerProcess):
+        def __init__(self, args, stdout, stderr, text):
+            port = _worker_arg(args, "--port")
+            if port in start_failures_by_port:
+                raise OSError(start_failures_by_port[port])
+            returncode = returncodes_by_port.get(port, 0)
+            super().__init__(
+                args,
+                stdout,
+                stderr,
+                text,
+                returncode=returncode,
+                summary=summaries_by_port.get(port),
+                report_text=reports_by_port.get(port),
+                write_summary=returncode == 0,
+            )
+            if started is not None:
+                started.append(self)
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
 
 
 def test_package_version_is_available():
@@ -341,20 +416,7 @@ def test_batch_explicit_ports_run_uses_shared_device_config(monkeypatch, tmp_pat
     first_port = Path("/dev/serial/by-path/first")
     second_port = Path("/dev/serial/by-path/second")
     started = []
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            self.args = list(args)
-            self.returncode = 0
-            _write_fake_worker_summary(args)
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-            started.append(self)
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    _patch_batch_worker_processes(monkeypatch, started=started)
 
     result = CliRunner().invoke(
         app,
@@ -475,20 +537,7 @@ expected_metrics = ["co2"]
         encoding="utf-8",
     )
     started = []
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            self.args = list(args)
-            self.returncode = 0
-            _write_fake_worker_summary(args)
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-            started.append(self)
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    _patch_batch_worker_processes(monkeypatch, started=started)
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -703,18 +752,10 @@ config = "insight.toml"
         "/dev/serial/by-path/urban": 0,
         "/dev/serial/by-path/insight": 1,
     }
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            port = args[args.index("--port") + 1]
-            self.returncode = returncodes[port]
-            stdout.write(f"stdout {port}\n")
-            stderr.write(f"stderr {port}\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    _patch_batch_worker_processes(
+        monkeypatch,
+        returncodes_by_port=returncodes,
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -757,66 +798,55 @@ config = "insight.toml"
         encoding="utf-8",
     )
 
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            port = args[args.index("--port") + 1]
-            output = Path(args[args.index("--output-dir") + 1])
-            run_dir = output / f"run-{output.name}"
-            run_dir.mkdir()
-            if port == "/dev/serial/by-path/urban":
-                summary = {
-                    "status": "completed",
-                    "run_dir": str(run_dir),
-                    "verdict": "PASS_CANDIDATE",
-                    "device_identity": {
-                        "device_id": "588C8140B8EC",
-                        "mac": "58:8C:81:40:B8:EC",
-                        "usb_serial": "58:8C:81:40:B8:EC",
-                        "by_id": "/dev/serial/by-id/usb-Espressif_588C8140B8EC",
-                        "by_path": "/dev/serial/by-path/urban",
-                    },
-                    "findings": [],
-                    "rules": {"failed_checks": []},
-                    "upload_health": {"status": "ok"},
-                    "sensor_presence": {"status": "ok"},
-                }
-            else:
-                summary = {
-                    "status": "failed",
-                    "run_dir": str(run_dir),
-                    "verdict": "FAIL",
-                    "device_identity": {
-                        "device_id": None,
-                        "mac": "10:51:DB:01:0C:70",
-                        "usb_serial": "10:51:DB:01:0C:70",
-                        "by_id": "/dev/serial/by-id/usb-Espressif_1051DB010C70",
-                        "by_path": "/dev/serial/by-path/insight",
-                        "conflicts": [
-                            {"source": "serial_log", "device_id": "AABBCCDDEEFF"},
-                            {"source": "usb", "device_id": "1051DB010C70"},
-                        ],
-                    },
-                    "findings": [
-                        {
-                            "severity": "fail",
-                            "code": "MISSING_SENSOR_METRIC",
-                            "message": "Missing expected sensor metrics: co2",
-                        }
+    _patch_batch_worker_processes(
+        monkeypatch,
+        summaries_by_port={
+            "/dev/serial/by-path/urban": {
+                "status": "completed",
+                "verdict": "PASS_CANDIDATE",
+                "device_identity": {
+                    "device_id": "588C8140B8EC",
+                    "mac": "58:8C:81:40:B8:EC",
+                    "usb_serial": "58:8C:81:40:B8:EC",
+                    "by_id": "/dev/serial/by-id/usb-Espressif_588C8140B8EC",
+                    "by_path": "/dev/serial/by-path/urban",
+                },
+                "findings": [],
+                "rules": {"failed_checks": []},
+                "upload_health": {"status": "ok"},
+                "sensor_presence": {"status": "ok"},
+            },
+            "/dev/serial/by-path/insight": {
+                "status": "failed",
+                "verdict": "FAIL",
+                "device_identity": {
+                    "device_id": None,
+                    "mac": "10:51:DB:01:0C:70",
+                    "usb_serial": "10:51:DB:01:0C:70",
+                    "by_id": "/dev/serial/by-id/usb-Espressif_1051DB010C70",
+                    "by_path": "/dev/serial/by-path/insight",
+                    "conflicts": [
+                        {"source": "serial_log", "device_id": "AABBCCDDEEFF"},
+                        {"source": "usb", "device_id": "1051DB010C70"},
                     ],
-                    "rules": {"failed_checks": ["sensor_presence"]},
-                    "upload_health": {"status": "warn"},
-                    "sensor_presence": {"status": "fail"},
-                }
-            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            (run_dir / "report.txt").write_text("device report\n", encoding="utf-8")
-            self.returncode = 0
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+                },
+                "findings": [
+                    {
+                        "severity": "fail",
+                        "code": "MISSING_SENSOR_METRIC",
+                        "message": "Missing expected sensor metrics: co2",
+                    }
+                ],
+                "rules": {"failed_checks": ["sensor_presence"]},
+                "upload_health": {"status": "warn"},
+                "sensor_presence": {"status": "fail"},
+            },
+        },
+        reports_by_port={
+            "/dev/serial/by-path/urban": "device report\n",
+            "/dev/serial/by-path/insight": "device report\n",
+        },
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -905,31 +935,18 @@ port = "/dev/serial/by-path/warn"
 """,
         encoding="utf-8",
     )
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            port = args[args.index("--port") + 1]
-            output = Path(args[args.index("--output-dir") + 1])
-            run_dir = output / f"run-{output.name}"
-            run_dir.mkdir()
-            verdict = "WARN" if port.endswith("/warn") else "PASS_CANDIDATE"
-            summary = {
+    _patch_batch_worker_processes(
+        monkeypatch,
+        summaries_by_port={
+            "/dev/serial/by-path/warn": {
                 "status": "completed",
-                "run_dir": str(run_dir),
-                "verdict": verdict,
+                "verdict": "WARN",
                 "device_identity": {},
-                "findings": [{"severity": "warn"}] if verdict == "WARN" else [],
+                "findings": [{"severity": "warn"}],
                 "rules": {"failed_checks": []},
-            }
-            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            self.returncode = 0
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+            },
+        },
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -972,32 +989,18 @@ port = "/dev/serial/by-path/failing"
         }
         for index in range(1, 6)
     ]
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            output = Path(args[args.index("--output-dir") + 1])
-            run_dir = output / f"run-{output.name}"
-            run_dir.mkdir()
-            summary = {
+    _patch_batch_worker_processes(
+        monkeypatch,
+        summaries_by_port={
+            "/dev/serial/by-path/failing": {
                 "status": "failed",
-                "run_dir": str(run_dir),
                 "verdict": "FAIL",
                 "device_identity": {},
                 "findings": findings,
                 "rules": {"failed_checks": ["sensor_presence"]},
-            }
-            (run_dir / "summary.json").write_text(
-                json.dumps(summary),
-                encoding="utf-8",
-            )
-            self.returncode = 0
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+            },
+        },
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -1032,28 +1035,17 @@ port = "/dev/serial/by-path/urban"
 """,
         encoding="utf-8",
     )
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            output = Path(args[args.index("--output-dir") + 1])
-            run_dir = output / f"run-{output.name}"
-            run_dir.mkdir()
-            summary = {
+    _patch_batch_worker_processes(
+        monkeypatch,
+        summaries_by_port={
+            "/dev/serial/by-path/urban": {
                 "status": "completed",
-                "run_dir": str(run_dir),
                 "verdict": "PASS_CANDIDATE",
                 "findings": [],
                 "rules": {"failed_checks": []},
-            }
-            (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            self.returncode = 0
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+            },
+        },
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -1103,20 +1095,10 @@ port = "/dev/serial/by-path/working"
         "/dev/serial/by-path/missing": 2,
         "/dev/serial/by-path/working": 0,
     }
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            port = args[args.index("--port") + 1]
-            self.returncode = returncodes[port]
-            if self.returncode == 0:
-                _write_fake_worker_summary(args)
-            stdout.write(f"stdout {port}\n")
-            stderr.write(f"stderr {port}\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    _patch_batch_worker_processes(
+        monkeypatch,
+        returncodes_by_port=returncodes,
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
@@ -1160,21 +1142,12 @@ port = "/dev/serial/by-path/working"
 """,
         encoding="utf-8",
     )
-
-    class FakeProcess:
-        def __init__(self, args, stdout, stderr, text):
-            port = args[args.index("--port") + 1]
-            if port == "/dev/serial/by-path/start-fails":
-                raise OSError("cannot exec worker")
-            self.returncode = 0
-            _write_fake_worker_summary(args)
-            stdout.write("worker stdout\n")
-            stderr.write("worker stderr\n")
-
-        def poll(self):
-            return self.returncode
-
-    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+    _patch_batch_worker_processes(
+        monkeypatch,
+        start_failures_by_port={
+            "/dev/serial/by-path/start-fails": "cannot exec worker",
+        },
+    )
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
