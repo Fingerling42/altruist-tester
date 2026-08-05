@@ -9,10 +9,9 @@ from tests.cli_helpers import (
     patch_cli_capture,
     plain_output,
     release_log_stats,
-    sample_record,
     series_with_metrics,
-    series_with_records,
 )
+from tests.helpers import sample_record, sample_series
 
 
 def test_run_rejects_missing_serial_port(tmp_path):
@@ -610,7 +609,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
-            sensor_series=series_with_records(
+            sensor_series=sample_series(
                 sample_record("SCD4x", "co2", 612.0, 0),
                 sample_record("SCD4x", "co2", 612.0, 60 * 60),
             ),
@@ -655,7 +654,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
-            sensor_series=series_with_records(
+            sensor_series=sample_series(
                 sample_record("BME280", "temperature", 24.0, 0),
                 sample_record("BME280", "temperature", 24.5, 25 * 60),
             ),

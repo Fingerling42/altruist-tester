@@ -1,10 +1,10 @@
 import json
 import re
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
+from altruist_tester.samples import SensorSampleSeries
 from altruist_tester.serial_logger import SerialLogStats
+from tests.helpers import sample_record
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -27,39 +27,10 @@ def series_with_metrics(*metrics: str) -> SensorSampleSeries:
     }
     for index, metric in enumerate(metrics):
         series.append(
-            SensorSampleRecord(
-                ts=f"2026-06-05T12:00:{index:02d}.000Z",
-                sensor="sensor",
-                metric=metric,
-                value=sample_values.get(metric, float(index)),
-                unit=None,
-                source="serial",
+            sample_record(
+                "sensor", metric, sample_values.get(metric, float(index)), index
             )
         )
-    return series
-
-
-def sample_record(
-    sensor: str,
-    metric: str,
-    value: float,
-    offset_seconds: int,
-) -> SensorSampleRecord:
-    ts = datetime(2026, 6, 5, 12, 0, tzinfo=UTC) + timedelta(seconds=offset_seconds)
-    return SensorSampleRecord(
-        ts=ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        sensor=sensor,
-        metric=metric,
-        value=value,
-        unit=None,
-        source="serial",
-    )
-
-
-def series_with_records(*records: SensorSampleRecord) -> SensorSampleSeries:
-    series = SensorSampleSeries()
-    for record in records:
-        series.append(record)
     return series
 
 

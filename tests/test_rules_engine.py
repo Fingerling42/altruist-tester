@@ -1,36 +1,10 @@
-from datetime import UTC, datetime, timedelta
-
 from altruist_tester.parsers.subsystem_events import parse_subsystem_event
 from altruist_tester.parsers.upload_events import UploadEvent
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
 from altruist_tester.rules.uploads import UploadChannelConfig
-from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
 from altruist_tester.serial_logger import BuildEventsSummary, SerialLogStats
 from altruist_tester.uploads import UploadStats
-
-
-def _sample(
-    sensor: str,
-    metric: str,
-    value: float,
-    offset_seconds: int,
-) -> SensorSampleRecord:
-    ts = datetime(2026, 6, 5, 12, 0, tzinfo=UTC) + timedelta(seconds=offset_seconds)
-    return SensorSampleRecord(
-        ts=ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        sensor=sensor,
-        metric=metric,
-        value=value,
-        unit=None,
-        source="serial",
-    )
-
-
-def _series(*records: SensorSampleRecord) -> SensorSampleSeries:
-    series = SensorSampleSeries()
-    for record in records:
-        series.append(record)
-    return series
+from tests.helpers import sample_record, sample_series
 
 
 def _upload_stats(*events: UploadEvent) -> UploadStats:
@@ -55,6 +29,10 @@ def _build_events() -> BuildEventsSummary:
     )
 
 
+def _datalog_sample(metric: str, value: float, offset_seconds: int):
+    return sample_record("datalog", metric, value, offset_seconds)
+
+
 def test_evaluate_rules_returns_pass_candidate_without_findings():
     stats = SerialLogStats(
         lines_read=10,
@@ -66,9 +44,9 @@ def test_evaluate_rules_returns_pass_candidate_without_findings():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20, "reset_reason": "power_on_reset"},
         ),
-        sensor_series=_series(
-            _sample("BME280", "temperature", 24.0, 0),
-            _sample("BME280", "temperature", 24.5, 60),
+        sensor_series=sample_series(
+            sample_record("BME280", "temperature", 24.0, 0),
+            sample_record("BME280", "temperature", 24.5, 60),
         ),
         build_events=_build_events(),
     )
@@ -95,8 +73,8 @@ def test_evaluate_rules_returns_warn_for_non_failing_findings():
         last_line_elapsed_seconds=10.0,
         max_interline_gap_seconds=9.0,
         dev_metrics_records=({"boot": 1, "uptime_sec": 10},),
-        sensor_series=_series(
-            _sample("BME280", "temperature", 24.0, 0),
+        sensor_series=sample_series(
+            sample_record("BME280", "temperature", 24.0, 0),
         ),
     )
 
@@ -118,8 +96,8 @@ def test_evaluate_rules_lets_fail_dominate_warn():
         lines_read=0,
         bytes_read=0,
         dev_metrics_records=(),
-        sensor_series=_series(
-            _sample("BME280", "humidity", 120.0, 0),
+        sensor_series=sample_series(
+            sample_record("BME280", "humidity", 120.0, 0),
         ),
     )
 
@@ -151,9 +129,9 @@ def test_evaluate_rules_includes_subsystem_health_findings():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            _sample("BME280", "temperature", 24.0, 0),
-            _sample("BME280", "temperature", 24.5, 60),
+        sensor_series=sample_series(
+            sample_record("BME280", "temperature", 24.0, 0),
+            sample_record("BME280", "temperature", 24.5, 60),
         ),
         subsystem_event_records=(
             {
@@ -198,9 +176,9 @@ def test_evaluate_rules_fails_on_firmware_sensor_json_overflow_event():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            _sample("BME680", "temperature", 24.0, 0),
-            _sample("BME680", "temperature", 24.5, 60),
+        sensor_series=sample_series(
+            sample_record("BME680", "temperature", 24.0, 0),
+            sample_record("BME680", "temperature", 24.5, 60),
         ),
         subsystem_event_records=(event.as_event_payload(),),
     )
@@ -236,9 +214,9 @@ def test_evaluate_rules_fails_on_wifi_config_portal_timeout_event():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            _sample("BME280", "temperature", 24.0, 0),
-            _sample("BME280", "temperature", 24.5, 60),
+        sensor_series=sample_series(
+            sample_record("BME280", "temperature", 24.0, 0),
+            sample_record("BME280", "temperature", 24.5, 60),
         ),
         subsystem_event_records=(event.as_event_payload(),),
     )
@@ -268,9 +246,9 @@ def test_evaluate_rules_warns_on_nearly_zero_urban_pm_series():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(95)),
-            *(_sample("datalog", "P1", 0.18, index * 60) for index in range(95, 100)),
+        sensor_series=sample_series(
+            *(_datalog_sample("P1", 0.0, index * 60) for index in range(95)),
+            *(_datalog_sample("P1", 0.18, index * 60) for index in range(95, 100)),
         ),
         build_events=_build_events(),
     )
@@ -300,10 +278,10 @@ def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            *(_sample("datalog", "P1", 3.0, index * 60) for index in range(50)),
-            *(_sample("datalog", "P1", 4.0, index * 60) for index in range(50, 100)),
-            *(_sample("datalog", "P2", 0.0, index * 60) for index in range(100)),
+        sensor_series=sample_series(
+            *(_datalog_sample("P1", 3.0, index * 60) for index in range(50)),
+            *(_datalog_sample("P1", 4.0, index * 60) for index in range(50, 100)),
+            *(_datalog_sample("P2", 0.0, index * 60) for index in range(100)),
         ),
     )
 
@@ -331,8 +309,8 @@ def test_evaluate_rules_uses_configured_device_model_for_urban_pm():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(100)),
+        sensor_series=sample_series(
+            *(_datalog_sample("P1", 0.0, index * 60) for index in range(100)),
         ),
     )
 
@@ -361,9 +339,9 @@ def test_evaluate_rules_configured_non_urban_model_overrides_sds_fallback():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(100)),
-            *(_sample("datalog", "P2", 0.0, index * 60) for index in range(100)),
+        sensor_series=sample_series(
+            *(_datalog_sample("P1", 0.0, index * 60) for index in range(100)),
+            *(_datalog_sample("P2", 0.0, index * 60) for index in range(100)),
         ),
     )
 
@@ -391,9 +369,9 @@ def test_evaluate_rules_can_require_upload_success():
             {"boot": 1, "uptime_sec": 10},
             {"boot": 1, "uptime_sec": 20},
         ),
-        sensor_series=_series(
-            _sample("BME280", "temperature", 24.0, 0),
-            _sample("BME280", "temperature", 24.5, 60),
+        sensor_series=sample_series(
+            sample_record("BME280", "temperature", 24.0, 0),
+            sample_record("BME280", "temperature", 24.5, 60),
         ),
         upload_stats=_upload_stats(
             UploadEvent("connectivity", "attempt"),
