@@ -134,10 +134,15 @@ def test_parse_non_datalog_payload_does_not_create_sensor_samples():
     assert parse_sensor_values(custom_http_line) == []
 
 
-def test_parse_signature_payload_line_does_not_create_sensor_samples():
-    line = "Message to sign: h:59.46,t:25.32,p1:0.00,p2:0.00,time:17833545"
+def test_parse_non_contract_payload_lines_do_not_create_sensor_samples():
+    non_contract_lines = [
+        "Message to sign: h:59.46,t:25.32,p1:0.00,p2:0.00,time:17833545",
+        "Datalog data: : h:65.99,t:25.51,p1:16.33",
+    ]
 
-    assert parse_sensor_values(line) == []
+    assert [parse_sensor_values(line) for line in non_contract_lines] == [[]] * len(
+        non_contract_lines
+    )
 
 
 def test_parse_sensor_json_snapshot_with_uart_text_around_it():
@@ -179,4 +184,3 @@ def test_parse_sensor_values_ignores_non_sensor_lines_and_bad_json():
     assert parse_sensor_values('{"BME280":{"temperature":{"value":"bad"}}}') == []
     assert parse_sensor_values('{"BME280":{"temperature":{"value":true}}}') == []
     assert parse_sensor_values("{not json") == []
-    assert parse_sensor_values("Datalog data: : h:65.99,t:25.51,p1:16.33") == []

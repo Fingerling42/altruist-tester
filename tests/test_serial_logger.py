@@ -386,7 +386,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
     }
 
 
-def test_capture_raw_serial_ignores_legacy_datalog_api_status_blocks(tmp_path):
+def test_capture_raw_serial_ignores_non_contract_upload_lines(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
     serial = FakeSerial(
@@ -403,6 +403,11 @@ def test_capture_raw_serial_ignores_legacy_datalog_api_status_blocks(tmp_path):
             b"  Count Sends: 1\n",
             b"  Last Send Time: Mon Jun 22 10:10:30 2026\n",
             b"  Is OK: Yes\n",
+            b"Extrinsic Datalog: size 199\n",
+            b'Extrinsic result: "0x848cc48cd5d47200d08f3212976018e3e98eaf"'
+            b"[603364] [INFO] [Urban LED] mode: : GREEN\n",
+            b"[DEBUG] [Datalog] Sending: : h:59.46,t:25.32\n",
+            b'Extrinsic result: "0xe1f85b"[DEBUG] [Datalog] OK, result: : "0xe1f85b"\n',
         ],
         clock,
     )
@@ -722,54 +727,3 @@ def test_capture_raw_serial_writes_health_event_with_reset_context(tmp_path):
     assert metrics_events[0]["reset_reason"] == "power_on_reset"
     assert metrics_events[0]["last_section"] == "Idle/MainLoop"
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
-
-
-def test_capture_raw_serial_ignores_legacy_datalog_extrinsic_lines(tmp_path):
-    clock = FakeClock()
-    artifacts = _create_artifacts(
-        tmp_path,
-        duration_input="2s",
-        duration_seconds=2,
-    )
-    serial = FakeSerial(
-        [
-            b"Extrinsic Datalog: size 199\n",
-            b'Extrinsic result: "0x848cc48cd5d47200d08f3212976018e3e98eaf"'
-            b"[603364] [INFO] [Urban LED] mode: : GREEN\n",
-        ],
-        clock,
-    )
-
-    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
-
-    events = _read_jsonl(artifacts.events_jsonl)
-    upload_events = [event for event in events if event["type"] == "upload_event"]
-    assert upload_events == []
-    assert stats.upload_stats.channel("datalog").attempts == 0
-    assert stats.upload_stats.channel("datalog").successes == 0
-
-
-def test_capture_raw_serial_ignores_legacy_debug_datalog_lines(tmp_path):
-    clock = FakeClock()
-    artifacts = _create_artifacts(
-        tmp_path,
-        duration_input="2s",
-        duration_seconds=2,
-    )
-    serial = FakeSerial(
-        [
-            b"[DEBUG] [Datalog] Sending: : h:59.46,t:25.32\n",
-            b"Extrinsic Datalog: size 198\n",
-            b'Extrinsic result: "0xe1f85b"[DEBUG] [Datalog] OK, result: : "0xe1f85b"\n',
-        ],
-        clock,
-    )
-
-    stats = capture_raw_serial(serial, artifacts, 2, clock=clock)
-
-    events = _read_jsonl(artifacts.events_jsonl)
-    upload_events = [event for event in events if event["type"] == "upload_event"]
-    assert upload_events == []
-    assert stats.upload_stats.channel("datalog").attempts == 0
-    assert stats.upload_stats.channel("datalog").successes == 0
-    assert stats.upload_stats.channel("datalog").last_reason is None

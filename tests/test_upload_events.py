@@ -141,8 +141,8 @@ def test_parse_datalog_local_failure_reasons():
         }
 
 
-def test_parse_upload_event_ignores_unrelated_and_legacy_lines():
-    legacy_or_unrelated_lines = [
+def test_parse_upload_event_ignores_non_contract_lines():
+    non_contract_lines = [
         "Status: ALIVE",
         "[123] [INFO] [Map#42] Send attempt",
         "[123] [INFO] [Map#42] POST to 1.connectivity.robonomics.network:65/",
@@ -159,6 +159,6 @@ def test_parse_upload_event_ignores_unrelated_and_legacy_lines():
         "  Is OK: Yes",
     ]
 
-    assert [parse_upload_event(line) for line in legacy_or_unrelated_lines] == [
-        None
-    ] * len(legacy_or_unrelated_lines)
+    assert [parse_upload_event(line) for line in non_contract_lines] == [None] * len(
+        non_contract_lines
+    )
