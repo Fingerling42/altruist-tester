@@ -320,6 +320,66 @@ def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
     assert result.findings[-1].code == "URBAN_PM_NEARLY_ZERO_DATALOG_P2_WARN"
 
 
+def test_evaluate_rules_uses_configured_device_model_for_urban_pm():
+    stats = SerialLogStats(
+        lines_read=120,
+        bytes_read=1200,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=120 * 60,
+        max_interline_gap_seconds=60.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(100)),
+        ),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("pm10",),
+            device_model="urban",
+            duration_seconds=120 * 60,
+        ),
+    )
+
+    assert result.verdict == "WARN"
+    assert result.reports.urban_pm.status == "warn"
+    assert result.findings[-1].code == "URBAN_PM_NEARLY_ZERO_DATALOG_P1_WARN"
+
+
+def test_evaluate_rules_configured_non_urban_model_overrides_sds_fallback():
+    stats = SerialLogStats(
+        lines_read=120,
+        bytes_read=1200,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=120 * 60,
+        max_interline_gap_seconds=60.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            *(_sample("datalog", "P1", 0.0, index * 60) for index in range(100)),
+            *(_sample("datalog", "P2", 0.0, index * 60) for index in range(100)),
+        ),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_sensors=("sds",),
+            device_model="insight",
+            duration_seconds=120 * 60,
+        ),
+    )
+
+    assert result.reports.urban_pm.status == "ok"
+    assert not any(finding.rule == "urban_pm" for finding in result.findings)
+
+
 def test_evaluate_rules_can_require_upload_success():
     stats = SerialLogStats(
         lines_read=10,

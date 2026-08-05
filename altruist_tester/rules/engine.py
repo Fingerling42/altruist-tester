@@ -59,6 +59,7 @@ class RuleEngineConfig:
 
     expected_metrics: tuple[str, ...] = ()
     expected_sensors: tuple[str, ...] = ()
+    device_model: str | None = None
     sensor_ranges: Mapping[str, SensorRange] = field(
         default_factory=lambda: dict(DEFAULT_SENSOR_RANGES)
     )
@@ -382,7 +383,14 @@ def _has_expected_sds(config: RuleEngineConfig) -> bool:
 
 
 def _should_check_urban_pm(stats: SerialLogStats, config: RuleEngineConfig) -> bool:
-    return _latest_build_model(stats) == "urban" or _has_expected_sds(config)
+    if config.device_model is not None:
+        return config.device_model == "urban"
+
+    build_model = _latest_build_model(stats)
+    if build_model is not None:
+        return build_model == "urban"
+
+    return _has_expected_sds(config)
 
 
 def _collect_urban_pm_findings(

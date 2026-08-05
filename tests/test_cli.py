@@ -506,9 +506,11 @@ expected_metrics = ["co2"]
     assert urban_command[urban_command.index("--duration") + 1] == "24h"
     assert urban_command[urban_command.index("--baud") + 1] == "9600"
     assert urban_command[urban_command.index("--config") + 1] == str(urban_profile)
+    assert urban_command[urban_command.index("--device-model") + 1] == "urban"
     assert insight_command[insight_command.index("--config") + 1] == str(
         insight_profile
     )
+    assert insight_command[insight_command.index("--device-model") + 1] == "insight"
     assert "--expect-sensor" in insight_command
     assert insight_command[insight_command.index("--expect-sensor") + 1] == "scd41"
     assert "--expect-metric" in insight_command
@@ -1280,6 +1282,27 @@ def test_run_rejects_port_with_auto(tmp_path):
     assert "Use either --port or --auto" in _plain_output(result)
 
 
+def test_run_rejects_unknown_device_model(tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--device-model",
+            "unknown",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Device model must be one of" in _plain_output(result)
+
+
 def test_run_auto_rejects_missing_detected_ports(monkeypatch):
     monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
 
@@ -1369,6 +1392,8 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
             "10m",
             "--baud",
             "9600",
+            "--device-model",
+            "Urban",
             "--output-dir",
             str(output_dir),
         ],
@@ -1385,6 +1410,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
     run_dir = run_dirs[0]
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "completed"
+    assert summary["device_model"] == "urban"
     assert summary["port"] == str(port)
     assert summary["baud"] == 9600
     assert summary["duration"] == "10m"

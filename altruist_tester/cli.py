@@ -22,6 +22,7 @@ from altruist_tester.artifacts import (
     utc_now,
 )
 from altruist_tester.config import (
+    BATCH_DEVICE_MODELS,
     BatchConfig,
     BatchDeviceConfig,
     ConfigError,
@@ -291,6 +292,8 @@ def _batch_worker_command(
     ]
     if device.effective_config is not None:
         command.extend(["--config", str(device.effective_config)])
+    if device.model is not None:
+        command.extend(["--device-model", device.model])
     for sensor in device.expected_sensors:
         command.extend(["--expect-sensor", sensor])
     for metric in device.expected_metrics:
@@ -1010,12 +1013,14 @@ def _rule_engine_config(
     *,
     expected_sensors: tuple[str, ...],
     expected_metrics: tuple[str, ...],
+    device_model: str | None,
     finished_at: datetime,
     duration_seconds: int,
 ) -> RuleEngineConfig:
     return RuleEngineConfig(
         expected_metrics=expected_metrics,
         expected_sensors=expected_sensors,
+        device_model=device_model,
         sensor_ranges=tester_config.sensor_ranges,
         warn_on_unknown_ranges=tester_config.warn_on_unknown_ranges,
         unknown_non_negative_metrics=tester_config.unknown_non_negative_metrics,
@@ -1076,6 +1081,19 @@ def _emit_report_messages(reports: tuple[RuleReportMessage, ...]) -> None:
             )
         elif report.status == "fail":
             typer.secho(report.message, fg=typer.colors.RED, err=True)
+
+
+def _normalize_device_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    model = value.strip().lower()
+    if model not in BATCH_DEVICE_MODELS:
+        allowed = ", ".join(sorted(BATCH_DEVICE_MODELS))
+        raise typer.BadParameter(
+            f"Device model must be one of: {allowed}.",
+            param_hint="--device-model",
+        )
+    return model
 
 
 @app.command()
@@ -1265,6 +1283,16 @@ def run(
             ),
         ),
     ] = None,
+    device_model: Annotated[
+        str | None,
+        typer.Option(
+            "--device-model",
+            help=(
+                "Optional device model hint for model-specific rules "
+                "(urban or insight)."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run a USB-C serial burn-in test for one device.
 
@@ -1288,6 +1316,7 @@ def run(
     except ConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="--config") from exc
 
+    device_model = _normalize_device_model(device_model)
     expected_sensors = (*tester_config.expected_sensors, *(expected_sensor or ()))
     expected_metrics = (*tester_config.expected_metrics, *(expected_metric or ()))
     try:
@@ -1368,6 +1397,7 @@ def run(
             tester_config,
             expected_sensors=expected_sensors,
             expected_metrics=expected_metrics,
+            device_model=device_model,
             finished_at=finished_at,
             duration_seconds=duration_seconds,
         ),
@@ -1409,6 +1439,7 @@ def run(
         artifacts.append_event("run_completed")
     final_details = {
         "verdict": rule_result.verdict,
+        "device_model": device_model,
         "config": str(config) if config is not None else None,
         "metrics_seen": stats.dev_metrics.seen,
         "samples_seen": stats.sensor_samples_count > 0,
