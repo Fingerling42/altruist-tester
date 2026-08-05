@@ -303,6 +303,73 @@ def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):
     )
 
 
+def test_batch_passes_wait_port_to_workers(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "24h",
+            "device_config": profile,
+            "output_dir": output_dir,
+            "wait_port": True,
+            "wait_port_timeout": "5m",
+        },
+        devices=[
+            {"slot": "slot-01", "port": "/dev/serial/by-path/urban"},
+            {"slot": "slot-02", "port": "/dev/serial/by-path/insight"},
+        ],
+    )
+    started = []
+    patch_batch_worker_processes(monkeypatch, started=started)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 0
+    assert len(started) == 2
+    for process in started:
+        assert "--wait-port" in process.args
+        assert process.args[process.args.index("--wait-port-timeout") + 1] == "5m"
+
+
+def test_batch_cli_wait_port_overrides_config(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "24h",
+            "device_config": profile,
+            "output_dir": output_dir,
+        },
+        devices=[{"slot": "slot-01", "port": "/dev/serial/by-path/urban"}],
+    )
+    started = []
+    patch_batch_worker_processes(monkeypatch, started=started)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "batch",
+            "--config",
+            str(batch_config),
+            "--wait-port",
+            "--wait-port-timeout",
+            "10m",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(started) == 1
+    command = started[0].args
+    assert "--wait-port" in command
+    assert command[command.index("--wait-port-timeout") + 1] == "10m"
+
+
 def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
     profile = tmp_path / "urban.toml"
     profile.touch()

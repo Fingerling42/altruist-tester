@@ -5,7 +5,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Protocol
@@ -179,6 +179,12 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
     typer.echo(f"- duration: {config.duration_input} ({config.duration_seconds}s)")
     typer.echo(f"- baud: {config.baud}")
     typer.echo(f"- output_dir: {config.output_dir}")
+    typer.echo(f"- wait_port: {'yes' if config.wait_port else 'no'}")
+    if config.wait_port:
+        typer.echo(
+            f"- wait_port_timeout: {config.wait_port_timeout_input} "
+            f"({config.wait_port_timeout_seconds}s)"
+        )
     typer.echo(f"- default_config: {_format_optional_path(config.device_config)}")
     typer.echo("Devices:")
     for device in config.devices:
@@ -198,6 +204,8 @@ def _explicit_batch_config(
     baud: int,
     output_dir: Path,
     device_config: Path | None,
+    wait_port: bool,
+    wait_port_timeout: str | None,
 ) -> BatchConfig:
     if not ports:
         raise typer.BadParameter(
@@ -219,6 +227,11 @@ def _explicit_batch_config(
         duration_seconds = parse_duration_seconds(duration)
     except DurationParseError as exc:
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
+    wait_port_timeout_input = wait_port_timeout or "2m"
+    try:
+        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout_input)
+    except DurationParseError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
 
     config = BatchConfig(
         duration_input=duration,
@@ -226,6 +239,9 @@ def _explicit_batch_config(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout_input=wait_port_timeout_input,
+        wait_port_timeout_seconds=wait_port_timeout_seconds,
         devices=tuple(
             BatchDeviceConfig(
                 slot=f"device-{index:02d}",
@@ -250,6 +266,8 @@ def _load_batch_cli_config(
     baud: int,
     output_dir: Path,
     device_config: Path | None,
+    wait_port: bool,
+    wait_port_timeout: str | None,
 ) -> BatchConfig:
     if config is not None:
         if ports or duration is not None or device_config is not None:
@@ -258,9 +276,25 @@ def _load_batch_cli_config(
                 param_hint="--config",
             )
         try:
-            return load_batch_config(config)
+            batch_config = load_batch_config(config)
         except ConfigError as exc:
             raise typer.BadParameter(str(exc), param_hint="--config") from exc
+        if wait_port_timeout is not None:
+            try:
+                wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+            except DurationParseError as exc:
+                raise typer.BadParameter(
+                    str(exc),
+                    param_hint="--wait-port-timeout",
+                ) from exc
+            batch_config = replace(
+                batch_config,
+                wait_port_timeout_input=wait_port_timeout,
+                wait_port_timeout_seconds=wait_port_timeout_seconds,
+            )
+        if wait_port:
+            batch_config = replace(batch_config, wait_port=True)
+        return batch_config
 
     return _explicit_batch_config(
         ports=ports,
@@ -268,6 +302,8 @@ def _load_batch_cli_config(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout=wait_port_timeout,
     )
 
 
@@ -294,6 +330,14 @@ def _batch_worker_command(
         command.extend(["--config", str(device.effective_config)])
     if device.model is not None:
         command.extend(["--device-model", device.model])
+    if config.wait_port:
+        command.extend(
+            [
+                "--wait-port",
+                "--wait-port-timeout",
+                config.wait_port_timeout_input,
+            ]
+        )
     for sensor in device.expected_sensors:
         command.extend(["--expect-sensor", sensor])
     for metric in device.expected_metrics:
@@ -1249,6 +1293,20 @@ def batch(
             resolve_path=False,
         ),
     ] = None,
+    wait_port: Annotated[
+        bool,
+        typer.Option(
+            "--wait-port",
+            help="Pass --wait-port to every batch worker.",
+        ),
+    ] = False,
+    wait_port_timeout: Annotated[
+        str | None,
+        typer.Option(
+            "--wait-port-timeout",
+            help="Override the per-worker wait-port timeout, for example 30s or 2m.",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -1266,6 +1324,8 @@ def batch(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout=wait_port_timeout,
     )
 
     if dry_run:

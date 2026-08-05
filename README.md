@@ -371,6 +371,8 @@ Example:
 duration = "24h"
 baud = 115200
 output_dir = "runs"
+wait_port = true
+wait_port_timeout = "5m"
 
 [[devices]]
 slot = "slot-01"
@@ -418,6 +420,16 @@ Run the batch:
 uv run altruist-tester batch --config configs/batch.usb.example.toml
 ```
 
+With `wait_port = true`, each worker waits for its configured port before
+opening UART. This lets you start the batch first, then plug in or power all
+devices so boot-time `[BOOT]` and `[BUILD]` lines are captured. The same behavior
+can be enabled from CLI:
+
+```bash
+uv run altruist-tester batch --config configs/batch.usb.example.toml \
+  --wait-port --wait-port-timeout 5m
+```
+
 For a quick homogeneous batch, pass ports explicitly and use one shared tester
 profile:
 
@@ -426,7 +438,8 @@ uv run altruist-tester batch \
   --port /dev/serial/by-path/pci-0000:00:14.0-usb-0:1.1:1.0 \
   --port /dev/serial/by-path/pci-0000:00:14.0-usb-0:1.2:1.0 \
   --duration 2h \
-  --device-config configs/urban.example.toml
+  --device-config configs/urban.example.toml \
+  --wait-port
 ```
 
 Explicit port mode generates slot names as `device-01`, `device-02`, and so on.

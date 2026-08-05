@@ -45,6 +45,9 @@ class BatchConfig:
     baud: int = 115200
     output_dir: Path = Path("runs")
     device_config: Path | None = None
+    wait_port: bool = False
+    wait_port_timeout_input: str = "2m"
+    wait_port_timeout_seconds: int = 120
     devices: tuple[BatchDeviceConfig, ...] = ()
 
 
@@ -461,6 +464,16 @@ def load_batch_config(path: Path) -> BatchConfig:
             _path_value(batch.get("output_dir"), "batch.output_dir") or Path("runs"),
         ),
         device_config=default_config,
+        wait_port=_bool_value(batch.get("wait_port"), "batch.wait_port", False),
+        wait_port_timeout_input=_duration_input(
+            batch.get("wait_port_timeout", "2m"),
+            "batch.wait_port_timeout",
+        ),
+        wait_port_timeout_seconds=_duration_value(
+            batch.get("wait_port_timeout", "2m"),
+            "batch.wait_port_timeout",
+            120,
+        ),
         devices=tuple(
             _batch_device_config(
                 device,
