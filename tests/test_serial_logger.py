@@ -336,6 +336,39 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     assert stats.sensor_series.latest(("datalog", "humidity")).value == 65.99
 
 
+def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel(
+    tmp_path,
+):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            (
+                b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
+                b"payload_len=28 sample_available=1 "
+                b"sample=h:65.99,t:25.51\n"
+            ),
+            (
+                b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
+                b"encrypted=0 payload_len=28 sample_available=1 "
+                b"sample=h:65.99,t:25.51\n"
+            ),
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    samples = _read_jsonl(artifacts.samples_jsonl)
+    assert [
+        (sample["metric"], sample["value"], sample["source"]) for sample in samples
+    ] == [
+        ("humidity", 65.99, "serial_payload_datalog"),
+        ("temperature", 25.51, "serial_payload_datalog"),
+    ]
+    assert stats.sensor_samples_count == 2
+
+
 def test_capture_raw_serial_reports_progress(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(

@@ -107,18 +107,18 @@ def test_parse_encrypted_debug_payload_uses_plain_sample_only():
     ]
 
 
-def test_parse_mixed_connectivity_payload_marks_source_channel():
+def test_parse_non_datalog_payload_does_not_create_sensor_samples():
     line = (
         "[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 "
         "payload_len=280 sample_available=1 sample=h:65.15,t:25.84"
     )
+    custom_http_line = (
+        "[PAYLOAD] channel=custom-http encoding=plain encrypted=0 "
+        "payload_len=28 sample_available=1 sample=h:65.15,t:25.84"
+    )
 
-    samples = parse_sensor_values(line)
-
-    assert [(sample.metric, sample.source) for sample in samples] == [
-        ("humidity", "serial_payload_sensors_connectivity"),
-        ("temperature", "serial_payload_sensors_connectivity"),
-    ]
+    assert parse_sensor_values(line) == []
+    assert parse_sensor_values(custom_http_line) == []
 
 
 def test_parse_sensor_json_snapshot_with_uart_text_around_it():

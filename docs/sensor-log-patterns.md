@@ -120,7 +120,10 @@ Additional aliases supported by firmware:
 
 Parser guidance:
 
-- Parse sensor values only from the optional `sample=...` field.
+- Parse sensor values only from the optional `sample=...` field on
+  `channel=datalog` payloads.
+- Treat `sensors-connectivity` and `custom-http` payloads as upload/payload
+  observations, not as sensor-series input.
 - Never parse encrypted `e...` values or full transport payloads as sensor
   metrics.
 - Treat `channel`, `encoding`, `encrypted`, `payload_len`, and

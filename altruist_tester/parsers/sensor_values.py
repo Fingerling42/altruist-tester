@@ -16,6 +16,7 @@ _PAYLOAD_RE = re.compile(r"\[PAYLOAD\]\s+(?P<metadata>.+)$")
 _PAYLOAD_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
+_SENSOR_SAMPLE_PAYLOAD_CHANNELS = frozenset({"datalog"})
 
 _DATALOG_ALIASES = {
     "h": ("humidity", "%"),
@@ -150,21 +151,20 @@ def _samples_from_compact_payload(payload: str, *, source: str) -> list[SensorSa
     return samples
 
 
-def _payload_source(fields: dict[str, str]) -> str:
-    channel = fields.get("channel", "unknown").replace("-", "_")
-    return f"serial_payload_{channel}"
-
-
 def _parse_payload_line(line: str) -> list[SensorSample]:
     fields = parse_payload_metadata(line)
     if fields is None:
+        return []
+
+    channel = fields.get("channel")
+    if channel not in _SENSOR_SAMPLE_PAYLOAD_CHANNELS:
         return []
 
     sample = fields.get("sample")
     if not sample or fields.get("sample_available") == "0":
         return []
 
-    return _samples_from_compact_payload(sample, source=_payload_source(fields))
+    return _samples_from_compact_payload(sample, source="serial_payload_datalog")
 
 
 def parse_sensor_values(line: str) -> list[SensorSample]:
