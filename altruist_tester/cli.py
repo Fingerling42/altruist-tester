@@ -410,7 +410,11 @@ def _findings_count(summary: dict[str, object]) -> int | None:
     return None
 
 
-def _finding_messages(summary: dict[str, object], *, limit: int = 3) -> list[str]:
+def _finding_messages(
+    summary: dict[str, object],
+    *,
+    limit: int | None = None,
+) -> list[str]:
     findings = summary.get("findings")
     if not isinstance(findings, list):
         return []
@@ -431,7 +435,7 @@ def _finding_messages(summary: dict[str, object], *, limit: int = 3) -> list[str
                 messages.append(message)
         elif isinstance(code, str) and code:
             messages.append(code)
-        if len(messages) >= limit:
+        if limit is not None and len(messages) >= limit:
             break
     return messages
 

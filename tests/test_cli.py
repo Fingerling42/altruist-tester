@@ -942,6 +942,75 @@ port = "/dev/serial/by-path/warn"
     assert summary["devices_failed"] == 0
 
 
+def test_batch_report_lists_all_device_findings(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    output_dir = tmp_path / "batch-runs"
+    batch_config = tmp_path / "batch.toml"
+    batch_config.write_text(
+        f"""
+[batch]
+duration = "1h"
+output_dir = "{output_dir}"
+device_config = "urban.toml"
+
+[[devices]]
+slot = "slot-01"
+model = "urban"
+port = "/dev/serial/by-path/failing"
+""",
+        encoding="utf-8",
+    )
+
+    findings = [
+        {
+            "severity": "fail",
+            "code": f"CHECK_{index}",
+            "message": f"Finding {index}",
+        }
+        for index in range(1, 6)
+    ]
+
+    class FakeProcess:
+        def __init__(self, args, stdout, stderr, text):
+            output = Path(args[args.index("--output-dir") + 1])
+            run_dir = output / f"run-{output.name}"
+            run_dir.mkdir()
+            summary = {
+                "status": "failed",
+                "run_dir": str(run_dir),
+                "verdict": "FAIL",
+                "device_identity": {},
+                "findings": findings,
+                "rules": {"failed_checks": ["sensor_presence"]},
+            }
+            (run_dir / "summary.json").write_text(
+                json.dumps(summary),
+                encoding="utf-8",
+            )
+            self.returncode = 0
+            stdout.write("worker stdout\n")
+            stderr.write("worker stderr\n")
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+    result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
+
+    assert result.exit_code == 1
+    batch_dir = next(output_dir.iterdir())
+    summary = json.loads((batch_dir / "batch_summary.json").read_text())
+    assert summary["devices"][0]["findings_count"] == 5
+    assert summary["devices"][0]["finding_messages"] == [
+        f"CHECK_{index}: Finding {index}" for index in range(1, 6)
+    ]
+    report = (batch_dir / "batch_report.txt").read_text()
+    for index in range(1, 6):
+        assert f"CHECK_{index}: Finding {index}" in report
+
+
 def test_batch_warns_when_device_identity_is_missing(monkeypatch, tmp_path):
     profile = tmp_path / "urban.toml"
     profile.touch()
