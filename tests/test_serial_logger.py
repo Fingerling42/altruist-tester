@@ -302,9 +302,9 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
             b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
             b"[DATALOG] success response_len=66\n",
             b"[CONNECTIVITY] attempt channel=sensors-connectivity seq=12 "
-            b"payload_len=360 encoding=mixed\n",
+            b"region=EU host=2.connectivity.robonomics.network\n",
             b"[CONNECTIVITY] failed channel=sensors-connectivity seq=12 "
-            b"reason=http_error host=2.connectivity.robonomics.network "
+            b"reason=http_error region=EU host=2.connectivity.robonomics.network "
             b"code=500 response_len=42\n",
             b"[SUBSYSTEM] error subsystem=sensor reason=read_failed name=scd41\n",
         ],
@@ -366,8 +366,9 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
         "payload_len=324 encoding=cps owner_self_fallback=0"
     )
     assert upload_events[1]["reason"] == "encryption_failed"
-    assert upload_events[4]["reason"] == "payload_len=360 encoding=mixed"
-    assert upload_events[5]["reason"] == "http_error code=500 response_len=42"
+    assert upload_events[4]["target"] == "2.connectivity.robonomics.network"
+    assert upload_events[4]["reason"] == "region=EU"
+    assert upload_events[5]["reason"] == "http_error region=EU code=500 response_len=42"
     assert subsystem_events[0]["reason"] == "read_failed"
     assert subsystem_events[0]["details"] == {"name": "scd41"}
 
@@ -381,7 +382,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
         "encryption_failed": 1
     }
     assert stats.upload_stats.channel("connectivity").failure_reasons == {
-        "http_error code=500 response_len=42": 1
+        "http_error region=EU code=500 response_len=42": 1
     }
 
 

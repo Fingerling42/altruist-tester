@@ -4,11 +4,11 @@ from altruist_tester.parsers.upload_events import parse_upload_event
 def test_parse_connectivity_upload_lines():
     attempt = parse_upload_event(
         "[CONNECTIVITY] attempt channel=sensors-connectivity seq=42 "
-        "payload_len=128 encoding=mixed"
+        "region=EU host=2.connectivity.robonomics.network"
     )
     success = parse_upload_event(
         "[CONNECTIVITY] success channel=sensors-connectivity seq=42 "
-        "host=2.connectivity.robonomics.network code=200"
+        "region=EU host=2.connectivity.robonomics.network code=200"
     )
     failure = parse_upload_event(
         "[CONNECTIVITY] failed channel=sensors-connectivity seq=43 "
@@ -21,8 +21,8 @@ def test_parse_connectivity_upload_lines():
         "channel": "connectivity",
         "status": "attempt",
         "sequence": 42,
-        "target": None,
-        "reason": "payload_len=128 encoding=mixed",
+        "target": "2.connectivity.robonomics.network",
+        "reason": "region=EU",
     }
     assert success is not None
     assert success.as_event_payload() == {
@@ -30,7 +30,7 @@ def test_parse_connectivity_upload_lines():
         "status": "success",
         "sequence": 42,
         "target": "2.connectivity.robonomics.network",
-        "reason": "code=200",
+        "reason": "region=EU code=200",
     }
     assert failure is not None
     assert failure.as_event_payload() == {
@@ -39,6 +39,40 @@ def test_parse_connectivity_upload_lines():
         "sequence": 43,
         "target": "connectivity.robonomics.network",
         "reason": "http_error code=500 response_len=128",
+    }
+
+
+def test_parse_connectivity_upload_lines_with_optional_fields():
+    attempt = parse_upload_event(
+        "[CONNECTIVITY] attempt channel=sensors-connectivity seq=44 "
+        "payload_len=128 encoding=mixed"
+    )
+    failure = parse_upload_event(
+        "[CONNECTIVITY] failed channel=sensors-connectivity seq=45 "
+        "reason=no_server_available region=EU host=-"
+    )
+    local_failure = parse_upload_event(
+        "[CONNECTIVITY] failed channel=sensors-connectivity seq=46 "
+        "reason=wifi_disconnected"
+    )
+
+    assert attempt is not None
+    assert attempt.reason == "payload_len=128 encoding=mixed"
+    assert failure is not None
+    assert failure.as_event_payload() == {
+        "channel": "connectivity",
+        "status": "failure",
+        "sequence": 45,
+        "target": "-",
+        "reason": "no_server_available region=EU",
+    }
+    assert local_failure is not None
+    assert local_failure.as_event_payload() == {
+        "channel": "connectivity",
+        "status": "failure",
+        "sequence": 46,
+        "target": None,
+        "reason": "wifi_disconnected",
     }
 
 
