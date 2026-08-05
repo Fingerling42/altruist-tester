@@ -65,8 +65,8 @@ def test_parse_payload_metadata_after_uart_log_prefix():
 
 def test_parse_plain_payload_sample_values():
     line = (
-        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=49 "
-        "sample_available=1 sample=h:65.15,t:25.84,p:99860.91"
+        "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
+        "payload_len=49 sample_available=1 sample=h:65.15,t:25.84,p:99860.91"
     )
 
     samples = parse_sensor_values(line)
@@ -75,9 +75,27 @@ def test_parse_plain_payload_sample_values():
         (sample.sensor, sample.metric, sample.value, sample.unit, sample.source)
         for sample in samples
     ] == [
-        ("datalog", "humidity", 65.15, "%", "serial_payload_datalog"),
-        ("datalog", "temperature", 25.84, "°C", "serial_payload_datalog"),
-        ("datalog", "pressure", 99860.91, "Pa", "serial_payload_datalog"),
+        (
+            "sensors-connectivity",
+            "humidity",
+            65.15,
+            "%",
+            "serial_payload_connectivity",
+        ),
+        (
+            "sensors-connectivity",
+            "temperature",
+            25.84,
+            "°C",
+            "serial_payload_connectivity",
+        ),
+        (
+            "sensors-connectivity",
+            "pressure",
+            99860.91,
+            "Pa",
+            "serial_payload_connectivity",
+        ),
     ]
 
 
@@ -120,9 +138,23 @@ def test_parse_payload_sample_ignores_service_time_field():
     ]
 
 
-def test_parse_non_datalog_payload_does_not_create_sensor_samples():
+def test_parse_datalog_payload_remains_sensor_sample_fallback():
     line = (
-        "[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 "
+        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=49 "
+        "sample_available=1 sample=h:65.15,t:25.84"
+    )
+
+    samples = parse_sensor_values(line)
+
+    assert [(sample.sensor, sample.metric, sample.source) for sample in samples] == [
+        ("datalog", "humidity", "serial_payload_datalog"),
+        ("datalog", "temperature", "serial_payload_datalog"),
+    ]
+
+
+def test_parse_non_contract_payload_channels_do_not_create_sensor_samples():
+    line = (
+        "[PAYLOAD] channel=robonomics-map encoding=mixed encrypted=1 "
         "payload_len=280 sample_available=1 sample=h:65.15,t:25.84"
     )
     custom_http_line = (

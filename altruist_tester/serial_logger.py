@@ -15,6 +15,7 @@ from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamPars
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.payload_events import (
     PayloadObservation,
+    parse_payload_metadata,
     parse_payload_observation,
 )
 from altruist_tester.parsers.sensor_values import parse_sensor_values
@@ -477,6 +478,29 @@ def _append_sensor_samples(
     return tuple(appended_samples)
 
 
+def _select_payload_sensor_samples(
+    line: str,
+    samples: list[SensorSample],
+    *,
+    primary_payload_samples_seen: bool,
+) -> tuple[list[SensorSample], bool]:
+    if not samples:
+        return samples, primary_payload_samples_seen
+
+    fields = parse_payload_metadata(line)
+    if fields is None:
+        return samples, primary_payload_samples_seen
+
+    channel = fields.get("channel")
+    if channel == "sensors-connectivity":
+        return samples, True
+
+    if channel == "datalog" and primary_payload_samples_seen:
+        return [], primary_payload_samples_seen
+
+    return samples, primary_payload_samples_seen
+
+
 def _append_dev_metrics(
     artifacts: RunArtifacts,
     metrics: DevMetrics,
@@ -582,6 +606,7 @@ def capture_raw_serial(
     payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
+    primary_payload_samples_seen = False
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
 
@@ -685,11 +710,14 @@ def capture_raw_serial(
                     payload_observations_summary,
                 )
 
-            _append_sensor_samples(
-                artifacts,
-                parse_sensor_values(decoded_line),
-                sensor_series,
+            sensor_samples, primary_payload_samples_seen = (
+                _select_payload_sensor_samples(
+                    decoded_line,
+                    parse_sensor_values(decoded_line),
+                    primary_payload_samples_seen=primary_payload_samples_seen,
+                )
             )
+            _append_sensor_samples(artifacts, sensor_samples, sensor_series)
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)

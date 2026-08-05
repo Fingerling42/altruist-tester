@@ -212,8 +212,9 @@ Payload observations:
 - parses stable `[PAYLOAD]` lines with `channel`, `encoding`, `encrypted`,
   `payload_len`, and `sample_available` metadata;
 - extracts sensor values only from the explicit `sample=` field;
-- treats `channel=datalog` as the canonical sensor-sample source when several
-  upload channels expose the same payload, avoiding duplicated sensor series.
+- treats `channel=sensors-connectivity` as the primary sensor-sample source and
+  uses `channel=datalog` as a fallback, avoiding duplicated sensor series when
+  both channels expose the same payload.
 
 Release log contract:
 

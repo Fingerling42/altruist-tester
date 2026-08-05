@@ -352,6 +352,8 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
         ("humidity", 65.15, "serial_payload_datalog"),
         ("temperature", 25.84, "serial_payload_datalog"),
         ("co2", 723.0, "serial_payload_datalog"),
+        ("humidity", 65.15, "serial_payload_connectivity"),
+        ("temperature", 25.84, "serial_payload_connectivity"),
     ]
 
     assert [event["status"] for event in upload_events] == [
@@ -376,7 +378,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
     assert stats.boot_events.count == 1
     assert stats.dev_metrics.count == 1
     assert stats.payload_observations.count == 3
-    assert stats.sensor_samples_count == 3
+    assert stats.sensor_samples_count == 5
     assert stats.upload_stats.channel("datalog").attempts == 2
     assert stats.upload_stats.channel("datalog").failure_reasons == {
         "encryption_failed": 1
@@ -460,7 +462,7 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
                 b'"SDS":{"P1":{"value":16.3,"units":"ppm"}}}\n'
             ),
             (
-                b"[123] [INFO] [PAYLOAD] channel=datalog encoding=plain "
+                b"[123] [INFO] [PAYLOAD] channel=sensors-connectivity encoding=plain "
                 b"encrypted=0 payload_len=28 sample_available=1 "
                 b"sample=h:65.99,t:25.51,p1:16.33\n"
             ),
@@ -476,13 +478,15 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
     ] == [
         ("BME280", "temperature", 25.5),
         ("SDS", "P1", 16.3),
-        ("datalog", "humidity", 65.99),
-        ("datalog", "temperature", 25.51),
-        ("datalog", "P1", 16.33),
+        ("sensors-connectivity", "humidity", 65.99),
+        ("sensors-connectivity", "temperature", 25.51),
+        ("sensors-connectivity", "P1", 16.33),
     ]
     assert stats.sensor_samples_count == 5
     assert stats.sensor_series.latest(("BME280", "temperature")).value == 25.5
-    assert stats.sensor_series.latest(("datalog", "humidity")).value == 65.99
+    assert (
+        stats.sensor_series.latest(("sensors-connectivity", "humidity")).value == 65.99
+    )
 
 
 def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel(
@@ -493,13 +497,13 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
     serial = FakeSerial(
         [
             (
-                b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-                b"payload_len=28 sample_available=1 "
+                b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
+                b"encrypted=0 payload_len=28 sample_available=1 "
                 b"sample=h:65.99,t:25.51\n"
             ),
             (
-                b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=28 sample_available=1 "
+                b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
+                b"payload_len=28 sample_available=1 "
                 b"sample=h:65.99,t:25.51\n"
             ),
         ],
@@ -512,8 +516,8 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
     assert [
         (sample["metric"], sample["value"], sample["source"]) for sample in samples
     ] == [
-        ("humidity", 65.99, "serial_payload_datalog"),
-        ("temperature", 25.51, "serial_payload_datalog"),
+        ("humidity", 65.99, "serial_payload_connectivity"),
+        ("temperature", 25.51, "serial_payload_connectivity"),
     ]
     assert stats.sensor_samples_count == 2
     assert stats.payload_observations.count == 2
@@ -526,13 +530,13 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
     assert stats.payload_observation_records == (
         {
             "ts": stats.payload_observation_records[0]["ts"],
-            "channel": "datalog",
+            "channel": "sensors-connectivity",
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 28,
             "sample_available": True,
             "raw_fields": {
-                "channel": "datalog",
+                "channel": "sensors-connectivity",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "28",
@@ -541,13 +545,13 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
         },
         {
             "ts": stats.payload_observation_records[1]["ts"],
-            "channel": "sensors-connectivity",
+            "channel": "datalog",
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 28,
             "sample_available": True,
             "raw_fields": {
-                "channel": "sensors-connectivity",
+                "channel": "datalog",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "28",
@@ -562,8 +566,8 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
         if event["type"] == "payload_observation"
     ]
     assert len(payload_events) == 2
-    assert payload_events[0]["channel"] == "datalog"
-    assert payload_events[1]["channel"] == "sensors-connectivity"
+    assert payload_events[0]["channel"] == "sensors-connectivity"
+    assert payload_events[1]["channel"] == "datalog"
 
 
 def test_capture_raw_serial_reports_progress(tmp_path):

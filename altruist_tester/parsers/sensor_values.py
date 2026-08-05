@@ -15,7 +15,10 @@ _DATALOG_ITEM_RE = re.compile(
 )
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
-_SENSOR_SAMPLE_PAYLOAD_CHANNELS = frozenset({"datalog"})
+_SENSOR_SAMPLE_PAYLOAD_SOURCES = {
+    "datalog": "serial_payload_datalog",
+    "sensors-connectivity": "serial_payload_connectivity",
+}
 _SKIP_COMPACT_ALIASES = frozenset({"time"})
 
 _DATALOG_ALIASES = {
@@ -98,7 +101,12 @@ def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
     return samples
 
 
-def _samples_from_compact_payload(payload: str, *, source: str) -> list[SensorSample]:
+def _samples_from_compact_payload(
+    payload: str,
+    *,
+    sensor: str,
+    source: str,
+) -> list[SensorSample]:
     samples = []
     for item_match in _DATALOG_ITEM_RE.finditer(payload):
         alias = item_match.group("alias").lower()
@@ -111,7 +119,7 @@ def _samples_from_compact_payload(payload: str, *, source: str) -> list[SensorSa
 
         samples.append(
             SensorSample(
-                sensor="datalog",
+                sensor=sensor,
                 metric=metric,
                 value=value,
                 unit=unit,
@@ -128,14 +136,15 @@ def _parse_payload_line(line: str) -> list[SensorSample]:
         return []
 
     channel = fields.get("channel")
-    if channel not in _SENSOR_SAMPLE_PAYLOAD_CHANNELS:
+    source = _SENSOR_SAMPLE_PAYLOAD_SOURCES.get(str(channel))
+    if source is None:
         return []
 
     sample = fields.get("sample")
     if not sample or fields.get("sample_available") == "0":
         return []
 
-    return _samples_from_compact_payload(sample, source="serial_payload_datalog")
+    return _samples_from_compact_payload(sample, sensor=str(channel), source=source)
 
 
 def parse_sensor_values(line: str) -> list[SensorSample]:
