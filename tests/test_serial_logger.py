@@ -367,6 +367,54 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
         ("temperature", 25.51, "serial_payload_datalog"),
     ]
     assert stats.sensor_samples_count == 2
+    assert stats.payload_observations.count == 2
+    assert stats.payload_observations.by_channel == {
+        "datalog": 1,
+        "sensors-connectivity": 1,
+    }
+    assert stats.payload_observations.by_encoding == {"plain": 2}
+    assert stats.payload_observations.sample_available_count == 2
+    assert stats.payload_observation_records == (
+        {
+            "ts": stats.payload_observation_records[0]["ts"],
+            "channel": "datalog",
+            "encoding": "plain",
+            "encrypted": False,
+            "payload_len": 28,
+            "sample_available": True,
+            "raw_fields": {
+                "channel": "datalog",
+                "encoding": "plain",
+                "encrypted": "0",
+                "payload_len": "28",
+                "sample_available": "1",
+            },
+        },
+        {
+            "ts": stats.payload_observation_records[1]["ts"],
+            "channel": "sensors-connectivity",
+            "encoding": "plain",
+            "encrypted": False,
+            "payload_len": 28,
+            "sample_available": True,
+            "raw_fields": {
+                "channel": "sensors-connectivity",
+                "encoding": "plain",
+                "encrypted": "0",
+                "payload_len": "28",
+                "sample_available": "1",
+            },
+        },
+    )
+
+    payload_events = [
+        event
+        for event in _read_jsonl(artifacts.events_jsonl)
+        if event["type"] == "payload_observation"
+    ]
+    assert len(payload_events) == 2
+    assert payload_events[0]["channel"] == "datalog"
+    assert payload_events[1]["channel"] == "sensors-connectivity"
 
 
 def test_capture_raw_serial_reports_progress(tmp_path):

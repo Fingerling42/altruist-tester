@@ -7,13 +7,12 @@ import math
 import re
 from typing import Any
 
+from altruist_tester.parsers.payload_events import parse_payload_metadata
 from altruist_tester.samples import SensorSample
 
 _DATALOG_ITEM_RE = re.compile(
     r"(?P<alias>[A-Za-z][A-Za-z0-9_]*):(?P<value>[+-]?\d+(?:\.\d+)?)"
 )
-_PAYLOAD_RE = re.compile(r"\[PAYLOAD\]\s+(?P<metadata>.+)$")
-_PAYLOAD_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
 _SENSOR_SAMPLE_PAYLOAD_CHANNELS = frozenset({"datalog"})
@@ -36,37 +35,6 @@ _DATALOG_ALIASES = {
 }
 
 _JSON_DECODER = json.JSONDecoder()
-
-
-def parse_payload_metadata(line: str) -> dict[str, str] | None:
-    """Parse metadata from one stable firmware ``[PAYLOAD]`` line.
-
-    The firmware can prepend timestamps or normal log-level prefixes before
-    the stable tag, so matching intentionally searches inside the line.
-
-    :param line: Decoded UART line.
-    :returns: Parsed key/value fields, or ``None`` for non-payload lines.
-    """
-
-    match = _PAYLOAD_RE.search(line)
-    if match is None:
-        return None
-
-    metadata = match.group("metadata")
-    field_matches = list(_PAYLOAD_FIELD_RE.finditer(metadata))
-    if not field_matches:
-        return {}
-
-    fields: dict[str, str] = {}
-    for index, field_match in enumerate(field_matches):
-        value_start = field_match.end()
-        value_end = (
-            field_matches[index + 1].start()
-            if index + 1 < len(field_matches)
-            else len(metadata)
-        )
-        fields[field_match.group("key")] = metadata[value_start:value_end].strip()
-    return fields
 
 
 def _finite_float(value: Any) -> float | None:

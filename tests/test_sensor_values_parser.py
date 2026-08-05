@@ -1,9 +1,7 @@
 from pathlib import Path
 
-from altruist_tester.parsers.sensor_values import (
-    parse_payload_metadata,
-    parse_sensor_values,
-)
+from altruist_tester.parsers.payload_events import parse_payload_metadata
+from altruist_tester.parsers.sensor_values import parse_sensor_values
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dev_serial_with_sensor_values.log"
 

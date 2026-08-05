@@ -189,6 +189,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     sensor_flatlines = details.get("sensor_flatlines")
     sensor_cadence = details.get("sensor_cadence")
     subsystem_health = details.get("subsystem_health")
+    payload_observations = details.get("payload_observations")
     upload_health = details.get("upload_health")
     if isinstance(sensor_presence, dict):
         observed = sensor_presence.get("observed_metrics") or []
@@ -234,6 +235,28 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 f"({subsystem_health.get('events_count')} events, "
                 f"{subsystem_health.get('failure_count')} failures, "
                 f"{subsystem_health.get('warning_count')} warnings)",
+            ]
+        )
+    if isinstance(payload_observations, dict):
+        by_channel = payload_observations.get("payload_observations_by_channel")
+        channels = (
+            ", ".join(
+                f"{channel}={count}" for channel, count in sorted(by_channel.items())
+            )
+            if isinstance(by_channel, dict) and by_channel
+            else "none"
+        )
+        observations_count = payload_observations.get("payload_observations_count")
+        lines.extend(
+            [
+                "",
+                "Payloads:",
+                f"- observations: {observations_count}",
+                f"- channels: {channels}",
+                "- encrypted: "
+                f"{payload_observations.get('encrypted_payload_observations_count')}",
+                "- sample available: "
+                f"{payload_observations.get('sample_available_payload_observations_count')}",
             ]
         )
     if isinstance(upload_health, dict):

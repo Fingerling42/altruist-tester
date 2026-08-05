@@ -12,6 +12,10 @@ from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
+from altruist_tester.parsers.payload_events import (
+    PayloadObservation,
+    parse_payload_observation,
+)
 from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.parsers.subsystem_events import (
     SubsystemEvent,
@@ -144,6 +148,43 @@ class SubsystemEventsSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class PayloadObservationsSummary:
+    """Aggregate parsed firmware payload metadata for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    by_channel: dict[str, int] = field(default_factory=dict)
+    by_encoding: dict[str, int] = field(default_factory=dict)
+    encrypted_count: int = 0
+    sample_available_count: int = 0
+    last_observation: dict[str, Any] | None = None
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one payload observation was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "payload_observations_seen": self.seen,
+            "payload_observations_count": self.count,
+            "first_payload_observation_at": self.first_seen,
+            "last_payload_observation_at": self.last_seen,
+            "payload_observations_by_channel": self.by_channel,
+            "payload_observations_by_encoding": self.by_encoding,
+            "encrypted_payload_observations_count": self.encrypted_count,
+            "sample_available_payload_observations_count": (
+                self.sample_available_count
+            ),
+            "last_payload_observation": self.last_observation,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SerialLogStats:
     """Summary of one raw serial logging session.
 
@@ -165,6 +206,10 @@ class SerialLogStats:
         default_factory=SubsystemEventsSummary
     )
     subsystem_event_records: tuple[dict[str, object], ...] = ()
+    payload_observations: PayloadObservationsSummary = field(
+        default_factory=PayloadObservationsSummary
+    )
+    payload_observation_records: tuple[dict[str, object], ...] = ()
     keyword_alerts_count: int = 0
     keyword_alerts: tuple[dict[str, str], ...] = ()
     sensor_samples_count: int = 0
@@ -287,6 +332,34 @@ def _update_subsystem_events_summary(
     )
 
 
+def _update_payload_observations_summary(
+    summary: PayloadObservationsSummary,
+    observation: PayloadObservation,
+    event_ts: str,
+) -> PayloadObservationsSummary:
+    payload = observation.as_event_payload()
+    by_channel = summary.by_channel
+    if observation.channel is not None:
+        by_channel = _increment_counter(by_channel, observation.channel)
+
+    by_encoding = summary.by_encoding
+    if observation.encoding is not None:
+        by_encoding = _increment_counter(by_encoding, observation.encoding)
+
+    return PayloadObservationsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        by_channel=by_channel,
+        by_encoding=by_encoding,
+        encrypted_count=summary.encrypted_count
+        + (1 if observation.encrypted is True else 0),
+        sample_available_count=summary.sample_available_count
+        + (1 if observation.sample_available is True else 0),
+        last_observation=payload,
+    )
+
+
 def _append_keyword_alerts(
     artifacts: RunArtifacts,
     alerts: list[KeywordAlert],
@@ -321,6 +394,18 @@ def _append_subsystem_event(
     event = artifacts.append_event("subsystem_event", **payload)
     records.append({"ts": event["ts"], **payload})
     return _update_subsystem_events_summary(summary, subsystem_event, event["ts"])
+
+
+def _append_payload_observation(
+    artifacts: RunArtifacts,
+    observation: PayloadObservation,
+    records: list[dict[str, object]],
+    summary: PayloadObservationsSummary,
+) -> PayloadObservationsSummary:
+    payload = observation.as_event_payload()
+    event = artifacts.append_event("payload_observation", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_payload_observations_summary(summary, observation, event["ts"])
 
 
 def _append_sensor_samples(
@@ -435,6 +520,8 @@ def capture_raw_serial(
     boot_event_records: list[dict[str, object]] = []
     subsystem_events_summary = SubsystemEventsSummary()
     subsystem_event_records: list[dict[str, object]] = []
+    payload_observations_summary = PayloadObservationsSummary()
+    payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
     upload_stats = UploadStats()
@@ -522,6 +609,15 @@ def capture_raw_serial(
                     detect_keyword_alerts(decoded_line),
                 )
             )
+            payload_observation = parse_payload_observation(decoded_line)
+            if payload_observation is not None:
+                payload_observations_summary = _append_payload_observation(
+                    artifacts,
+                    payload_observation,
+                    payload_observation_records,
+                    payload_observations_summary,
+                )
+
             _append_sensor_samples(
                 artifacts,
                 parse_sensor_values(decoded_line),
@@ -559,6 +655,8 @@ def capture_raw_serial(
         boot_event_records=tuple(boot_event_records),
         subsystem_events=subsystem_events_summary,
         subsystem_event_records=tuple(subsystem_event_records),
+        payload_observations=payload_observations_summary,
+        payload_observation_records=tuple(payload_observation_records),
         keyword_alerts_count=len(keyword_alerts),
         keyword_alerts=tuple(keyword_alerts),
         sensor_samples_count=sensor_series.count(),

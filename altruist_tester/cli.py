@@ -1427,6 +1427,8 @@ def run(
         "boot_event_records": list(stats.boot_event_records),
         "subsystem_events": stats.subsystem_events.as_dict(),
         "subsystem_event_records": list(stats.subsystem_event_records),
+        "payload_observations": stats.payload_observations.as_dict(),
+        "payload_observation_records": list(stats.payload_observation_records),
         "keyword_alerts_count": stats.keyword_alerts_count,
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,
