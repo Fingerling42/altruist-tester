@@ -11,6 +11,31 @@ from tests.cli_helpers import (
 )
 
 
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list | tuple):
+        return f"[{', '.join(_toml_value(item) for item in value)}]"
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _write_batch_config(
+    path,
+    *,
+    batch: dict[str, object],
+    devices: list[dict[str, object]],
+) -> None:
+    lines = ["[batch]"]
+    lines.extend(f"{key} = {_toml_value(value)}" for key, value in batch.items())
+    for device in devices:
+        lines.extend(("", "[[devices]]"))
+        lines.extend(f"{key} = {_toml_value(value)}" for key, value in device.items())
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def test_batch_dry_run_prints_planned_device_runs(monkeypatch, tmp_path):
     urban_profile = tmp_path / "urban.toml"
     insight_profile = tmp_path / "insight.toml"
@@ -20,26 +45,23 @@ def test_batch_dry_run_prints_planned_device_runs(monkeypatch, tmp_path):
     urban_port.touch()
     insight_port = tmp_path / "ttyACM1"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "24h"
-baud = 9600
-output_dir = "batch-runs"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "{urban_port}"
-config = "urban.toml"
-
-[[devices]]
-slot = "slot-02"
-model = "insight"
-port = "{insight_port}"
-config = "insight.toml"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "24h", "baud": 9600, "output_dir": "batch-runs"},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": urban_port,
+                "config": "urban.toml",
+            },
+            {
+                "slot": "slot-02",
+                "model": "insight",
+                "port": insight_port,
+                "config": "insight.toml",
+            },
+        ],
     )
     monkeypatch.setattr(
         "altruist_tester.cli.list_serial_ports",
@@ -183,18 +205,16 @@ def test_batch_rejects_config_mixed_with_explicit_ports(tmp_path):
     profile = tmp_path / "urban.toml"
     profile.touch()
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-device_config = "{profile}"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/slot-01"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "1h", "device_config": profile},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/slot-01",
+            }
+        ],
     )
 
     result = CliRunner().invoke(
@@ -220,28 +240,25 @@ def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):
     insight_profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "24h"
-baud = 9600
-output_dir = "{output_dir}"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/urban"
-config = "urban.toml"
-
-[[devices]]
-slot = "slot-02"
-model = "insight"
-port = "/dev/serial/by-path/insight"
-config = "insight.toml"
-expected_sensors = ["scd41"]
-expected_metrics = ["co2"]
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "24h", "baud": 9600, "output_dir": output_dir},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/urban",
+                "config": "urban.toml",
+            },
+            {
+                "slot": "slot-02",
+                "model": "insight",
+                "port": "/dev/serial/by-path/insight",
+                "config": "insight.toml",
+                "expected_sensors": ["scd41"],
+                "expected_metrics": ["co2"],
+            },
+        ],
     )
     started = []
     patch_batch_worker_processes(monkeypatch, started=started)
@@ -291,24 +308,25 @@ def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/slot-01"
-
-[[devices]]
-slot = "slot-02"
-model = "urban"
-port = "/dev/serial/by-path/slot-02"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/slot-01",
+            },
+            {
+                "slot": "slot-02",
+                "model": "urban",
+                "port": "/dev/serial/by-path/slot-02",
+            },
+        ],
     )
 
     class FakeProcess:
@@ -347,24 +365,25 @@ def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/completes"
-
-[[devices]]
-slot = "slot-02"
-model = "urban"
-port = "/dev/serial/by-path/running"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/completes",
+            },
+            {
+                "slot": "slot-02",
+                "model": "urban",
+                "port": "/dev/serial/by-path/running",
+            },
+        ],
     )
     processes = []
 
@@ -435,25 +454,23 @@ def test_batch_returns_failure_when_any_worker_fails(monkeypatch, tmp_path):
     insight_profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/urban"
-config = "urban.toml"
-
-[[devices]]
-slot = "slot-02"
-model = "insight"
-port = "/dev/serial/by-path/insight"
-config = "insight.toml"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "1h", "output_dir": output_dir},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/urban",
+                "config": "urban.toml",
+            },
+            {
+                "slot": "slot-02",
+                "model": "insight",
+                "port": "/dev/serial/by-path/insight",
+                "config": "insight.toml",
+            },
+        ],
     )
     returncodes = {
         "/dev/serial/by-path/urban": 0,
@@ -484,25 +501,23 @@ def test_batch_collects_per_device_summary_results(monkeypatch, tmp_path):
     insight_profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/urban"
-config = "urban.toml"
-
-[[devices]]
-slot = "slot-02"
-model = "insight"
-port = "/dev/serial/by-path/insight"
-config = "insight.toml"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "1h", "output_dir": output_dir},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/urban",
+                "config": "urban.toml",
+            },
+            {
+                "slot": "slot-02",
+                "model": "insight",
+                "port": "/dev/serial/by-path/insight",
+                "config": "insight.toml",
+            },
+        ],
     )
 
     patch_batch_worker_processes(
@@ -623,24 +638,25 @@ def test_batch_summary_verdict_warns_without_failures(monkeypatch, tmp_path):
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/pass"
-
-[[devices]]
-slot = "slot-02"
-model = "urban"
-port = "/dev/serial/by-path/warn"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/pass",
+            },
+            {
+                "slot": "slot-02",
+                "model": "urban",
+                "port": "/dev/serial/by-path/warn",
+            },
+        ],
     )
     patch_batch_worker_processes(
         monkeypatch,
@@ -673,19 +689,20 @@ def test_batch_report_lists_all_device_findings(monkeypatch, tmp_path):
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/failing"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/failing",
+            }
+        ],
     )
 
     findings = [
@@ -728,19 +745,20 @@ def test_batch_warns_when_device_identity_is_missing(monkeypatch, tmp_path):
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/urban"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/urban",
+            }
+        ],
     )
     patch_batch_worker_processes(
         monkeypatch,
@@ -779,24 +797,25 @@ def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_pa
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/missing"
-
-[[devices]]
-slot = "slot-02"
-model = "urban"
-port = "/dev/serial/by-path/working"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/missing",
+            },
+            {
+                "slot": "slot-02",
+                "model": "urban",
+                "port": "/dev/serial/by-path/working",
+            },
+        ],
     )
     returncodes = {
         "/dev/serial/by-path/missing": 2,
@@ -830,24 +849,25 @@ def test_batch_records_worker_start_failure_and_continues(monkeypatch, tmp_path)
     profile.touch()
     output_dir = tmp_path / "batch-runs"
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        f"""
-[batch]
-duration = "1h"
-output_dir = "{output_dir}"
-device_config = "urban.toml"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/start-fails"
-
-[[devices]]
-slot = "slot-02"
-model = "urban"
-port = "/dev/serial/by-path/working"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={
+            "duration": "1h",
+            "output_dir": output_dir,
+            "device_config": "urban.toml",
+        },
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/start-fails",
+            },
+            {
+                "slot": "slot-02",
+                "model": "urban",
+                "port": "/dev/serial/by-path/working",
+            },
+        ],
     )
     patch_batch_worker_processes(
         monkeypatch,
@@ -878,17 +898,16 @@ port = "/dev/serial/by-path/working"
 
 def test_batch_dry_run_rejects_invalid_config(tmp_path):
     batch_config = tmp_path / "batch.toml"
-    batch_config.write_text(
-        """
-[batch]
-duration = "1h"
-
-[[devices]]
-slot = "slot-01"
-model = "urban"
-port = "/dev/serial/by-path/slot-01"
-""",
-        encoding="utf-8",
+    _write_batch_config(
+        batch_config,
+        batch={"duration": "1h"},
+        devices=[
+            {
+                "slot": "slot-01",
+                "model": "urban",
+                "port": "/dev/serial/by-path/slot-01",
+            }
+        ],
     )
 
     result = CliRunner().invoke(
