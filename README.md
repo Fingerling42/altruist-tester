@@ -49,6 +49,18 @@ Run against an explicit port:
 uv run altruist-tester run --port /dev/ttyACM0 --duration 10m
 ```
 
+To catch boot-time `[BOOT]` and `[BUILD]` lines, start the tester before
+plugging in or powering the device:
+
+```bash
+uv run altruist-tester run --auto --wait-port --duration 24h \
+  --config configs/urban.example.toml \
+  --device-model urban
+```
+
+`--wait-port` waits up to 2 minutes by default. Change that with
+`--wait-port-timeout`, for example `--wait-port-timeout 5m`.
+
 Use `--output-dir` to write artifacts somewhere other than `runs/`:
 
 ```bash

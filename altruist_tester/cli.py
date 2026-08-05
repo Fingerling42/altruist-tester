@@ -1004,6 +1004,85 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
     raise typer.Exit(code=2)
 
 
+def _wait_for_explicit_port(
+    port: Path,
+    *,
+    timeout_seconds: int,
+    poll_interval_seconds: float = 0.25,
+) -> Path:
+    if port.exists():
+        return port
+
+    typer.echo(f"Waiting up to {_format_elapsed(timeout_seconds)} for {port}...")
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval_seconds)
+        if port.exists():
+            typer.echo(f"Serial port appeared: {port}")
+            return port
+
+    typer.secho(
+        f"Serial port did not appear within {_format_elapsed(timeout_seconds)}: {port}",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _wait_for_auto_port(
+    *,
+    timeout_seconds: int,
+    poll_interval_seconds: float = 0.25,
+) -> Path:
+    port_infos = list_serial_ports()
+    if len(port_infos) == 1:
+        return Path(port_infos[0].device)
+    if len(port_infos) > 1:
+        _resolve_run_port(None, auto=True)
+
+    typer.echo(
+        f"Waiting up to {_format_elapsed(timeout_seconds)} for one serial port..."
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval_seconds)
+        port_infos = list_serial_ports()
+        if len(port_infos) == 1:
+            resolved_port = Path(port_infos[0].device)
+            typer.echo(f"Serial port appeared: {resolved_port}")
+            return resolved_port
+        if len(port_infos) > 1:
+            _resolve_run_port(None, auto=True)
+
+    typer.secho(
+        f"No serial ports found within {_format_elapsed(timeout_seconds)}.",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _resolve_or_wait_for_run_port(
+    port: Path | None,
+    auto: bool,
+    *,
+    wait_port: bool,
+    wait_port_timeout_seconds: int,
+) -> Path:
+    if not wait_port:
+        return _resolve_run_port(port, auto)
+    if port is not None and auto:
+        raise typer.BadParameter("Use either --port or --auto, not both.")
+    if port is not None:
+        return _wait_for_explicit_port(
+            port,
+            timeout_seconds=wait_port_timeout_seconds,
+        )
+    if not auto:
+        raise typer.BadParameter("Specify --port or --auto.")
+    return _wait_for_auto_port(timeout_seconds=wait_port_timeout_seconds)
+
+
 def _append_check_message(message: str, check_message: str) -> str:
     return f"{message} {check_message}."
 
@@ -1226,6 +1305,20 @@ def run(
             help="Use the only detected serial port.",
         ),
     ] = False,
+    wait_port: Annotated[
+        bool,
+        typer.Option(
+            "--wait-port",
+            help="Wait for the selected serial port to appear before starting.",
+        ),
+    ] = False,
+    wait_port_timeout: Annotated[
+        str,
+        typer.Option(
+            "--wait-port-timeout",
+            help="Maximum time to wait for --wait-port, for example 30s or 2m.",
+        ),
+    ] = "2m",
     duration: Annotated[
         str,
         typer.Option(
@@ -1307,7 +1400,17 @@ def run(
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
 
     try:
-        resolved_port = _resolve_run_port(port, auto)
+        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+    except DurationParseError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
+
+    try:
+        resolved_port = _resolve_or_wait_for_run_port(
+            port,
+            auto,
+            wait_port=wait_port,
+            wait_port_timeout_seconds=wait_port_timeout_seconds,
+        )
     except typer.BadParameter as exc:
         raise typer.BadParameter(str(exc), param_hint="--port") from exc
 

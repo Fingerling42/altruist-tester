@@ -124,6 +124,87 @@ def test_run_auto_rejects_multiple_detected_ports(monkeypatch):
     assert "/dev/ttyUSB0" in output
 
 
+def test_run_wait_port_waits_for_explicit_port(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    output_dir = tmp_path / "runs"
+    opened = {}
+    sleep_calls = {"count": 0}
+    stats = release_log_stats(lines_read=1, bytes_read=10)
+    patch_cli_capture(monkeypatch, stats, opened=opened)
+
+    def fake_sleep(seconds):
+        sleep_calls["count"] += 1
+        port.touch()
+
+    monkeypatch.setattr("altruist_tester.cli.time.sleep", fake_sleep)
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--wait-port",
+            "--wait-port-timeout",
+            "5s",
+            "--duration",
+            "5s",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert sleep_calls["count"] == 1
+    assert opened["path"] == str(port)
+    assert f"Serial port appeared: {port}" in result.output
+
+
+def test_run_auto_wait_port_waits_for_single_detected_port(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    output_dir = tmp_path / "runs"
+    opened = {}
+    sleep_calls = {"count": 0}
+    patch_cli_capture(
+        monkeypatch,
+        release_log_stats(lines_read=1, bytes_read=10),
+        opened=opened,
+    )
+
+    def fake_sleep(seconds):
+        sleep_calls["count"] += 1
+        port.touch()
+
+    def fake_ports():
+        if port.exists():
+            return [SerialPortInfo(device=str(port), description="waited port")]
+        return []
+
+    monkeypatch.setattr("altruist_tester.cli.time.sleep", fake_sleep)
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", fake_ports)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--auto",
+            "--wait-port",
+            "--wait-port-timeout",
+            "5s",
+            "--duration",
+            "5s",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert sleep_calls["count"] == 1
+    assert opened["path"] == str(port)
+    assert f"Serial port appeared: {port}" in result.output
+
+
 def test_run_accepts_valid_options(monkeypatch, tmp_path):
     port = tmp_path / "ttyACM0"
     port.touch()
