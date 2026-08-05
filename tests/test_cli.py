@@ -351,7 +351,7 @@ def test_batch_explicit_ports_run_uses_shared_device_config(monkeypatch, tmp_pat
             stderr.write("worker stderr\n")
             started.append(self)
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -485,7 +485,7 @@ expected_metrics = ["co2"]
             stderr.write("worker stderr\n")
             started.append(self)
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -709,7 +709,7 @@ config = "insight.toml"
             stdout.write(f"stdout {port}\n")
             stderr.write(f"stderr {port}\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -811,7 +811,7 @@ config = "insight.toml"
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -924,7 +924,7 @@ port = "/dev/serial/by-path/warn"
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -992,7 +992,7 @@ port = "/dev/serial/by-path/failing"
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -1048,7 +1048,7 @@ port = "/dev/serial/by-path/urban"
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -1111,7 +1111,7 @@ port = "/dev/serial/by-path/working"
             stdout.write(f"stdout {port}\n")
             stderr.write(f"stderr {port}\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
@@ -1169,7 +1169,7 @@ port = "/dev/serial/by-path/working"
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
 
-        def wait(self):
+        def poll(self):
             return self.returncode
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)

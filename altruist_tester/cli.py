@@ -706,17 +706,11 @@ def _emit_batch_progress(
 
 
 def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
-    poll = getattr(worker.process, "poll", None)
-    if callable(poll):
-        return poll()
-    return worker.process.wait()
+    return worker.process.poll()
 
 
 def _process_current_returncode(process: subprocess.Popen[str]) -> int | None:
-    poll = getattr(process, "poll", None)
-    if callable(poll):
-        return poll()
-    return getattr(process, "returncode", None)
+    return process.poll()
 
 
 def _interrupted_worker_result(
@@ -761,9 +755,7 @@ def _terminate_batch_workers(
 
     typer.echo("Stopping running batch workers...", err=True)
     for worker in running_workers:
-        terminate = getattr(worker.process, "terminate", None)
-        if callable(terminate):
-            terminate()
+        worker.process.terminate()
 
     deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
     while time.monotonic() < deadline:
@@ -777,9 +769,7 @@ def _terminate_batch_workers(
     for worker in running_workers:
         returncode = _process_current_returncode(worker.process)
         if returncode is None:
-            kill = getattr(worker.process, "kill", None)
-            if callable(kill):
-                kill()
+            worker.process.kill()
             returncode = _process_current_returncode(worker.process)
         worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
 
