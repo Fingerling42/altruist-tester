@@ -219,6 +219,44 @@ def test_evaluate_rules_fails_on_firmware_sensor_json_overflow_event():
     assert result.findings[-1].code == "SUBSYSTEM_SENSOR_JSON_OVERFLOW_FAIL"
 
 
+def test_evaluate_rules_fails_on_wifi_config_portal_timeout_event():
+    event = parse_subsystem_event(
+        "[SUBSYSTEM] error subsystem=wifi reason=config_timeout"
+    )
+
+    assert event is not None
+
+    stats = SerialLogStats(
+        lines_read=10,
+        bytes_read=100,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=50.0,
+        max_interline_gap_seconds=10.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            _sample("BME280", "temperature", 24.0, 0),
+            _sample("BME280", "temperature", 24.5, 60),
+        ),
+        subsystem_event_records=(event.as_event_payload(),),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("temperature",),
+            duration_seconds=60,
+        ),
+    )
+
+    assert result.verdict == "FAIL"
+    assert "subsystem_health" in result.failed_checks
+    assert result.reports.subsystem_health.by_reason == {"config_timeout": 1}
+    assert result.findings[-1].code == "SUBSYSTEM_WIFI_CONFIG_TIMEOUT_FAIL"
+
+
 def test_evaluate_rules_can_require_upload_success():
     stats = SerialLogStats(
         lines_read=10,

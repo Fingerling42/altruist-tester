@@ -10,6 +10,7 @@ UploadMode = Literal["disabled", "optional", "required"]
 _SUBSYSTEM_OVERRIDES: dict[tuple[str, str, str], RuleSeverity] = {
     ("event", "wifi", "sta_recovery"): "warn",
     ("event", "wifi", "sta_recovery_reboot"): "fail",
+    ("error", "wifi", "config_timeout"): "fail",
     ("error", "display", "epd_stuck"): "warn",
     ("error", "display", "busy_timeout"): "warn",
 }

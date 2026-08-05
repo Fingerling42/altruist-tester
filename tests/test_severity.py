@@ -83,3 +83,14 @@ def test_subsystem_severity_mapping_fails_recovery_reboots():
         )
         == "fail"
     )
+
+
+def test_subsystem_severity_mapping_fails_wifi_config_timeout():
+    assert (
+        severity_for_subsystem_event(
+            level="error",
+            subsystem="wifi",
+            reason="config_timeout",
+        )
+        == "fail"
+    )
