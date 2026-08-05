@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from altruist_tester.parsers.subsystem_events import parse_subsystem_event
 from altruist_tester.parsers.upload_events import UploadEvent
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
 from altruist_tester.rules.uploads import UploadChannelConfig
@@ -177,6 +178,45 @@ def test_evaluate_rules_includes_subsystem_health_findings():
     assert result.reports.subsystem_health.status == "fail"
     assert result.findings[-1].code == "SUBSYSTEM_SD_OPEN_APPEND_FAILED_FAIL"
     assert result.findings[-1].rule == "subsystem_health"
+
+
+def test_evaluate_rules_fails_on_firmware_sensor_json_overflow_event():
+    event = parse_subsystem_event(
+        "[SUBSYSTEM] error subsystem=sensor reason=json_overflow "
+        "sensor=BME680 memory=4082 capacity=4096"
+    )
+
+    assert event is not None
+
+    stats = SerialLogStats(
+        lines_read=10,
+        bytes_read=100,
+        first_line_elapsed_seconds=1.0,
+        last_line_elapsed_seconds=50.0,
+        max_interline_gap_seconds=10.0,
+        dev_metrics_records=(
+            {"boot": 1, "uptime_sec": 10},
+            {"boot": 1, "uptime_sec": 20},
+        ),
+        sensor_series=_series(
+            _sample("BME680", "temperature", 24.0, 0),
+            _sample("BME680", "temperature", 24.5, 60),
+        ),
+        subsystem_event_records=(event.as_event_payload(),),
+    )
+
+    result = evaluate_rules(
+        stats,
+        RuleEngineConfig(
+            expected_metrics=("temperature",),
+            duration_seconds=60,
+        ),
+    )
+
+    assert result.verdict == "FAIL"
+    assert "subsystem_health" in result.failed_checks
+    assert result.reports.subsystem_health.by_reason == {"json_overflow": 1}
+    assert result.findings[-1].code == "SUBSYSTEM_SENSOR_JSON_OVERFLOW_FAIL"
 
 
 def test_evaluate_rules_can_require_upload_success():
