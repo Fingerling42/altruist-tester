@@ -3,7 +3,7 @@ from pathlib import Path
 from altruist_tester.parsers.payload_events import parse_payload_metadata
 from altruist_tester.parsers.sensor_values import parse_sensor_values
 
-FIXTURE = Path(__file__).parent / "fixtures" / "dev_serial_with_sensor_values.log"
+FIXTURE = Path(__file__).parent / "fixtures" / "sensor_json_snapshots.log"
 
 
 def test_parse_sensor_json_snapshot_from_fixture():
