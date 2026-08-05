@@ -146,6 +146,28 @@ def _finding(
     )
 
 
+def _warning(
+    *,
+    channel: UploadChannel,
+    code: str,
+    message: str,
+) -> UploadFinding:
+    return UploadFinding(
+        status="warn",
+        channel=channel,
+        code=code,
+        message=message,
+    )
+
+
+def _warning_reasons_text(stats: UploadChannelStats) -> str:
+    if not stats.warning_reasons:
+        return "unknown"
+    return ", ".join(
+        f"{reason}={count}" for reason, count in sorted(stats.warning_reasons.items())
+    )
+
+
 def _check_channel(
     stats: UploadChannelStats,
     config: UploadChannelConfig,
@@ -170,6 +192,17 @@ def _check_channel(
         )
 
     findings: list[UploadFinding] = []
+    if stats.warnings:
+        findings.append(
+            _warning(
+                channel=stats.channel,
+                code="UPLOAD_LOG_SEQUENCE_WARNING",
+                message=(
+                    f"{stats.channel} upload log sequence has {stats.warnings} "
+                    f"warning(s): {_warning_reasons_text(stats)}"
+                ),
+            )
+        )
     if not stats.observed:
         findings.append(
             _finding(

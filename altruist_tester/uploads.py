@@ -65,8 +65,10 @@ class UploadChannelStats:
             self.targets.add(event.target)
 
         if event.status == "attempt":
-            if self.channel == "datalog" and self._pending_attempt:
-                return
+            if self._pending_attempt:
+                self.warnings += 1
+                reason = "attempt_without_previous_outcome"
+                self.warning_reasons[reason] = self.warning_reasons.get(reason, 0) + 1
             self.attempts += 1
             self._pending_attempt = True
             return

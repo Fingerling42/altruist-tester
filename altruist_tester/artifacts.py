@@ -188,6 +188,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     sensor_ranges = details.get("sensor_ranges")
     sensor_flatlines = details.get("sensor_flatlines")
     sensor_cadence = details.get("sensor_cadence")
+    urban_pm = details.get("urban_pm")
     firmware_build = details.get("firmware_build")
     subsystem_health = details.get("subsystem_health")
     payload_observations = details.get("payload_observations")
@@ -225,6 +226,13 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             f"{sensor_cadence.get('status')} "
             f"({sensor_cadence.get('failure_count')} failures, "
             f"{sensor_cadence.get('warning_count')} warnings)"
+        )
+    if isinstance(urban_pm, dict):
+        lines.append(
+            "- urban pm: "
+            f"{urban_pm.get('status')} "
+            f"({urban_pm.get('checked_series_count')} series, "
+            f"{urban_pm.get('warning_count')} warnings)"
         )
     if isinstance(firmware_build, dict):
         build = firmware_build.get("last_build_event")

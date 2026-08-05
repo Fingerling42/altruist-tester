@@ -274,6 +274,11 @@ def test_write_report_includes_final_pass_details(tmp_path):
                 "failure_count": 0,
                 "warning_count": 0,
             },
+            "urban_pm": {
+                "status": "warn",
+                "checked_series_count": 2,
+                "warning_count": 1,
+            },
         },
     )
 
@@ -283,6 +288,7 @@ def test_write_report_includes_final_pass_details(tmp_path):
     assert "Findings:\n- none" in report
     assert "- last dev metrics: status=ALIVE, uptime=300s" in report
     assert "- observed metrics: humidity, temperature" in report
+    assert "- urban pm: warn (2 series, 1 warnings)" in report
 
 
 def test_write_report_includes_final_fail_details(tmp_path):

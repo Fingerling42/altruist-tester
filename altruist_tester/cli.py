@@ -1054,10 +1054,13 @@ def _report_messages(rule_result: RuleEngineResult) -> tuple[RuleReportMessage, 
     reports = rule_result.reports
     return (
         reports.sensor_presence,
+        reports.sensor_ranges,
         reports.sensor_flatlines,
         reports.sensor_cadence,
+        reports.urban_pm,
         reports.runtime_counters,
         reports.serial_silence,
+        reports.log_contract,
         reports.subsystem_health,
         reports.upload_health,
     )
@@ -1388,6 +1391,7 @@ def run(
     log_contract = rule_result.reports.log_contract
     subsystem_health = rule_result.reports.subsystem_health
     upload_health = rule_result.reports.upload_health
+    urban_pm = rule_result.reports.urban_pm
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -1449,6 +1453,7 @@ def run(
         "subsystem_health": subsystem_health.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
         "upload_health": upload_health.as_dict(),
+        "urban_pm": urban_pm.as_dict(),
         "device_identity": final_device_identity,
     }
     artifacts.write_summary(
