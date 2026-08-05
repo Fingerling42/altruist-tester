@@ -9,10 +9,11 @@ from typing import Any
 
 from altruist_tester.samples import SensorSample
 
-_DATALOG_RE = re.compile(r"\bDatalog data:\s*:?\s*(?P<payload>.+)$")
 _DATALOG_ITEM_RE = re.compile(
     r"(?P<alias>[A-Za-z][A-Za-z0-9_]*):(?P<value>[+-]?\d+(?:\.\d+)?)"
 )
+_PAYLOAD_RE = re.compile(r"\[PAYLOAD\]\s+(?P<metadata>.+)$")
+_PAYLOAD_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
 
@@ -34,6 +35,37 @@ _DATALOG_ALIASES = {
 }
 
 _JSON_DECODER = json.JSONDecoder()
+
+
+def parse_payload_metadata(line: str) -> dict[str, str] | None:
+    """Parse metadata from one stable firmware ``[PAYLOAD]`` line.
+
+    The firmware can prepend timestamps or normal log-level prefixes before
+    the stable tag, so matching intentionally searches inside the line.
+
+    :param line: Decoded UART line.
+    :returns: Parsed key/value fields, or ``None`` for non-payload lines.
+    """
+
+    match = _PAYLOAD_RE.search(line)
+    if match is None:
+        return None
+
+    metadata = match.group("metadata")
+    field_matches = list(_PAYLOAD_FIELD_RE.finditer(metadata))
+    if not field_matches:
+        return {}
+
+    fields: dict[str, str] = {}
+    for index, field_match in enumerate(field_matches):
+        value_start = field_match.end()
+        value_end = (
+            field_matches[index + 1].start()
+            if index + 1 < len(field_matches)
+            else len(metadata)
+        )
+        fields[field_match.group("key")] = metadata[value_start:value_end].strip()
+    return fields
 
 
 def _finite_float(value: Any) -> float | None:
@@ -96,13 +128,9 @@ def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
     return samples
 
 
-def _parse_datalog_line(line: str) -> list[SensorSample]:
-    match = _DATALOG_RE.search(line)
-    if match is None:
-        return []
-
+def _samples_from_compact_payload(payload: str, *, source: str) -> list[SensorSample]:
     samples = []
-    for item_match in _DATALOG_ITEM_RE.finditer(match.group("payload")):
+    for item_match in _DATALOG_ITEM_RE.finditer(payload):
         alias = item_match.group("alias").lower()
         metric, unit = _DATALOG_ALIASES.get(alias, (alias, None))
         value = _finite_float(item_match.group("value"))
@@ -115,24 +143,42 @@ def _parse_datalog_line(line: str) -> list[SensorSample]:
                 metric=metric,
                 value=value,
                 unit=unit,
-                source="serial_datalog",
+                source=source,
             )
         )
 
     return samples
 
 
+def _payload_source(fields: dict[str, str]) -> str:
+    channel = fields.get("channel", "unknown").replace("-", "_")
+    return f"serial_payload_{channel}"
+
+
+def _parse_payload_line(line: str) -> list[SensorSample]:
+    fields = parse_payload_metadata(line)
+    if fields is None:
+        return []
+
+    sample = fields.get("sample")
+    if not sample or fields.get("sample_available") == "0":
+        return []
+
+    return _samples_from_compact_payload(sample, source=_payload_source(fields))
+
+
 def parse_sensor_values(line: str) -> list[SensorSample]:
     """Parse zero or more sensor samples from one serial line.
 
-    Supports JSON sensor snapshots and compact ``Datalog data`` lines printed
-    by firmware logs. Unknown datalog aliases are preserved as metric
-    names so new firmware values can still be inspected in artifacts.
+    Supports JSON sensor snapshots and the stable firmware ``[PAYLOAD]``
+    contract. Unknown compact aliases inside ``sample=`` are preserved as
+    metric names so new firmware values can still be inspected in artifacts.
     """
 
     json_samples = _parse_json_sensor_snapshots(line)
     if json_samples:
         return json_samples
-    # The compact datalog form is a fallback for firmware lines that are not
-    # valid JSON snapshots.
-    return _parse_datalog_line(line)
+    payload_samples = _parse_payload_line(line)
+    if payload_samples:
+        return payload_samples
+    return []

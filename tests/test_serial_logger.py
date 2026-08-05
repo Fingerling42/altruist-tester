@@ -310,7 +310,11 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
                 b'"BME280":{"temperature":{"value":25.5,"units":"C"}},'
                 b'"SDS":{"P1":{"value":16.3,"units":"ppm"}}}\n'
             ),
-            b"[123] [INFO] Datalog data: : h:65.99,t:25.51,p1:16.33\n",
+            (
+                b"[123] [INFO] [PAYLOAD] channel=datalog encoding=plain "
+                b"encrypted=0 payload_len=28 sample_available=1 "
+                b"sample=h:65.99,t:25.51,p1:16.33\n"
+            ),
         ],
         clock,
     )
