@@ -2,10 +2,12 @@
 
 Python burn-in tester for assembled Altruist devices.
 
-The current workflow tests one device connected over USB-C serial to a Linux
-host, Raspberry Pi, or development machine. The tester captures raw firmware
-logs, parses development metrics and sensor values, evaluates health rules, and
-writes machine-readable and human-readable run artifacts.
+The single-device workflow tests one device connected over USB-C serial to a
+Linux host, Raspberry Pi, or development machine. Batch mode runs the same
+single-device worker for several USB-connected devices at once. The tester
+captures raw firmware logs, parses health, build, payload, upload, and sensor
+observations, evaluates health rules, and writes machine-readable and
+human-readable artifacts.
 
 Firmware builds with health telemetry emit a compact snapshot once per minute:
 
@@ -66,7 +68,8 @@ Urban:
 
 ```bash
 uv run altruist-tester run --auto --duration 24h \
-  --config configs/urban.example.toml
+  --config configs/urban.example.toml \
+  --device-model urban
 ```
 
 The Urban profile expects:
@@ -79,7 +82,8 @@ Insight:
 
 ```bash
 uv run altruist-tester run --auto --duration 24h \
-  --config configs/insight.example.toml
+  --config configs/insight.example.toml \
+  --device-model insight
 ```
 
 The Insight profile expects:
@@ -110,6 +114,10 @@ uv run altruist-tester run --auto --duration 10m \
 
 `--expect-sensor` and `--expect-metric` can be repeated and can be combined with
 `--config`. CLI expectations are added to expectations from the config file.
+
+`--device-model` is an explicit hint for model-specific checks, for example
+Urban particulate-matter warnings. Profiles define expected sensors and
+thresholds; the model hint says which physical Altruist variant is under test.
 
 If no expectations are configured, the run can still complete, but
 `summary.json` records a warning because the tester cannot know which sensor
@@ -169,7 +177,7 @@ Update cadence:
 
 Runtime counters:
 
-- checks that development-metrics uptime does not decrease;
+- checks that parsed health/runtime uptime does not decrease;
 - checks that the boot counter does not increase during the run;
 - records an initial boot counter greater than `1`, but does not fail the run
   for that alone.
@@ -191,11 +199,21 @@ Upload delivery:
 - parses stable `[CONNECTIVITY]` upload attempts, successes, failures, targets,
   and failure reasons;
 - parses stable `[DATALOG]` upload attempts, successes, failures, payload
-  metadata, and response lengths;
+  metadata, response lengths, and local formatting/encryption failure reasons;
 - checks upload delivery only when the config marks a channel as `optional` or
   `required`;
-- keeps channels `disabled` by default because many devices are tested before
-  `setDevices` or Robonomics subscription access is configured.
+- keeps channels disabled unless the selected config enables them, because many
+  devices are tested before `setDevices` or Robonomics subscription access is
+  configured. The example Urban and Insight profiles set both channels to
+  `optional`, so upload problems are reported as warnings.
+
+Payload observations:
+
+- parses stable `[PAYLOAD]` lines with `channel`, `encoding`, `encrypted`,
+  `payload_len`, and `sample_available` metadata;
+- extracts sensor values only from the explicit `sample=` field;
+- treats `channel=datalog` as the canonical sensor-sample source when several
+  upload channels expose the same payload, avoiding duplicated sensor series.
 
 Release log contract:
 
@@ -244,11 +262,12 @@ for pasting into an issue or chat.
 - `samples.jsonl` contains parsed sensor samples with tester-side timestamps. It
 is useful for graphs, cadence analysis, flatline debugging, and parser checks.
 
-- `events.jsonl` contains chronological tester events, parsed development metrics,
-keyword alerts, upload observations, and identity observations.
+- `events.jsonl` contains chronological tester milestones, parsed health
+observations, build metadata, payload observations, keyword alerts, upload
+observations, and identity observations.
 
 While a run is active, the CLI prints live progress with elapsed time, serial
-line and byte counters, current serial silence, parsed dev metrics, parsed
+line and byte counters, current serial silence, parsed health records, parsed
 sensor samples, and keyword alert count.
 
 ## Config Files
@@ -319,10 +338,11 @@ whole burn-in run.
 ## Batch Config
 
 `configs/batch.usb.example.toml` describes several USB-connected devices for a
-future batch run. The format is intentionally separate from the single-device
-tester profile: the batch config maps physical USB slots to ports and profiles,
-while `configs/urban.example.toml` and `configs/insight.example.toml` keep the
-actual health rules for each device type.
+batch run. The format is intentionally separate from the single-device tester
+profile: the batch config maps physical USB slots to ports, models, and
+profiles, while `configs/urban.example.toml` and
+`configs/insight.example.toml` keep the actual health rules for each device
+type.
 
 For a Raspberry Pi stand with several devices, use a powered USB hub, USB-C
 data cables, and visible labels for every physical hub port. Prefer
@@ -470,6 +490,8 @@ not fail the batch by themselves.
 
 - The default baud rate is `115200`.
 - Configure Wi-Fi before using a run as a burn-in signal.
+- If a device stays in the Wi-Fi config portal/AP flow, the tester may report
+  missing release-log telemetry instead of useful sensor health.
 - Connectivity or datalog HTTP failures can appear in `serial.log`. Stable
   `[CONNECTIVITY]` and `[DATALOG]` lines are parsed as upload observations and
   checked according to the `[uploads]` config, but they are not treated as
@@ -487,5 +509,5 @@ not fail the batch by themselves.
 uv sync
 uv run altruist-tester --help
 uv run altruist-tester run --help
-uv run python -m pytest
+uv run pytest
 ```
