@@ -17,7 +17,6 @@ class UploadChannelStats:
     attempts: int = 0
     successes: int = 0
     failures: int = 0
-    skipped: int = 0
     warnings: int = 0
     max_consecutive_failures: int = 0
     last_status: str | None = None
@@ -33,14 +32,7 @@ class UploadChannelStats:
     def observed(self) -> bool:
         """Return whether any upload line was parsed for this channel."""
 
-        return (
-            self.attempts
-            + self.successes
-            + self.failures
-            + self.skipped
-            + self.warnings
-            > 0
-        )
+        return self.attempts + self.successes + self.failures + self.warnings > 0
 
     @property
     def effective_attempts(self) -> int:
@@ -103,7 +95,6 @@ class UploadChannelStats:
             "logged_attempts": self.attempts,
             "successes": self.successes,
             "failures": self.failures,
-            "skipped": self.skipped,
             "warnings": self.warnings,
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,

@@ -56,7 +56,6 @@ class UploadChannelReport:
     attempts: int
     successes: int
     failures: int
-    skipped: int
     warnings: int
     success_rate: float | None
     max_consecutive_failures: int
@@ -82,7 +81,6 @@ class UploadChannelReport:
             "attempts": self.attempts,
             "successes": self.successes,
             "failures": self.failures,
-            "skipped": self.skipped,
             "warnings": self.warnings,
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,
@@ -180,7 +178,6 @@ def _check_channel(
             attempts=stats.effective_attempts,
             successes=stats.successes,
             failures=stats.failures,
-            skipped=stats.skipped,
             warnings=stats.warnings,
             success_rate=stats.success_rate,
             max_consecutive_failures=stats.max_consecutive_failures,
@@ -272,7 +269,6 @@ def _check_channel(
         attempts=stats.effective_attempts,
         successes=stats.successes,
         failures=stats.failures,
-        skipped=stats.skipped,
         warnings=stats.warnings,
         success_rate=stats.success_rate,
         max_consecutive_failures=stats.max_consecutive_failures,
