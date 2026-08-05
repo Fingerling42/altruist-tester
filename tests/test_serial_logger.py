@@ -272,6 +272,119 @@ def test_capture_raw_serial_writes_upload_events(tmp_path):
     assert stats.upload_stats.channel("datalog").failures == 1
 
 
+def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="4s", duration_seconds=4)
+    serial = FakeSerial(
+        [
+            b"[BUILD] version=R-INS_2026-07-08-testing+abc1234 "
+            b"channel=testing commit=abc1234 model=insight target=esp32c6 "
+            b"language=en profile=release\n",
+            b"[LOG] runtime=3 configured=0 forced=0 core=0\n",
+            b"[BOOT] reset_reason=power_on_reset reset_code=1 boot=5 "
+            b"crash_valid=0 prev_uptime=0 prev_heap=0 "
+            b"last_section_id=0 last_section=Idle/MainLoop heap=219584\n",
+            b"[HEALTH] uptime=600 boot=5 heap=219000 rssi=-58 tx=2 "
+            b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+            b"reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+            b"prev_uptime=0 prev_heap=0 last_section_id=0 "
+            b"last_section=Idle/MainLoop\n",
+            b"[123] [INFO] [PAYLOAD] channel=datalog encoding=cps "
+            b"encrypted=1 payload_len=324 sample_available=1 "
+            b"sample=h:65.15,t:25.84,co2:723 e1=999\n",
+            b"[PAYLOAD] channel=sensors-connectivity encoding=mixed "
+            b"encrypted=1 payload_len=360 sample_available=1 "
+            b"sample=h:65.15,t:25.84 e1=999\n",
+            b"[PAYLOAD] channel=custom-http encoding=cps encrypted=1 "
+            b"payload_len=128 sample_available=0\n",
+            b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
+            b"[DATALOG] failed reason=encryption_failed\n",
+            b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
+            b"[DATALOG] success response_len=66\n",
+            b"[CONNECTIVITY] attempt channel=sensors-connectivity seq=12 "
+            b"payload_len=360 encoding=mixed\n",
+            b"[CONNECTIVITY] failed channel=sensors-connectivity seq=12 "
+            b"reason=http_error host=2.connectivity.robonomics.network "
+            b"code=500 response_len=42\n",
+            b"[SUBSYSTEM] error subsystem=sensor reason=read_failed name=scd41\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 4, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    build_events = [event for event in events if event["type"] == "build_event"]
+    boot_events = [event for event in events if event["type"] == "boot_event"]
+    health_events = [event for event in events if event["type"] == "dev_metrics"]
+    payload_events = [
+        event for event in events if event["type"] == "payload_observation"
+    ]
+    upload_events = [event for event in events if event["type"] == "upload_event"]
+    subsystem_events = [event for event in events if event["type"] == "subsystem_event"]
+
+    assert build_events[0]["channel"] == "testing"
+    assert build_events[0]["profile"] == "release"
+    assert boot_events[0]["reset_reason"] == "power_on_reset"
+    assert health_events[0]["uptime_sec"] == 600
+    assert health_events[0]["last_section"] == "Idle/MainLoop"
+
+    assert [
+        (
+            event["channel"],
+            event["encoding"],
+            event["encrypted"],
+            event["payload_len"],
+            event["sample_available"],
+        )
+        for event in payload_events
+    ] == [
+        ("datalog", "cps", True, 324, True),
+        ("sensors-connectivity", "mixed", True, 360, True),
+        ("custom-http", "cps", True, 128, False),
+    ]
+    assert "sample" not in payload_events[0]["raw_fields"]
+
+    samples = _read_jsonl(artifacts.samples_jsonl)
+    assert [
+        (sample["metric"], sample["value"], sample["source"]) for sample in samples
+    ] == [
+        ("humidity", 65.15, "serial_payload_datalog"),
+        ("temperature", 25.84, "serial_payload_datalog"),
+        ("co2", 723.0, "serial_payload_datalog"),
+    ]
+
+    assert [event["status"] for event in upload_events] == [
+        "attempt",
+        "failure",
+        "attempt",
+        "success",
+        "attempt",
+        "failure",
+    ]
+    assert upload_events[0]["reason"] == (
+        "payload_len=324 encoding=cps owner_self_fallback=0"
+    )
+    assert upload_events[1]["reason"] == "encryption_failed"
+    assert upload_events[4]["reason"] == "payload_len=360 encoding=mixed"
+    assert upload_events[5]["reason"] == "http_error code=500 response_len=42"
+    assert subsystem_events[0]["reason"] == "read_failed"
+    assert subsystem_events[0]["details"] == {"name": "scd41"}
+
+    assert stats.build_events.count == 1
+    assert stats.boot_events.count == 1
+    assert stats.dev_metrics.count == 1
+    assert stats.payload_observations.count == 3
+    assert stats.sensor_samples_count == 3
+    assert stats.upload_stats.channel("datalog").attempts == 2
+    assert stats.upload_stats.channel("datalog").failure_reasons == {
+        "encryption_failed": 1
+    }
+    assert stats.upload_stats.channel("connectivity").failure_reasons == {
+        "http_error code=500 response_len=42": 1
+    }
+
+
 def test_capture_raw_serial_ignores_legacy_datalog_api_status_blocks(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
