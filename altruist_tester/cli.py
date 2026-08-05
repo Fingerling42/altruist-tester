@@ -1425,6 +1425,8 @@ def run(
         **stats.dev_metrics.as_dict(),
         "boot_reset": stats.boot_events.as_dict(),
         "boot_event_records": list(stats.boot_event_records),
+        "firmware_build": stats.build_events.as_dict(),
+        "build_event_records": list(stats.build_event_records),
         "subsystem_events": stats.subsystem_events.as_dict(),
         "subsystem_event_records": list(stats.subsystem_event_records),
         "payload_observations": stats.payload_observations.as_dict(),

@@ -188,6 +188,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     sensor_ranges = details.get("sensor_ranges")
     sensor_flatlines = details.get("sensor_flatlines")
     sensor_cadence = details.get("sensor_cadence")
+    firmware_build = details.get("firmware_build")
     subsystem_health = details.get("subsystem_health")
     payload_observations = details.get("payload_observations")
     upload_health = details.get("upload_health")
@@ -225,6 +226,22 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             f"({sensor_cadence.get('failure_count')} failures, "
             f"{sensor_cadence.get('warning_count')} warnings)"
         )
+    if isinstance(firmware_build, dict):
+        build = firmware_build.get("last_build_event")
+        if isinstance(build, dict):
+            lines.extend(
+                [
+                    "",
+                    "Firmware:",
+                    f"- version: {build.get('version')}",
+                    f"- channel: {build.get('channel')}",
+                    f"- profile: {build.get('profile')}",
+                    f"- model: {build.get('model')}",
+                    f"- target: {build.get('target')}",
+                    f"- language: {build.get('language')}",
+                    f"- commit: {build.get('commit')}",
+                ]
+            )
     if isinstance(subsystem_health, dict):
         lines.extend(
             [

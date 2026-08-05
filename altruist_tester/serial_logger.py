@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
 from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
+from altruist_tester.parsers.build_events import BuildEvent, parse_build_event
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.payload_events import (
@@ -119,6 +120,33 @@ class BootEventsSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class BuildEventsSummary:
+    """Aggregate parsed firmware build identity events for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    last_build: dict[str, Any] | None = None
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one firmware build event was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "build_events_seen": self.seen,
+            "build_events_count": self.count,
+            "first_build_event_at": self.first_seen,
+            "last_build_event_at": self.last_seen,
+            "last_build_event": self.last_build,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SubsystemEventsSummary:
     """Aggregate parsed firmware subsystem events for a run."""
 
@@ -202,6 +230,8 @@ class SerialLogStats:
     dev_metrics_records: tuple[dict[str, object], ...] = ()
     boot_events: BootEventsSummary = field(default_factory=BootEventsSummary)
     boot_event_records: tuple[dict[str, object], ...] = ()
+    build_events: BuildEventsSummary = field(default_factory=BuildEventsSummary)
+    build_event_records: tuple[dict[str, object], ...] = ()
     subsystem_events: SubsystemEventsSummary = field(
         default_factory=SubsystemEventsSummary
     )
@@ -312,6 +342,20 @@ def _update_boot_events_summary(
     )
 
 
+def _update_build_events_summary(
+    summary: BuildEventsSummary,
+    build_event: BuildEvent,
+    event_ts: str,
+) -> BuildEventsSummary:
+    payload = build_event.as_event_payload()
+    return BuildEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        last_build=payload,
+    )
+
+
 def _increment_counter(current: dict[str, int], key: str) -> dict[str, int]:
     updated = dict(current)
     updated[key] = updated.get(key, 0) + 1
@@ -382,6 +426,18 @@ def _append_boot_event(
     event = artifacts.append_event("boot_event", **payload)
     records.append({"ts": event["ts"], **payload})
     return _update_boot_events_summary(summary, boot_event, event["ts"])
+
+
+def _append_build_event(
+    artifacts: RunArtifacts,
+    build_event: BuildEvent,
+    records: list[dict[str, object]],
+    summary: BuildEventsSummary,
+) -> BuildEventsSummary:
+    payload = build_event.as_event_payload()
+    event = artifacts.append_event("build_event", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_build_events_summary(summary, build_event, event["ts"])
 
 
 def _append_subsystem_event(
@@ -518,6 +574,8 @@ def capture_raw_serial(
     metrics_records: list[dict[str, object]] = []
     boot_events_summary = BootEventsSummary()
     boot_event_records: list[dict[str, object]] = []
+    build_events_summary = BuildEventsSummary()
+    build_event_records: list[dict[str, object]] = []
     subsystem_events_summary = SubsystemEventsSummary()
     subsystem_event_records: list[dict[str, object]] = []
     payload_observations_summary = PayloadObservationsSummary()
@@ -580,6 +638,15 @@ def capture_raw_serial(
                     boot_event,
                     boot_event_records,
                     boot_events_summary,
+                )
+
+            build_event = parse_build_event(decoded_line)
+            if build_event is not None:
+                build_events_summary = _append_build_event(
+                    artifacts,
+                    build_event,
+                    build_event_records,
+                    build_events_summary,
                 )
 
             subsystem_event = parse_subsystem_event(decoded_line)
@@ -653,6 +720,8 @@ def capture_raw_serial(
         dev_metrics_records=tuple(metrics_records),
         boot_events=boot_events_summary,
         boot_event_records=tuple(boot_event_records),
+        build_events=build_events_summary,
+        build_event_records=tuple(build_event_records),
         subsystem_events=subsystem_events_summary,
         subsystem_event_records=tuple(subsystem_event_records),
         payload_observations=payload_observations_summary,

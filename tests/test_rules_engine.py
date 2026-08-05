@@ -4,7 +4,7 @@ from altruist_tester.parsers.upload_events import UploadEvent
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
 from altruist_tester.rules.uploads import UploadChannelConfig
 from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
-from altruist_tester.serial_logger import SerialLogStats
+from altruist_tester.serial_logger import BuildEventsSummary, SerialLogStats
 from altruist_tester.uploads import UploadStats
 
 
@@ -39,6 +39,21 @@ def _upload_stats(*events: UploadEvent) -> UploadStats:
     return stats
 
 
+def _build_events() -> BuildEventsSummary:
+    return BuildEventsSummary(
+        count=1,
+        last_build={
+            "version": "R-URB_2026-07-08",
+            "channel": "stable",
+            "commit": "abc1234",
+            "model": "urban",
+            "target": "esp32c6",
+            "language": "en",
+            "profile": "release",
+        },
+    )
+
+
 def test_evaluate_rules_returns_pass_candidate_without_findings():
     stats = SerialLogStats(
         lines_read=10,
@@ -54,6 +69,7 @@ def test_evaluate_rules_returns_pass_candidate_without_findings():
             _sample("BME280", "temperature", 24.0, 0),
             _sample("BME280", "temperature", 24.5, 60),
         ),
+        build_events=_build_events(),
     )
 
     result = evaluate_rules(

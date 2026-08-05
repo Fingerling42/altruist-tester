@@ -80,6 +80,23 @@ Parser guidance:
   finite numeric `value`.
 - Keep sensor and metric names as printed by firmware at this step.
 
+## Build Contract
+
+Observed serial shape:
+
+```text
+[BUILD] version=R-URB_2026-07-08-testing+abc1234 channel=testing commit=abc1234 model=urban target=esp32c6 language=en profile=release
+```
+
+Parser guidance:
+
+- Store `version`, `channel`, `commit`, `model`, `target`, `language`, and
+  `profile` in run summary/report.
+- Treat `channel` as firmware provenance (`stable` or `testing`), not as a
+  verbosity switch.
+- Treat `profile` as build-mode context (`release` or `debug`), not as a
+  requirement for acceptance tests.
+
 ## Payload Contract
 
 Observed serial shape:

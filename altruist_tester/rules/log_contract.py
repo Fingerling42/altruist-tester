@@ -123,6 +123,10 @@ def _has_sensor_samples(stats: SerialLogStats) -> bool:
     return stats.sensor_samples_count > 0 or stats.sensor_series.count() > 0
 
 
+def _has_firmware_build_info(stats: SerialLogStats) -> bool:
+    return stats.build_events.seen or bool(stats.build_event_records)
+
+
 def _upload_observed(stats: SerialLogStats, channel: UploadChannel) -> bool:
     return stats.upload_stats.channel(channel).observed
 
@@ -172,6 +176,7 @@ def check_log_contract(
     signals = {
         "health_telemetry": _has_health_telemetry(stats),
         "sensor_samples": _has_sensor_samples(stats),
+        "firmware_build_info": _has_firmware_build_info(stats),
         "boot_or_reset_context": stats.boot_events.seen
         or _has_health_reset_context(stats),
         "connectivity_upload": _upload_observed(stats, "connectivity"),
@@ -203,6 +208,14 @@ def check_log_contract(
                 message="[BOOT] or [HEALTH] reset context was not observed",
             )
         )
+    if not signals["firmware_build_info"]:
+        findings.append(
+            LogContractFinding(
+                status=severity_for_missing_boot_context(),
+                code="LOG_CONTRACT_BUILD_INFO_MISSING",
+                message="[BUILD] firmware identity was not observed",
+            )
+        )
 
     health_in_window = _within_startup_window(
         capture_started_at=stats.capture_started_at,
@@ -217,6 +230,11 @@ def check_log_contract(
     boot_in_window = _within_startup_window(
         capture_started_at=stats.capture_started_at,
         observed_at=stats.boot_events.first_seen,
+        startup_window_seconds=startup_window_seconds,
+    )
+    build_in_window = _within_startup_window(
+        capture_started_at=stats.capture_started_at,
+        observed_at=stats.build_events.first_seen,
         startup_window_seconds=startup_window_seconds,
     )
     if signals["health_telemetry"] and health_in_window is False:
@@ -243,10 +261,19 @@ def check_log_contract(
                 startup_window_seconds=startup_window_seconds,
             )
         )
+    if signals["firmware_build_info"] and build_in_window is False:
+        findings.append(
+            _late_signal_finding(
+                signal="firmware_build_info",
+                status=severity_for_missing_boot_context(),
+                startup_window_seconds=startup_window_seconds,
+            )
+        )
 
     signals["health_telemetry_in_startup_window"] = health_in_window is not False
     signals["sensor_samples_in_startup_window"] = samples_in_window is not False
     signals["boot_context_in_startup_window"] = boot_in_window is not False
+    signals["firmware_build_info_in_startup_window"] = build_in_window is not False
 
     if not signals["connectivity_upload"] and (
         finding := _missing_upload_finding(

@@ -202,6 +202,9 @@ Release log contract:
   for acceptance testing;
 - fails when `[HEALTH]` telemetry or sensor payload samples are missing;
 - warns when boot/reset context is missing from `[BOOT]` or `[HEALTH]`;
+- warns when `[BUILD]` firmware identity is missing;
+- records firmware `channel` and `profile` as context, without treating
+  Testing as a debug mode;
 - requires upload telemetry only for channels enabled in `[uploads]`.
 
 ## Run Artifacts

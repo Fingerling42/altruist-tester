@@ -168,6 +168,36 @@ def test_capture_raw_serial_writes_boot_events(tmp_path):
     assert stats.boot_event_records[0]["ts"] == boot_events[0]["ts"]
 
 
+def test_capture_raw_serial_writes_build_events(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"[BUILD] version=R-URB_2026-07-08-testing+abc1234 "
+            b"channel=testing commit=abc1234 model=urban target=esp32c6 "
+            b"language=en profile=release\n",
+        ],
+        clock,
+    )
+
+    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
+
+    events = _read_jsonl(artifacts.events_jsonl)
+    build_events = [event for event in events if event["type"] == "build_event"]
+    assert len(build_events) == 1
+    assert build_events[0]["version"] == "R-URB_2026-07-08-testing+abc1234"
+    assert build_events[0]["channel"] == "testing"
+    assert build_events[0]["model"] == "urban"
+    assert build_events[0]["profile"] == "release"
+
+    assert stats.build_events.count == 1
+    assert stats.build_events.first_seen == build_events[0]["ts"]
+    assert stats.build_events.last_seen == build_events[0]["ts"]
+    assert stats.build_events.last_build is not None
+    assert stats.build_events.last_build["target"] == "esp32c6"
+    assert stats.build_event_records[0]["ts"] == build_events[0]["ts"]
+
+
 def test_capture_raw_serial_writes_subsystem_events(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)
