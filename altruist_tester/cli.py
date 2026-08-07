@@ -48,6 +48,7 @@ from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 DEFAULT_OUTPUT_DIR = Path("runs")
 BATCH_PROGRESS_INTERVAL_SECONDS = 10.0
 BATCH_TERMINATE_GRACE_SECONDS = 5.0
+RUN_PROGRESS_FILE_INTERVAL_SECONDS = 5 * 60
 
 
 class BatchInterrupted(RuntimeError):
@@ -1010,16 +1011,32 @@ def _format_run_progress(progress: SerialLogProgress) -> str:
 
 
 def _make_progress_printer():
+    interactive = sys.stderr.isatty()
     last_length = 0
+    last_file_progress_elapsed: float | None = None
 
     def print_progress(progress: SerialLogProgress) -> None:
-        nonlocal last_length
+        nonlocal last_file_progress_elapsed, last_length
         message = _format_run_progress(progress)
-        padding = " " * max(0, last_length - len(message))
-        typer.echo(f"\r{message}{padding}", err=True, nl=False)
-        last_length = len(message)
-        if progress.complete:
-            typer.echo("", err=True)
+        if interactive:
+            padding = " " * max(0, last_length - len(message))
+            typer.echo(f"\r{message}{padding}", err=True, nl=False)
+            last_length = len(message)
+            if progress.complete:
+                typer.echo("", err=True)
+            return
+
+        should_print = (
+            progress.complete
+            or last_file_progress_elapsed is None
+            or progress.elapsed_seconds - last_file_progress_elapsed
+            >= RUN_PROGRESS_FILE_INTERVAL_SECONDS
+        )
+        if not should_print:
+            return
+
+        typer.echo(message, err=True)
+        last_file_progress_elapsed = progress.elapsed_seconds
 
     return print_progress
 
