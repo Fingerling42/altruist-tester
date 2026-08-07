@@ -6,6 +6,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from altruist_tester.rules.severity import severity_for_keyword_alert
+
 
 @dataclass(frozen=True, slots=True)
 class KeywordRule:
@@ -40,11 +42,18 @@ class KeywordAlert:
         }
 
 
-def _rule(code: str, keyword: str, pattern: str) -> KeywordRule:
+def _rule(
+    code: str,
+    keyword: str,
+    pattern: str,
+    *,
+    severity: str | None = None,
+) -> KeywordRule:
     return KeywordRule(
         code=code,
         keyword=keyword,
         pattern=re.compile(pattern, re.IGNORECASE),
+        severity=severity or severity_for_keyword_alert(code),
     )
 
 
@@ -57,11 +66,6 @@ KEYWORD_RULES = (
     _rule("POWER_GLITCH", "power glitch", r"\bpower glitch\b"),
     _rule("CPU_LOCKUP", "CPU lock-up", r"\bcpu lock[- ]?up\b"),
     _rule("EFUSE_ERROR", "eFuse error", r"\befuse error\b"),
-    _rule(
-        "WIFI_RECOVERY_REBOOT",
-        "WiFi recovery reboot",
-        r"\bsta link down too long; rebooting for recovery\b",
-    ),
     _rule("GURU_MEDITATION", "Guru Meditation", r"\bguru meditation\b"),
     _rule("ABORT", "abort", r"\babort(?:ed)?\b"),
     _rule("ASSERT_FAILED", "assert failed", r"\bassert failed\b"),

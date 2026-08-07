@@ -7,14 +7,24 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from altruist_tester.artifacts import RunArtifacts
+from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
 from altruist_tester.identity import parse_identity_from_serial_line
+from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
+from altruist_tester.parsers.build_events import BuildEvent, parse_build_event
 from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
+from altruist_tester.parsers.payload_events import (
+    PayloadObservation,
+    parse_payload_metadata,
+    parse_payload_observation,
+)
 from altruist_tester.parsers.sensor_values import parse_sensor_values
+from altruist_tester.parsers.subsystem_events import (
+    SubsystemEvent,
+    parse_subsystem_event,
+)
 from altruist_tester.parsers.upload_events import (
     UploadEvent,
-    UploadStatusStreamParser,
     parse_upload_event,
 )
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
@@ -84,6 +94,126 @@ class DevMetricsSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class BootEventsSummary:
+    """Aggregate parsed firmware boot/reset events for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    last_boot: dict[str, Any] | None = None
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one boot/reset event was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "boot_events_seen": self.seen,
+            "boot_events_count": self.count,
+            "first_boot_event_at": self.first_seen,
+            "last_boot_event_at": self.last_seen,
+            "last_boot_event": self.last_boot,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BuildEventsSummary:
+    """Aggregate parsed firmware build identity events for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    last_build: dict[str, Any] | None = None
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one firmware build event was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "build_events_seen": self.seen,
+            "build_events_count": self.count,
+            "first_build_event_at": self.first_seen,
+            "last_build_event_at": self.last_seen,
+            "last_build_event": self.last_build,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SubsystemEventsSummary:
+    """Aggregate parsed firmware subsystem events for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    by_subsystem: dict[str, int] = field(default_factory=dict)
+    by_reason: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one subsystem event was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "subsystem_events_seen": self.seen,
+            "subsystem_events_count": self.count,
+            "first_subsystem_event_at": self.first_seen,
+            "last_subsystem_event_at": self.last_seen,
+            "subsystem_events_by_subsystem": self.by_subsystem,
+            "subsystem_events_by_reason": self.by_reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PayloadObservationsSummary:
+    """Aggregate parsed firmware payload metadata for a run."""
+
+    count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    by_channel: dict[str, int] = field(default_factory=dict)
+    by_encoding: dict[str, int] = field(default_factory=dict)
+    encrypted_count: int = 0
+    sample_available_count: int = 0
+    last_observation: dict[str, Any] | None = None
+
+    @property
+    def seen(self) -> bool:
+        """Return whether at least one payload observation was parsed."""
+
+        return self.count > 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly summary."""
+
+        return {
+            "payload_observations_seen": self.seen,
+            "payload_observations_count": self.count,
+            "first_payload_observation_at": self.first_seen,
+            "last_payload_observation_at": self.last_seen,
+            "payload_observations_by_channel": self.by_channel,
+            "payload_observations_by_encoding": self.by_encoding,
+            "encrypted_payload_observations_count": self.encrypted_count,
+            "sample_available_payload_observations_count": (
+                self.sample_available_count
+            ),
+            "last_payload_observation": self.last_observation,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SerialLogStats:
     """Summary of one raw serial logging session.
 
@@ -93,11 +223,24 @@ class SerialLogStats:
 
     lines_read: int
     bytes_read: int
+    capture_started_at: str | None = None
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
     dev_metrics: DevMetricsSummary = field(default_factory=DevMetricsSummary)
     dev_metrics_records: tuple[dict[str, object], ...] = ()
+    boot_events: BootEventsSummary = field(default_factory=BootEventsSummary)
+    boot_event_records: tuple[dict[str, object], ...] = ()
+    build_events: BuildEventsSummary = field(default_factory=BuildEventsSummary)
+    build_event_records: tuple[dict[str, object], ...] = ()
+    subsystem_events: SubsystemEventsSummary = field(
+        default_factory=SubsystemEventsSummary
+    )
+    subsystem_event_records: tuple[dict[str, object], ...] = ()
+    payload_observations: PayloadObservationsSummary = field(
+        default_factory=PayloadObservationsSummary
+    )
+    payload_observation_records: tuple[dict[str, object], ...] = ()
     keyword_alerts_count: int = 0
     keyword_alerts: tuple[dict[str, str], ...] = ()
     sensor_samples_count: int = 0
@@ -186,6 +329,82 @@ def _update_dev_metrics_summary(
     )
 
 
+def _update_boot_events_summary(
+    summary: BootEventsSummary,
+    boot_event: BootEvent,
+    event_ts: str,
+) -> BootEventsSummary:
+    payload = boot_event.as_event_payload()
+    return BootEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        last_boot=payload,
+    )
+
+
+def _update_build_events_summary(
+    summary: BuildEventsSummary,
+    build_event: BuildEvent,
+    event_ts: str,
+) -> BuildEventsSummary:
+    payload = build_event.as_event_payload()
+    return BuildEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        last_build=payload,
+    )
+
+
+def _increment_counter(current: dict[str, int], key: str) -> dict[str, int]:
+    updated = dict(current)
+    updated[key] = updated.get(key, 0) + 1
+    return updated
+
+
+def _update_subsystem_events_summary(
+    summary: SubsystemEventsSummary,
+    event: SubsystemEvent,
+    event_ts: str,
+) -> SubsystemEventsSummary:
+    return SubsystemEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        by_subsystem=_increment_counter(summary.by_subsystem, event.subsystem),
+        by_reason=_increment_counter(summary.by_reason, event.reason),
+    )
+
+
+def _update_payload_observations_summary(
+    summary: PayloadObservationsSummary,
+    observation: PayloadObservation,
+    event_ts: str,
+) -> PayloadObservationsSummary:
+    payload = observation.as_event_payload()
+    by_channel = summary.by_channel
+    if observation.channel is not None:
+        by_channel = _increment_counter(by_channel, observation.channel)
+
+    by_encoding = summary.by_encoding
+    if observation.encoding is not None:
+        by_encoding = _increment_counter(by_encoding, observation.encoding)
+
+    return PayloadObservationsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event_ts,
+        last_seen=event_ts,
+        by_channel=by_channel,
+        by_encoding=by_encoding,
+        encrypted_count=summary.encrypted_count
+        + (1 if observation.encrypted is True else 0),
+        sample_available_count=summary.sample_available_count
+        + (1 if observation.sample_available is True else 0),
+        last_observation=payload,
+    )
+
+
 def _append_keyword_alerts(
     artifacts: RunArtifacts,
     alerts: list[KeywordAlert],
@@ -196,6 +415,54 @@ def _append_keyword_alerts(
         artifacts.append_event("keyword_alert", **payload)
         appended_alerts.append(payload)
     return tuple(appended_alerts)
+
+
+def _append_boot_event(
+    artifacts: RunArtifacts,
+    boot_event: BootEvent,
+    records: list[dict[str, object]],
+    summary: BootEventsSummary,
+) -> BootEventsSummary:
+    payload = boot_event.as_event_payload()
+    event = artifacts.append_event("boot_event", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_boot_events_summary(summary, boot_event, event["ts"])
+
+
+def _append_build_event(
+    artifacts: RunArtifacts,
+    build_event: BuildEvent,
+    records: list[dict[str, object]],
+    summary: BuildEventsSummary,
+) -> BuildEventsSummary:
+    payload = build_event.as_event_payload()
+    event = artifacts.append_event("build_event", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_build_events_summary(summary, build_event, event["ts"])
+
+
+def _append_subsystem_event(
+    artifacts: RunArtifacts,
+    subsystem_event: SubsystemEvent,
+    records: list[dict[str, object]],
+    summary: SubsystemEventsSummary,
+) -> SubsystemEventsSummary:
+    payload = subsystem_event.as_event_payload()
+    event = artifacts.append_event("subsystem_event", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_subsystem_events_summary(summary, subsystem_event, event["ts"])
+
+
+def _append_payload_observation(
+    artifacts: RunArtifacts,
+    observation: PayloadObservation,
+    records: list[dict[str, object]],
+    summary: PayloadObservationsSummary,
+) -> PayloadObservationsSummary:
+    payload = observation.as_event_payload()
+    event = artifacts.append_event("payload_observation", **payload)
+    records.append({"ts": event["ts"], **payload})
+    return _update_payload_observations_summary(summary, observation, event["ts"])
 
 
 def _append_sensor_samples(
@@ -209,6 +476,29 @@ def _append_sensor_samples(
         series.append(record)
         appended_samples.append(record)
     return tuple(appended_samples)
+
+
+def _select_payload_sensor_samples(
+    line: str,
+    samples: list[SensorSample],
+    *,
+    primary_payload_samples_seen: bool,
+) -> tuple[list[SensorSample], bool]:
+    if not samples:
+        return samples, primary_payload_samples_seen
+
+    fields = parse_payload_metadata(line)
+    if fields is None:
+        return samples, primary_payload_samples_seen
+
+    channel = fields.get("channel")
+    if channel == "sensors-connectivity":
+        return samples, True
+
+    if channel == "datalog" and primary_payload_samples_seen:
+        return [], primary_payload_samples_seen
+
+    return samples, primary_payload_samples_seen
 
 
 def _append_dev_metrics(
@@ -295,6 +585,7 @@ def capture_raw_serial(
     """
 
     started_at = clock()
+    capture_started_at = format_timestamp(utc_now())
     deadline = started_at + duration_seconds
     next_progress_at = started_at
     lines_read = 0
@@ -303,11 +594,19 @@ def capture_raw_serial(
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
     metrics_parser = DevMetricsStreamParser()
-    upload_status_parser = UploadStatusStreamParser()
     metrics_summary = DevMetricsSummary()
     metrics_records: list[dict[str, object]] = []
+    boot_events_summary = BootEventsSummary()
+    boot_event_records: list[dict[str, object]] = []
+    build_events_summary = BuildEventsSummary()
+    build_event_records: list[dict[str, object]] = []
+    subsystem_events_summary = SubsystemEventsSummary()
+    subsystem_event_records: list[dict[str, object]] = []
+    payload_observations_summary = PayloadObservationsSummary()
+    payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
+    primary_payload_samples_seen = False
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
 
@@ -357,6 +656,33 @@ def capture_raw_serial(
             if mirror_lines_to_events:
                 artifacts.append_event("serial_line", line=decoded_line)
 
+            boot_event = parse_boot_event(decoded_line)
+            if boot_event is not None:
+                boot_events_summary = _append_boot_event(
+                    artifacts,
+                    boot_event,
+                    boot_event_records,
+                    boot_events_summary,
+                )
+
+            build_event = parse_build_event(decoded_line)
+            if build_event is not None:
+                build_events_summary = _append_build_event(
+                    artifacts,
+                    build_event,
+                    build_event_records,
+                    build_events_summary,
+                )
+
+            subsystem_event = parse_subsystem_event(decoded_line)
+            if subsystem_event is not None:
+                subsystem_events_summary = _append_subsystem_event(
+                    artifacts,
+                    subsystem_event,
+                    subsystem_event_records,
+                    subsystem_events_summary,
+                )
+
             serial_device_id = parse_identity_from_serial_line(decoded_line)
             if (
                 serial_device_id is not None
@@ -375,17 +701,26 @@ def capture_raw_serial(
                     detect_keyword_alerts(decoded_line),
                 )
             )
-            _append_sensor_samples(
-                artifacts,
-                parse_sensor_values(decoded_line),
-                sensor_series,
+            payload_observation = parse_payload_observation(decoded_line)
+            if payload_observation is not None:
+                payload_observations_summary = _append_payload_observation(
+                    artifacts,
+                    payload_observation,
+                    payload_observation_records,
+                    payload_observations_summary,
+                )
+
+            sensor_samples, primary_payload_samples_seen = (
+                _select_payload_sensor_samples(
+                    decoded_line,
+                    parse_sensor_values(decoded_line),
+                    primary_payload_samples_seen=primary_payload_samples_seen,
+                )
             )
+            _append_sensor_samples(artifacts, sensor_samples, sensor_series)
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
-            upload_status_parser.record_explicit_event(upload_event)
-            for status_event in upload_status_parser.feed(decoded_line):
-                _append_upload_event(artifacts, status_event, upload_stats)
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
@@ -405,11 +740,20 @@ def capture_raw_serial(
     return SerialLogStats(
         lines_read=lines_read,
         bytes_read=bytes_read,
+        capture_started_at=capture_started_at,
         first_line_elapsed_seconds=first_line_elapsed_seconds,
         last_line_elapsed_seconds=last_line_elapsed_seconds,
         max_interline_gap_seconds=max_interline_gap_seconds,
         dev_metrics=metrics_summary,
         dev_metrics_records=tuple(metrics_records),
+        boot_events=boot_events_summary,
+        boot_event_records=tuple(boot_event_records),
+        build_events=build_events_summary,
+        build_event_records=tuple(build_event_records),
+        subsystem_events=subsystem_events_summary,
+        subsystem_event_records=tuple(subsystem_event_records),
+        payload_observations=payload_observations_summary,
+        payload_observation_records=tuple(payload_observation_records),
         keyword_alerts_count=len(keyword_alerts),
         keyword_alerts=tuple(keyword_alerts),
         sensor_samples_count=sensor_series.count(),

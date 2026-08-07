@@ -43,6 +43,9 @@ fail_after_missed = 5
 silence_warn_after = "15s"
 silence_fail_after = "45s"
 
+[log_contract]
+startup_window = "3m"
+
 [uploads]
 connectivity = "required"
 datalog = "optional"
@@ -75,6 +78,7 @@ maximum = 60.0
     assert config.cadence_fail_after_missed == 5
     assert config.silence_warn_after_seconds == 15
     assert config.silence_fail_after_seconds == 45
+    assert config.log_contract_startup_window_seconds == 180
     assert config.connectivity_upload.mode == "required"
     assert config.connectivity_upload.min_successes == 2
     assert config.connectivity_upload.min_success_rate == 0.75
@@ -205,6 +209,32 @@ port = "/dev/serial/by-path/slot-01"
     assert config.device_config == default_config
     assert config.devices[0].config is None
     assert config.devices[0].effective_config == default_config
+
+
+def test_load_batch_config_reads_wait_port_options(tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    path = tmp_path / "batch.toml"
+    path.write_text(
+        """
+[batch]
+duration = "24h"
+device_config = "urban.toml"
+wait_port = true
+wait_port_timeout = "5m"
+
+[[devices]]
+slot = "slot-01"
+port = "/dev/serial/by-path/urban"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_batch_config(path)
+
+    assert config.wait_port is True
+    assert config.wait_port_timeout_input == "5m"
+    assert config.wait_port_timeout_seconds == 5 * 60
 
 
 def test_load_batch_config_rejects_missing_duration(tmp_path):

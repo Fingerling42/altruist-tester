@@ -8,10 +8,11 @@ Run summary:
 - serial lines: `2392`
 - keyword alerts: `0`
 - observed full sensor JSON snapshots: `17`
-- observed compact datalog sensor lines: `13`
 
-The captured examples are stored in
-`tests/fixtures/dev_serial_with_sensor_values.log`.
+The captured JSON examples are stored in
+`tests/fixtures/dev_serial_with_sensor_values.log`. That fixture also contains
+historical `Datalog data` lines from an older firmware contract; current parser
+logic intentionally does not treat them as sensor samples.
 
 ## Full Sensor JSON Snapshot
 
@@ -79,27 +80,64 @@ Parser guidance:
   finite numeric `value`.
 - Keep sensor and metric names as printed by firmware at this step.
 
-## Compact Datalog Line
+## Health Contract
 
 Observed serial shape:
 
 ```text
-[1635773] [INFO] Datalog data: : h:65.99,t:25.51,p:101069.09,nm:83,na:81,p1:16.33,p2:7.33
+[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 reset_reason=power_on_reset reset_code=1 crash_valid=0 prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop
+```
+
+Parser guidance:
+
+- Require the base runtime fields: `uptime`, `boot`, `heap`, `rssi`, `tx`,
+  `errors`, `wifi`, `wifi_errors`, `sensor_errors`, and `sd_errors`.
+- Parse reset-context fields when present.
+- Do not drop the whole health snapshot only because reset-context fields are
+  missing.
+- Let the release log contract warn separately when reset context is absent
+  from both `[BOOT]` and `[HEALTH]`.
+
+## Build Contract
+
+Observed serial shape:
+
+```text
+[BUILD] version=R-URB_2026-07-08-testing+abc1234 channel=testing commit=abc1234 model=urban target=esp32c6 language=en profile=release
+```
+
+Parser guidance:
+
+- Store `version`, `channel`, `commit`, `model`, `target`, `language`, and
+  `profile` in run summary/report.
+- Treat `channel` as firmware provenance (`stable` or `testing`), not as a
+  verbosity switch.
+- Treat `profile` as build-mode context (`release` or `debug`), not as a
+  requirement for acceptance tests.
+
+## Payload Contract
+
+Observed serial shape:
+
+```text
+[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=49 sample_available=1 sample=h:65.99,t:25.51,p:101069.09,nm:83,na:81,p1:16.33,p2:7.33
+[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 sample_available=0
+[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 payload_len=280 sample_available=0
 ```
 
 Firmware source:
 
 - `apis/helpers/message_formatter.cpp`
 
-The compact line is built by `formatRobonomicsString()` from the same
-`sensors_data` document. It applies share flags and may choose one
-temperature/humidity source when both `BME680` and `SCD4x` are present.
+The payload contract is built from the same `sensors_data` document. It applies
+share/encryption flags and may choose one temperature/humidity source when both
+`BME680` and `SCD4x` are present.
 
 Observed aliases in the 10-minute Urban run:
 
 - `h`: humidity
 - `t`: temperature
-- `p`: pressure, emitted in pascals by current compact datalog logs
+- `p`: pressure, emitted in pascals by current payload samples
 - `nm`: max noise
 - `na`: mean noise
 - `p1`: PM10
@@ -117,7 +155,14 @@ Additional aliases supported by firmware:
 
 Parser guidance:
 
-- Parse this format as a fallback or complementary source.
-- The full JSON snapshot is richer because it preserves sensor names and units.
-- The compact line is useful when a run has `Datalog data` but no full JSON
-  snapshot near the same timestamp.
+- Parse sensor values only from the optional `sample=...` field on
+  `channel=datalog` payloads.
+- Treat `sensors-connectivity` and `custom-http` payloads as upload/payload
+  observations, not as sensor-series input.
+- Never parse encrypted `e...` values or full transport payloads as sensor
+  metrics.
+- Treat `channel`, `encoding`, `encrypted`, `payload_len`, and
+  `sample_available` as payload metadata.
+- The full JSON snapshot is richer because it preserves sensor names and units,
+  but release tester runs should rely on the stable `[PAYLOAD]` contract when
+  JSON snapshots are not present.

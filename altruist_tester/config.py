@@ -45,6 +45,9 @@ class BatchConfig:
     baud: int = 115200
     output_dir: Path = Path("runs")
     device_config: Path | None = None
+    wait_port: bool = False
+    wait_port_timeout_input: str = "2m"
+    wait_port_timeout_seconds: int = 120
     devices: tuple[BatchDeviceConfig, ...] = ()
 
 
@@ -73,6 +76,7 @@ class TesterConfig:
     cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
+    log_contract_startup_window_seconds: int = 10 * 60
     connectivity_upload: UploadChannelConfig = field(
         default_factory=UploadChannelConfig
     )
@@ -460,6 +464,16 @@ def load_batch_config(path: Path) -> BatchConfig:
             _path_value(batch.get("output_dir"), "batch.output_dir") or Path("runs"),
         ),
         device_config=default_config,
+        wait_port=_bool_value(batch.get("wait_port"), "batch.wait_port", False),
+        wait_port_timeout_input=_duration_input(
+            batch.get("wait_port_timeout", "2m"),
+            "batch.wait_port_timeout",
+        ),
+        wait_port_timeout_seconds=_duration_value(
+            batch.get("wait_port_timeout", "2m"),
+            "batch.wait_port_timeout",
+            120,
+        ),
         devices=tuple(
             _batch_device_config(
                 device,
@@ -494,6 +508,7 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     flatline = _optional_table(data, "flatline")
     cadence = _optional_table(data, "cadence")
     serial = _optional_table(data, "serial")
+    log_contract = _optional_table(data, "log_contract")
     uploads = _optional_table(data, "uploads")
     connectivity_thresholds = _require_mapping(
         uploads.get("connectivity_thresholds", {}),
@@ -556,6 +571,11 @@ def load_tester_config(path: Path | None) -> TesterConfig:
         silence_fail_after_seconds=_duration_value(
             serial.get("silence_fail_after"),
             "serial.silence_fail_after",
+            10 * 60,
+        ),
+        log_contract_startup_window_seconds=_duration_value(
+            log_contract.get("startup_window"),
+            "log_contract.startup_window",
             10 * 60,
         ),
         connectivity_upload=_upload_channel_config(

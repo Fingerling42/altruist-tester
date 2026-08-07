@@ -7,14 +7,19 @@ import math
 import re
 from typing import Any
 
+from altruist_tester.parsers.payload_events import parse_payload_metadata
 from altruist_tester.samples import SensorSample
 
-_DATALOG_RE = re.compile(r"\bDatalog data:\s*:?\s*(?P<payload>.+)$")
 _DATALOG_ITEM_RE = re.compile(
     r"(?P<alias>[A-Za-z][A-Za-z0-9_]*):(?P<value>[+-]?\d+(?:\.\d+)?)"
 )
 
 _SKIP_JSON_KEYS = frozenset({"service_data"})
+_SENSOR_SAMPLE_PAYLOAD_SOURCES = {
+    "datalog": "serial_payload_datalog",
+    "sensors-connectivity": "serial_payload_connectivity",
+}
+_SKIP_COMPACT_ALIASES = frozenset({"time"})
 
 _DATALOG_ALIASES = {
     "h": ("humidity", "%"),
@@ -96,14 +101,17 @@ def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
     return samples
 
 
-def _parse_datalog_line(line: str) -> list[SensorSample]:
-    match = _DATALOG_RE.search(line)
-    if match is None:
-        return []
-
+def _samples_from_compact_payload(
+    payload: str,
+    *,
+    sensor: str,
+    source: str,
+) -> list[SensorSample]:
     samples = []
-    for item_match in _DATALOG_ITEM_RE.finditer(match.group("payload")):
+    for item_match in _DATALOG_ITEM_RE.finditer(payload):
         alias = item_match.group("alias").lower()
+        if alias in _SKIP_COMPACT_ALIASES:
+            continue
         metric, unit = _DATALOG_ALIASES.get(alias, (alias, None))
         value = _finite_float(item_match.group("value"))
         if value is None:
@@ -111,28 +119,46 @@ def _parse_datalog_line(line: str) -> list[SensorSample]:
 
         samples.append(
             SensorSample(
-                sensor="datalog",
+                sensor=sensor,
                 metric=metric,
                 value=value,
                 unit=unit,
-                source="serial_datalog",
+                source=source,
             )
         )
 
     return samples
 
 
+def _parse_payload_line(line: str) -> list[SensorSample]:
+    fields = parse_payload_metadata(line)
+    if fields is None:
+        return []
+
+    channel = fields.get("channel")
+    source = _SENSOR_SAMPLE_PAYLOAD_SOURCES.get(str(channel))
+    if source is None:
+        return []
+
+    sample = fields.get("sample")
+    if not sample or fields.get("sample_available") == "0":
+        return []
+
+    return _samples_from_compact_payload(sample, sensor=str(channel), source=source)
+
+
 def parse_sensor_values(line: str) -> list[SensorSample]:
     """Parse zero or more sensor samples from one serial line.
 
-    Supports JSON sensor snapshots and compact ``Datalog data`` lines printed
-    by firmware logs. Unknown datalog aliases are preserved as metric
-    names so new firmware values can still be inspected in artifacts.
+    Supports JSON sensor snapshots and the stable firmware ``[PAYLOAD]``
+    contract. Unknown compact aliases inside ``sample=`` are preserved as
+    metric names so new firmware values can still be inspected in artifacts.
     """
 
     json_samples = _parse_json_sensor_snapshots(line)
     if json_samples:
         return json_samples
-    # The compact datalog form is a fallback for firmware lines that are not
-    # valid JSON snapshots.
-    return _parse_datalog_line(line)
+    payload_samples = _parse_payload_line(line)
+    if payload_samples:
+        return payload_samples
+    return []

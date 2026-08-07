@@ -6,6 +6,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from altruist_tester.parsers.boot_events import parse_key_value_fields
+
 _HEALTH_RE = re.compile(
     r"^\[HEALTH\]\s+"
     r"uptime=(?P<uptime>\d+)\s+"
@@ -17,7 +19,8 @@ _HEALTH_RE = re.compile(
     r"wifi=(?P<wifi>[01])\s+"
     r"wifi_errors=(?P<wifi_errors>\d+)\s+"
     r"sensor_errors=(?P<sensor_errors>\d+)\s+"
-    r"sd_errors=(?P<sd_errors>\d+)\s*$"
+    r"sd_errors=(?P<sd_errors>\d+)"
+    r"(?:\s+(?P<extra_fields>.*))?\s*$"
 )
 
 
@@ -59,6 +62,13 @@ class DevMetrics:
     esp_temp_c: float | None = None
     free_heap: int | None = None
     error_count: int | None = None
+    reset_reason: str | None = None
+    reset_code: int | None = None
+    crash_valid: bool | None = None
+    prev_uptime_sec: int | None = None
+    prev_free_heap: int | None = None
+    last_section_id: int | None = None
+    last_section: str | None = None
 
     def as_event_payload(self) -> dict[str, object]:
         """Return metrics as an event payload."""
@@ -76,7 +86,33 @@ class DevMetrics:
             "esp_temp_c": self.esp_temp_c,
             "free_heap": self.free_heap,
             "error_count": self.error_count,
+            "reset_reason": self.reset_reason,
+            "reset_code": self.reset_code,
+            "crash_valid": self.crash_valid,
+            "prev_uptime_sec": self.prev_uptime_sec,
+            "prev_free_heap": self.prev_free_heap,
+            "last_section_id": self.last_section_id,
+            "last_section": self.last_section,
         }
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _optional_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    if value in {"0", "false", "False"}:
+        return False
+    if value in {"1", "true", "True"}:
+        return True
+    return None
 
 
 def _parse_health_line(line: str) -> DevMetrics | None:
@@ -84,6 +120,7 @@ def _parse_health_line(line: str) -> DevMetrics | None:
     if match is None:
         return None
 
+    extra_fields = parse_key_value_fields(match.group("extra_fields") or "")
     rssi = int(match.group("rssi"))
     error_count = int(match.group("errors"))
     errors = DevMetricsErrors(
@@ -101,6 +138,13 @@ def _parse_health_line(line: str) -> DevMetrics | None:
         errors=errors,
         free_heap=int(match.group("heap")),
         error_count=error_count,
+        reset_reason=extra_fields.get("reset_reason"),
+        reset_code=_optional_int(extra_fields.get("reset_code")),
+        crash_valid=_optional_bool(extra_fields.get("crash_valid")),
+        prev_uptime_sec=_optional_int(extra_fields.get("prev_uptime")),
+        prev_free_heap=_optional_int(extra_fields.get("prev_heap")),
+        last_section_id=_optional_int(extra_fields.get("last_section_id")),
+        last_section=extra_fields.get("last_section"),
     )
 
 

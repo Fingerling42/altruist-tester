@@ -49,12 +49,28 @@ def test_detects_abnormal_firmware_reset_reasons():
     ]
 
 
-def test_detects_firmware_wifi_recovery_reboot():
-    line = "[WiFi] STA link down too long; rebooting for recovery"
-
-    assert [alert.code for alert in detect_keyword_alerts(line)] == [
-        "WIFI_RECOVERY_REBOOT"
+def test_ignores_human_readable_subsystem_error_lines():
+    lines = [
+        "[SDCardLogger] SD card NOT connected",
+        "Card Mount Failed",
+        "failed to mount FS",
+        "OTA failed after all attempts",
+        "[EPD] Display stuck detected - recovering and retrying with FULL refresh",
+        "[Sensors] JSON overflow after fetch",
+        "[API] JSON snapshot overflow; skipping send",
     ]
+
+    assert [detect_keyword_alerts(line) for line in lines] == [[] for _ in lines]
+
+
+def test_ignores_structured_subsystem_lines():
+    lines = [
+        "[SUBSYSTEM] event subsystem=wifi reason=sta_recovery mode=deep",
+        "[SUBSYSTEM] error subsystem=sd reason=open_append_failed path=/data/x.csv",
+        "[SUBSYSTEM] error subsystem=sensor reason=json_overflow sensor=BME680",
+    ]
+
+    assert [detect_keyword_alerts(line) for line in lines] == [[] for _ in lines]
 
 
 def test_detects_access_faults_and_assertions():
@@ -106,3 +122,17 @@ def test_ignores_expected_network_error_lines():
         detect_keyword_alerts("[ERROR] [Map] FAILED: server returned HTTP error") == []
     )
     assert detect_keyword_alerts("[Datalog] FAILED: account balance too low") == []
+    assert (
+        detect_keyword_alerts(
+            "[CONNECTIVITY] failed channel=sensors-connectivity seq=3 "
+            "reason=http_error host=connectivity.robonomics.network code=500"
+        )
+        == []
+    )
+    assert (
+        detect_keyword_alerts(
+            "[DATALOG] failed reason=rpc_error code=1010 "
+            "message=invalid_transaction response_len=111"
+        )
+        == []
+    )

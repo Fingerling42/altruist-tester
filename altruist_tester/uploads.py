@@ -17,7 +17,6 @@ class UploadChannelStats:
     attempts: int = 0
     successes: int = 0
     failures: int = 0
-    skipped: int = 0
     warnings: int = 0
     max_consecutive_failures: int = 0
     last_status: str | None = None
@@ -33,14 +32,7 @@ class UploadChannelStats:
     def observed(self) -> bool:
         """Return whether any upload line was parsed for this channel."""
 
-        return (
-            self.attempts
-            + self.successes
-            + self.failures
-            + self.skipped
-            + self.warnings
-            > 0
-        )
+        return self.attempts + self.successes + self.failures + self.warnings > 0
 
     @property
     def effective_attempts(self) -> int:
@@ -65,12 +57,12 @@ class UploadChannelStats:
             self.targets.add(event.target)
 
         if event.status == "attempt":
-            if self.channel == "datalog" and self._pending_attempt:
-                return
+            if self._pending_attempt:
+                self.warnings += 1
+                reason = "attempt_without_previous_outcome"
+                self.warning_reasons[reason] = self.warning_reasons.get(reason, 0) + 1
             self.attempts += 1
             self._pending_attempt = True
-            return
-        if event.status == "target":
             return
         if event.status == "success":
             self.successes += 1
@@ -92,19 +84,6 @@ class UploadChannelStats:
                     self.failure_reasons.get(event.reason, 0) + 1
                 )
             return
-        if event.status == "skipped":
-            self.skipped += 1
-            if event.reason:
-                self.warning_reasons[event.reason] = (
-                    self.warning_reasons.get(event.reason, 0) + 1
-                )
-            return
-        if event.status == "warning":
-            self.warnings += 1
-            if event.reason:
-                self.warning_reasons[event.reason] = (
-                    self.warning_reasons.get(event.reason, 0) + 1
-                )
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-friendly channel summary."""
@@ -116,7 +95,6 @@ class UploadChannelStats:
             "logged_attempts": self.attempts,
             "successes": self.successes,
             "failures": self.failures,
-            "skipped": self.skipped,
             "warnings": self.warnings,
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,

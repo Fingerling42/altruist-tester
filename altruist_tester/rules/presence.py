@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from altruist_tester.rules.severity import severity_for_missing_sensor_metrics
 from altruist_tester.samples import SensorSampleSeries
 
 PresenceStatus = Literal["ok", "warn", "fail"]
@@ -187,7 +188,7 @@ def check_sensor_presence(
     missing = tuple(metric for metric in expected if metric not in observed_set)
     if missing:
         return SensorPresenceReport(
-            status="fail",
+            status=severity_for_missing_sensor_metrics(),
             expected_sensors=expected_sensor_names,
             expected_metrics=expected,
             observed_metrics=observed_metrics,

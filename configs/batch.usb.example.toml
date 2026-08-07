@@ -2,6 +2,8 @@
 duration = "24h"
 baud = 115200
 output_dir = "runs"
+wait_port = true
+wait_port_timeout = "5m"
 
 [[devices]]
 slot = "slot-01"

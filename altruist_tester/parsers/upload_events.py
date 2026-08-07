@@ -3,42 +3,30 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
+from altruist_tester.parsers.boot_events import parse_key_value_fields
+
 UploadChannel = Literal["connectivity", "datalog"]
-UploadStatus = Literal["attempt", "target", "success", "failure", "skipped", "warning"]
+UploadStatus = Literal["attempt", "success", "failure"]
 
-_MAP_ATTEMPT_RE = re.compile(r"\[Map#(?P<sequence>\d+)\]\s+Send attempt")
-_MAP_POST_RE = re.compile(r"\[Map#(?P<sequence>\d+)\]\s+POST to (?P<target>\S+)")
-_MAP_SUCCESS_RE = re.compile(
-    r"\[Map#(?P<sequence>\d+)\]\s+OK, POST succeeded -> (?P<target>\S+)"
-)
-_MAP_FAILURE_RE = re.compile(r"\[Map\]\s+FAILED:\s*(?P<reason>.+)$")
-_MAP_SKIP_RE = re.compile(r"\[Map\]\s+Skipping send:\s*(?P<reason>.+)$")
-_MAP_POST_SKIP_RE = re.compile(
-    r"\[Map#(?P<sequence>\d+)\]\s+skipped:\s*(?P<reason>.+)$"
-)
-_MAP_WARNING_RE = re.compile(r"\[Map\]\s+WARNING:\s*(?P<reason>.+)$")
-
-_DATALOG_SENDING_RE = re.compile(r"\[Datalog\]\s+Sending:")
-_DATALOG_SUCCESS_RE = re.compile(r"\[Datalog\]\s+OK,\s*result:\s*(?P<result>.*)$")
-_DATALOG_FAILURE_RE = re.compile(r"\[Datalog\]\s+FAILED\b")
-_DATALOG_WARNING_RE = re.compile(r"\[Datalog\]\s+WARNING:\s*(?P<reason>.+)$")
-_DATALOG_EXTRINSIC_ATTEMPT_RE = re.compile(r"\bExtrinsic Datalog:\s*size\s+\d+")
-_DATALOG_EXTRINSIC_RESULT_RE = re.compile(
-    r'\bExtrinsic result:\s*(?P<result>"?0x[0-9a-fA-F]+"?)',
+_CONNECTIVITY_RE = re.compile(
+    r"^\[CONNECTIVITY\]\s+(?P<status>attempt|success|failed)\s+"
+    r"channel=sensors-connectivity\s+seq=(?P<sequence>\d+)"
+    r"(?:\s+(?P<fields>.+?))?\s*$"
 )
 
-_API_NAME_RE = re.compile(r"API Name:\s*(?P<name>.+)$")
-_API_COUNT_SENDS_RE = re.compile(r"Count Sends:\s*(?P<count>\d+)")
-_API_IS_OK_RE = re.compile(r"Is OK:\s*(?P<ok>Yes|No)")
-_DATALOG_API_NAME = "Robonomics Datalog"
-
-
-def _clean_result(value: str) -> str | None:
-    result = value.strip().removeprefix(":").strip()
-    return result or None
+_DATALOG_ATTEMPT_RE = re.compile(r"^\[DATALOG\]\s+attempt(?:\s+(?P<fields>.+?))?\s*$")
+_DATALOG_SUCCESS_RE = re.compile(
+    r"^\[DATALOG\]\s+success\s+response_len=(?P<response_len>\d+)\s*$"
+)
+_DATALOG_FAILURE_RE = re.compile(
+    r"^\[DATALOG\]\s+failed\s+reason=(?P<reason>\S+)"
+    r"(?:\s+code=(?P<code>-?\d+))?"
+    r"(?:\s+message=(?P<message>.*?))?"
+    r"(?:\s+response_len=(?P<response_len>\d+))?\s*$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,163 +51,80 @@ class UploadEvent:
         }
 
 
-def parse_upload_event(line: str) -> UploadEvent | None:
-    """Parse one firmware upload status line.
+def _format_fields(
+    fields: dict[str, str],
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> str | None:
+    details = [f"{key}={value}" for key, value in fields.items() if key not in exclude]
+    if not details:
+        return None
+    return " ".join(details)
 
-    Supports Robonomics Map/connectivity lines and Robonomics Datalog lines.
-    Returns ``None`` for serial lines unrelated to upload delivery.
-    """
 
-    if match := _MAP_ATTEMPT_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="attempt",
-            sequence=int(match.group("sequence")),
-        )
-    if match := _MAP_POST_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="target",
-            sequence=int(match.group("sequence")),
-            target=match.group("target"),
-        )
-    if match := _MAP_SUCCESS_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="success",
-            sequence=int(match.group("sequence")),
-            target=match.group("target"),
-        )
-    if match := _MAP_FAILURE_RE.search(line):
+def _parse_connectivity_event(match: re.Match[str]) -> UploadEvent | None:
+    fields = parse_key_value_fields(match.group("fields") or "")
+    status = match.group("status")
+    target = fields.get("host")
+
+    if status == "failed":
+        reason = fields.get("reason")
+        if not reason:
+            return None
+        details = _format_fields(fields, exclude=frozenset({"host", "reason"}))
         return UploadEvent(
             channel="connectivity",
             status="failure",
-            reason=match.group("reason"),
-        )
-    if match := _MAP_SKIP_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="skipped",
-            reason=match.group("reason"),
-        )
-    if match := _MAP_POST_SKIP_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="skipped",
             sequence=int(match.group("sequence")),
-            reason=match.group("reason"),
-        )
-    if match := _MAP_WARNING_RE.search(line):
-        return UploadEvent(
-            channel="connectivity",
-            status="warning",
-            reason=match.group("reason"),
+            target=target,
+            reason=f"{reason} {details}" if details else reason,
         )
 
-    if _DATALOG_EXTRINSIC_ATTEMPT_RE.search(line):
-        return UploadEvent(channel="datalog", status="attempt")
-    if match := _DATALOG_EXTRINSIC_RESULT_RE.search(line):
-        return UploadEvent(
-            channel="datalog",
-            status="success",
-            reason=_clean_result(match.group("result")),
-        )
-    if _DATALOG_SENDING_RE.search(line):
-        return UploadEvent(channel="datalog", status="attempt")
-    if match := _DATALOG_SUCCESS_RE.search(line):
-        return UploadEvent(
-            channel="datalog",
-            status="success",
-            reason=_clean_result(match.group("result")),
-        )
-    if _DATALOG_FAILURE_RE.search(line):
-        return UploadEvent(channel="datalog", status="failure")
-    if match := _DATALOG_WARNING_RE.search(line):
-        return UploadEvent(
-            channel="datalog",
-            status="warning",
-            reason=match.group("reason"),
-        )
-    return None
+    return UploadEvent(
+        channel="connectivity",
+        status=status,
+        sequence=int(match.group("sequence")),
+        target=target,
+        reason=_format_fields(fields, exclude=frozenset({"host"})),
+    )
 
 
-@dataclass(slots=True)
-class UploadStatusStreamParser:
-    """Parse multi-line firmware upload status blocks.
+def parse_upload_event(line: str) -> UploadEvent | None:
+    """Parse one firmware upload status line.
 
-    Firmware development logs print API status as separate lines:
-    ``API Name``, ``Count Sends``, ``Last Send Time``, and ``Is OK``. This
-    parser turns Datalog count increases into upload outcomes while ignoring
-    repeated status snapshots with unchanged counters.
+    Supports stable ``[CONNECTIVITY]`` and ``[DATALOG]`` firmware lines.
+    Returns ``None`` for serial lines unrelated to upload delivery.
     """
 
-    _current_api_name: str | None = None
-    _current_count_sends: int | None = None
-    _last_counts: dict[UploadChannel, int] = field(default_factory=dict)
-    _pending_explicit_datalog_outcomes: int = 0
+    if match := _CONNECTIVITY_RE.match(line):
+        return _parse_connectivity_event(match)
 
-    def record_explicit_event(self, event: UploadEvent | None) -> None:
-        """Remember explicit Datalog outcomes to avoid status-block duplicates."""
-
-        if event is None:
-            return
-        if event.channel == "datalog" and event.status in {"success", "failure"}:
-            self._pending_explicit_datalog_outcomes += 1
-
-    def feed(self, line: str) -> tuple[UploadEvent, ...]:
-        """Parse one line and return upload events completed by it."""
-
-        if match := _API_NAME_RE.search(line):
-            self._current_api_name = match.group("name").strip()
-            self._current_count_sends = None
-            return ()
-
-        if self._current_api_name is None:
-            return ()
-
-        if match := _API_COUNT_SENDS_RE.search(line):
-            self._current_count_sends = int(match.group("count"))
-            return ()
-
-        if match := _API_IS_OK_RE.search(line):
-            is_ok = match.group("ok") == "Yes"
-            events = self._finish_api_status(is_ok=is_ok)
-            self._current_api_name = None
-            self._current_count_sends = None
-            return events
-
-        return ()
-
-    def _finish_api_status(self, *, is_ok: bool) -> tuple[UploadEvent, ...]:
-        if (
-            self._current_api_name != _DATALOG_API_NAME
-            or self._current_count_sends is None
-        ):
-            return ()
-
-        count_sends = self._current_count_sends
-        previous_count = self._last_counts.get("datalog")
-        self._last_counts["datalog"] = count_sends
-        if previous_count is None or count_sends <= previous_count:
-            return ()
-
-        delta = count_sends - previous_count
-        if self._pending_explicit_datalog_outcomes:
-            duplicate_count = min(delta, self._pending_explicit_datalog_outcomes)
-            delta -= duplicate_count
-            self._pending_explicit_datalog_outcomes -= duplicate_count
-        if delta <= 0:
-            return ()
-
-        status: UploadStatus = "success" if is_ok else "failure"
-        ok_text = "Yes" if is_ok else "No"
-        reason = f"API status Count Sends={count_sends}, Is OK={ok_text}"
-        return tuple(
-            UploadEvent(
-                channel="datalog",
-                status=status,
-                sequence=count_sends - offset,
-                reason=reason,
-            )
-            for offset in range(delta - 1, -1, -1)
+    if match := _DATALOG_ATTEMPT_RE.match(line):
+        fields = parse_key_value_fields(match.group("fields") or "")
+        if not fields:
+            return None
+        return UploadEvent(
+            channel="datalog",
+            status="attempt",
+            reason=_format_fields(fields),
         )
+    if match := _DATALOG_SUCCESS_RE.match(line):
+        return UploadEvent(
+            channel="datalog",
+            status="success",
+            reason=f"response_len={match.group('response_len')}",
+        )
+    if match := _DATALOG_FAILURE_RE.match(line):
+        details = [match.group("reason")]
+        if match.group("code") is not None:
+            details.append(f"code={match.group('code')}")
+        if match.group("message") is not None:
+            details.append(f"message={match.group('message')}")
+        if match.group("response_len") is not None:
+            details.append(f"response_len={match.group('response_len')}")
+        return UploadEvent(
+            channel="datalog",
+            status="failure",
+            reason=" ".join(details),
+        )
+    return None

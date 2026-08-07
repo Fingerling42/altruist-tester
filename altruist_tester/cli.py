@@ -5,7 +5,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Protocol
@@ -22,6 +22,7 @@ from altruist_tester.artifacts import (
     utc_now,
 )
 from altruist_tester.config import (
+    BATCH_DEVICE_MODELS,
     BatchConfig,
     BatchDeviceConfig,
     ConfigError,
@@ -47,6 +48,7 @@ from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
 DEFAULT_OUTPUT_DIR = Path("runs")
 BATCH_PROGRESS_INTERVAL_SECONDS = 10.0
 BATCH_TERMINATE_GRACE_SECONDS = 5.0
+RUN_PROGRESS_FILE_INTERVAL_SECONDS = 5 * 60
 
 
 class BatchInterrupted(RuntimeError):
@@ -178,6 +180,12 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
     typer.echo(f"- duration: {config.duration_input} ({config.duration_seconds}s)")
     typer.echo(f"- baud: {config.baud}")
     typer.echo(f"- output_dir: {config.output_dir}")
+    typer.echo(f"- wait_port: {'yes' if config.wait_port else 'no'}")
+    if config.wait_port:
+        typer.echo(
+            f"- wait_port_timeout: {config.wait_port_timeout_input} "
+            f"({config.wait_port_timeout_seconds}s)"
+        )
     typer.echo(f"- default_config: {_format_optional_path(config.device_config)}")
     typer.echo("Devices:")
     for device in config.devices:
@@ -197,6 +205,8 @@ def _explicit_batch_config(
     baud: int,
     output_dir: Path,
     device_config: Path | None,
+    wait_port: bool,
+    wait_port_timeout: str | None,
 ) -> BatchConfig:
     if not ports:
         raise typer.BadParameter(
@@ -218,6 +228,11 @@ def _explicit_batch_config(
         duration_seconds = parse_duration_seconds(duration)
     except DurationParseError as exc:
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
+    wait_port_timeout_input = wait_port_timeout or "2m"
+    try:
+        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout_input)
+    except DurationParseError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
 
     config = BatchConfig(
         duration_input=duration,
@@ -225,6 +240,9 @@ def _explicit_batch_config(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout_input=wait_port_timeout_input,
+        wait_port_timeout_seconds=wait_port_timeout_seconds,
         devices=tuple(
             BatchDeviceConfig(
                 slot=f"device-{index:02d}",
@@ -249,6 +267,8 @@ def _load_batch_cli_config(
     baud: int,
     output_dir: Path,
     device_config: Path | None,
+    wait_port: bool,
+    wait_port_timeout: str | None,
 ) -> BatchConfig:
     if config is not None:
         if ports or duration is not None or device_config is not None:
@@ -257,9 +277,25 @@ def _load_batch_cli_config(
                 param_hint="--config",
             )
         try:
-            return load_batch_config(config)
+            batch_config = load_batch_config(config)
         except ConfigError as exc:
             raise typer.BadParameter(str(exc), param_hint="--config") from exc
+        if wait_port_timeout is not None:
+            try:
+                wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+            except DurationParseError as exc:
+                raise typer.BadParameter(
+                    str(exc),
+                    param_hint="--wait-port-timeout",
+                ) from exc
+            batch_config = replace(
+                batch_config,
+                wait_port_timeout_input=wait_port_timeout,
+                wait_port_timeout_seconds=wait_port_timeout_seconds,
+            )
+        if wait_port:
+            batch_config = replace(batch_config, wait_port=True)
+        return batch_config
 
     return _explicit_batch_config(
         ports=ports,
@@ -267,6 +303,8 @@ def _load_batch_cli_config(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout=wait_port_timeout,
     )
 
 
@@ -291,6 +329,16 @@ def _batch_worker_command(
     ]
     if device.effective_config is not None:
         command.extend(["--config", str(device.effective_config)])
+    if device.model is not None:
+        command.extend(["--device-model", device.model])
+    if config.wait_port:
+        command.extend(
+            [
+                "--wait-port",
+                "--wait-port-timeout",
+                config.wait_port_timeout_input,
+            ]
+        )
     for sensor in device.expected_sensors:
         command.extend(["--expect-sensor", sensor])
     for metric in device.expected_metrics:
@@ -410,7 +458,11 @@ def _findings_count(summary: dict[str, object]) -> int | None:
     return None
 
 
-def _finding_messages(summary: dict[str, object], *, limit: int = 3) -> list[str]:
+def _finding_messages(
+    summary: dict[str, object],
+    *,
+    limit: int | None = None,
+) -> list[str]:
     findings = summary.get("findings")
     if not isinstance(findings, list):
         return []
@@ -431,7 +483,7 @@ def _finding_messages(summary: dict[str, object], *, limit: int = 3) -> list[str
                 messages.append(message)
         elif isinstance(code, str) and code:
             messages.append(code)
-        if len(messages) >= limit:
+        if limit is not None and len(messages) >= limit:
             break
     return messages
 
@@ -468,6 +520,7 @@ def _device_result_from_summary(
         "finding_messages": _finding_messages(summary),
         "failed_checks": failed_checks,
         "upload_health": summary.get("upload_health"),
+        "subsystem_health": summary.get("subsystem_health"),
         "sensor_presence": summary.get("sensor_presence"),
     }
 
@@ -496,6 +549,7 @@ def _device_result_without_summary(
         "finding_messages": [],
         "failed_checks": [],
         "upload_health": None,
+        "subsystem_health": None,
         "sensor_presence": None,
         "summary_error": reason,
     }
@@ -700,17 +754,11 @@ def _emit_batch_progress(
 
 
 def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
-    poll = getattr(worker.process, "poll", None)
-    if callable(poll):
-        return poll()
-    return worker.process.wait()
+    return worker.process.poll()
 
 
 def _process_current_returncode(process: subprocess.Popen[str]) -> int | None:
-    poll = getattr(process, "poll", None)
-    if callable(poll):
-        return poll()
-    return getattr(process, "returncode", None)
+    return process.poll()
 
 
 def _interrupted_worker_result(
@@ -755,9 +803,7 @@ def _terminate_batch_workers(
 
     typer.echo("Stopping running batch workers...", err=True)
     for worker in running_workers:
-        terminate = getattr(worker.process, "terminate", None)
-        if callable(terminate):
-            terminate()
+        worker.process.terminate()
 
     deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
     while time.monotonic() < deadline:
@@ -771,9 +817,7 @@ def _terminate_batch_workers(
     for worker in running_workers:
         returncode = _process_current_returncode(worker.process)
         if returncode is None:
-            kill = getattr(worker.process, "kill", None)
-            if callable(kill):
-                kill()
+            worker.process.kill()
             returncode = _process_current_returncode(worker.process)
         worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
 
@@ -967,16 +1011,32 @@ def _format_run_progress(progress: SerialLogProgress) -> str:
 
 
 def _make_progress_printer():
+    interactive = sys.stderr.isatty()
     last_length = 0
+    last_file_progress_elapsed: float | None = None
 
     def print_progress(progress: SerialLogProgress) -> None:
-        nonlocal last_length
+        nonlocal last_file_progress_elapsed, last_length
         message = _format_run_progress(progress)
-        padding = " " * max(0, last_length - len(message))
-        typer.echo(f"\r{message}{padding}", err=True, nl=False)
-        last_length = len(message)
-        if progress.complete:
-            typer.echo("", err=True)
+        if interactive:
+            padding = " " * max(0, last_length - len(message))
+            typer.echo(f"\r{message}{padding}", err=True, nl=False)
+            last_length = len(message)
+            if progress.complete:
+                typer.echo("", err=True)
+            return
+
+        should_print = (
+            progress.complete
+            or last_file_progress_elapsed is None
+            or progress.elapsed_seconds - last_file_progress_elapsed
+            >= RUN_PROGRESS_FILE_INTERVAL_SECONDS
+        )
+        if not should_print:
+            return
+
+        typer.echo(message, err=True)
+        last_file_progress_elapsed = progress.elapsed_seconds
 
     return print_progress
 
@@ -1005,6 +1065,85 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
     raise typer.Exit(code=2)
 
 
+def _wait_for_explicit_port(
+    port: Path,
+    *,
+    timeout_seconds: int,
+    poll_interval_seconds: float = 0.25,
+) -> Path:
+    if port.exists():
+        return port
+
+    typer.echo(f"Waiting up to {_format_elapsed(timeout_seconds)} for {port}...")
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval_seconds)
+        if port.exists():
+            typer.echo(f"Serial port appeared: {port}")
+            return port
+
+    typer.secho(
+        f"Serial port did not appear within {_format_elapsed(timeout_seconds)}: {port}",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _wait_for_auto_port(
+    *,
+    timeout_seconds: int,
+    poll_interval_seconds: float = 0.25,
+) -> Path:
+    port_infos = list_serial_ports()
+    if len(port_infos) == 1:
+        return Path(port_infos[0].device)
+    if len(port_infos) > 1:
+        _resolve_run_port(None, auto=True)
+
+    typer.echo(
+        f"Waiting up to {_format_elapsed(timeout_seconds)} for one serial port..."
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval_seconds)
+        port_infos = list_serial_ports()
+        if len(port_infos) == 1:
+            resolved_port = Path(port_infos[0].device)
+            typer.echo(f"Serial port appeared: {resolved_port}")
+            return resolved_port
+        if len(port_infos) > 1:
+            _resolve_run_port(None, auto=True)
+
+    typer.secho(
+        f"No serial ports found within {_format_elapsed(timeout_seconds)}.",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _resolve_or_wait_for_run_port(
+    port: Path | None,
+    auto: bool,
+    *,
+    wait_port: bool,
+    wait_port_timeout_seconds: int,
+) -> Path:
+    if not wait_port:
+        return _resolve_run_port(port, auto)
+    if port is not None and auto:
+        raise typer.BadParameter("Use either --port or --auto, not both.")
+    if port is not None:
+        return _wait_for_explicit_port(
+            port,
+            timeout_seconds=wait_port_timeout_seconds,
+        )
+    if not auto:
+        raise typer.BadParameter("Specify --port or --auto.")
+    return _wait_for_auto_port(timeout_seconds=wait_port_timeout_seconds)
+
+
 def _append_check_message(message: str, check_message: str) -> str:
     return f"{message} {check_message}."
 
@@ -1014,12 +1153,14 @@ def _rule_engine_config(
     *,
     expected_sensors: tuple[str, ...],
     expected_metrics: tuple[str, ...],
+    device_model: str | None,
     finished_at: datetime,
     duration_seconds: int,
 ) -> RuleEngineConfig:
     return RuleEngineConfig(
         expected_metrics=expected_metrics,
         expected_sensors=expected_sensors,
+        device_model=device_model,
         sensor_ranges=tester_config.sensor_ranges,
         warn_on_unknown_ranges=tester_config.warn_on_unknown_ranges,
         unknown_non_negative_metrics=tester_config.unknown_non_negative_metrics,
@@ -1035,6 +1176,9 @@ def _rule_engine_config(
         silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
         connectivity_upload=tester_config.connectivity_upload,
         datalog_upload=tester_config.datalog_upload,
+        log_contract_startup_window_seconds=(
+            tester_config.log_contract_startup_window_seconds
+        ),
         reference_time=finished_at,
         max_tail_window_seconds=duration_seconds,
         duration_seconds=duration_seconds,
@@ -1045,10 +1189,14 @@ def _report_messages(rule_result: RuleEngineResult) -> tuple[RuleReportMessage, 
     reports = rule_result.reports
     return (
         reports.sensor_presence,
+        reports.sensor_ranges,
         reports.sensor_flatlines,
         reports.sensor_cadence,
+        reports.urban_pm,
         reports.runtime_counters,
         reports.serial_silence,
+        reports.log_contract,
+        reports.subsystem_health,
         reports.upload_health,
     )
 
@@ -1073,6 +1221,19 @@ def _emit_report_messages(reports: tuple[RuleReportMessage, ...]) -> None:
             )
         elif report.status == "fail":
             typer.secho(report.message, fg=typer.colors.RED, err=True)
+
+
+def _normalize_device_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    model = value.strip().lower()
+    if model not in BATCH_DEVICE_MODELS:
+        allowed = ", ".join(sorted(BATCH_DEVICE_MODELS))
+        raise typer.BadParameter(
+            f"Device model must be one of: {allowed}.",
+            param_hint="--device-model",
+        )
+    return model
 
 
 @app.command()
@@ -1149,6 +1310,20 @@ def batch(
             resolve_path=False,
         ),
     ] = None,
+    wait_port: Annotated[
+        bool,
+        typer.Option(
+            "--wait-port",
+            help="Pass --wait-port to every batch worker.",
+        ),
+    ] = False,
+    wait_port_timeout: Annotated[
+        str | None,
+        typer.Option(
+            "--wait-port-timeout",
+            help="Override the per-worker wait-port timeout, for example 30s or 2m.",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -1166,6 +1341,8 @@ def batch(
         baud=baud,
         output_dir=output_dir,
         device_config=device_config,
+        wait_port=wait_port,
+        wait_port_timeout=wait_port_timeout,
     )
 
     if dry_run:
@@ -1205,6 +1382,20 @@ def run(
             help="Use the only detected serial port.",
         ),
     ] = False,
+    wait_port: Annotated[
+        bool,
+        typer.Option(
+            "--wait-port",
+            help="Wait for the selected serial port to appear before starting.",
+        ),
+    ] = False,
+    wait_port_timeout: Annotated[
+        str,
+        typer.Option(
+            "--wait-port-timeout",
+            help="Maximum time to wait for --wait-port, for example 30s or 2m.",
+        ),
+    ] = "2m",
     duration: Annotated[
         str,
         typer.Option(
@@ -1262,6 +1453,16 @@ def run(
             ),
         ),
     ] = None,
+    device_model: Annotated[
+        str | None,
+        typer.Option(
+            "--device-model",
+            help=(
+                "Optional device model hint for model-specific rules "
+                "(urban or insight)."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run a USB-C serial burn-in test for one device.
 
@@ -1276,7 +1477,17 @@ def run(
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
 
     try:
-        resolved_port = _resolve_run_port(port, auto)
+        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+    except DurationParseError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
+
+    try:
+        resolved_port = _resolve_or_wait_for_run_port(
+            port,
+            auto,
+            wait_port=wait_port,
+            wait_port_timeout_seconds=wait_port_timeout_seconds,
+        )
     except typer.BadParameter as exc:
         raise typer.BadParameter(str(exc), param_hint="--port") from exc
 
@@ -1285,6 +1496,7 @@ def run(
     except ConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="--config") from exc
 
+    device_model = _normalize_device_model(device_model)
     expected_sensors = (*tester_config.expected_sensors, *(expected_sensor or ()))
     expected_metrics = (*tester_config.expected_metrics, *(expected_metric or ()))
     try:
@@ -1365,6 +1577,7 @@ def run(
             tester_config,
             expected_sensors=expected_sensors,
             expected_metrics=expected_metrics,
+            device_model=device_model,
             finished_at=finished_at,
             duration_seconds=duration_seconds,
         ),
@@ -1375,7 +1588,10 @@ def run(
     sensor_cadence = rule_result.reports.sensor_cadence
     runtime_counters = rule_result.reports.runtime_counters
     serial_silence = rule_result.reports.serial_silence
+    log_contract = rule_result.reports.log_contract
+    subsystem_health = rule_result.reports.subsystem_health
     upload_health = rule_result.reports.upload_health
+    urban_pm = rule_result.reports.urban_pm
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -1403,17 +1619,27 @@ def run(
         artifacts.append_event("run_completed")
     final_details = {
         "verdict": rule_result.verdict,
+        "device_model": device_model,
         "config": str(config) if config is not None else None,
         "metrics_seen": stats.dev_metrics.seen,
         "samples_seen": stats.sensor_samples_count > 0,
         "findings": [finding.as_dict() for finding in rule_result.findings],
         "serial_lines_read": stats.lines_read,
         "serial_bytes_read": stats.bytes_read,
+        "serial_capture_started_at": stats.capture_started_at,
         "first_serial_line_elapsed_seconds": stats.first_line_elapsed_seconds,
         "last_serial_line_elapsed_seconds": stats.last_line_elapsed_seconds,
         "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
         "max_serial_silence_seconds": serial_silence.max_silence_seconds,
         **stats.dev_metrics.as_dict(),
+        "boot_reset": stats.boot_events.as_dict(),
+        "boot_event_records": list(stats.boot_event_records),
+        "firmware_build": stats.build_events.as_dict(),
+        "build_event_records": list(stats.build_event_records),
+        "subsystem_events": stats.subsystem_events.as_dict(),
+        "subsystem_event_records": list(stats.subsystem_event_records),
+        "payload_observations": stats.payload_observations.as_dict(),
+        "payload_observation_records": list(stats.payload_observation_records),
         "keyword_alerts_count": stats.keyword_alerts_count,
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,
@@ -1424,8 +1650,11 @@ def run(
         "sensor_cadence": sensor_cadence.as_dict(),
         "runtime_counters": runtime_counters.as_dict(),
         "serial_silence": serial_silence.as_dict(),
+        "log_contract": log_contract.as_dict(),
+        "subsystem_health": subsystem_health.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
         "upload_health": upload_health.as_dict(),
+        "urban_pm": urban_pm.as_dict(),
         "device_identity": final_device_identity,
     }
     artifacts.write_summary(

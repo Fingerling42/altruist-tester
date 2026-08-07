@@ -75,3 +75,21 @@ def test_check_upload_health_accepts_required_success_rate():
     assert report.channels["connectivity"].attempts == 3
     assert report.channels["connectivity"].successes == 2
     assert report.channels["connectivity"].success_rate == 2 / 3
+
+
+def test_check_upload_health_warns_for_attempt_without_previous_outcome():
+    report = check_upload_health(
+        _stats(
+            UploadEvent("datalog", "attempt"),
+            UploadEvent("datalog", "attempt"),
+            UploadEvent("datalog", "success"),
+        ),
+        datalog=UploadChannelConfig(mode="optional"),
+    )
+
+    channel = report.channels["datalog"]
+    assert report.status == "warn"
+    assert channel.attempts == 2
+    assert channel.warnings == 1
+    assert channel.warning_reasons == {"attempt_without_previous_outcome": 1}
+    assert report.findings[0].code == "UPLOAD_LOG_SEQUENCE_WARNING"

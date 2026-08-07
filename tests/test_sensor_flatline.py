@@ -1,41 +1,15 @@
-from datetime import UTC, datetime, timedelta
-
 from altruist_tester.rules.flatline import (
     check_sensor_flatlines,
     check_series_flatline,
 )
-from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
-
-
-def _sample(
-    sensor: str,
-    metric: str,
-    value: float,
-    offset_seconds: int,
-) -> SensorSampleRecord:
-    ts = datetime(2026, 6, 5, 12, 0, tzinfo=UTC) + timedelta(seconds=offset_seconds)
-    return SensorSampleRecord(
-        ts=ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        sensor=sensor,
-        metric=metric,
-        value=value,
-        unit=None,
-        source="serial",
-    )
-
-
-def _series_with_records(*records: SensorSampleRecord) -> SensorSampleSeries:
-    series = SensorSampleSeries()
-    for record in records:
-        series.append(record)
-    return series
+from tests.helpers import sample_record, sample_series
 
 
 def test_check_series_flatline_passes_for_changing_values():
     records = [
-        _sample("BME280", "temperature", 24.0, 0),
-        _sample("BME280", "temperature", 24.2, 60),
-        _sample("BME280", "temperature", 24.3, 120),
+        sample_record("BME280", "temperature", 24.0, 0),
+        sample_record("BME280", "temperature", 24.2, 60),
+        sample_record("BME280", "temperature", 24.3, 120),
     ]
 
     finding = check_series_flatline("BME280", "temperature", records)
@@ -46,7 +20,7 @@ def test_check_series_flatline_passes_for_changing_values():
 
 
 def test_check_series_flatline_warns_when_there_is_not_enough_data():
-    records = [_sample("SCD4x", "co2", 612.0, 0)]
+    records = [sample_record("SCD4x", "co2", 612.0, 0)]
 
     finding = check_series_flatline("SCD4x", "co2", records)
 
@@ -57,8 +31,8 @@ def test_check_series_flatline_warns_when_there_is_not_enough_data():
 
 def test_check_series_flatline_warns_for_short_flatline_window():
     records = [
-        _sample("SCD4x", "co2", 612.0, 0),
-        _sample("SCD4x", "co2", 612.0, 30 * 60),
+        sample_record("SCD4x", "co2", 612.0, 0),
+        sample_record("SCD4x", "co2", 612.0, 30 * 60),
     ]
 
     finding = check_series_flatline("SCD4x", "co2", records)
@@ -70,8 +44,8 @@ def test_check_series_flatline_warns_for_short_flatline_window():
 
 def test_check_series_flatline_fails_for_long_flatline():
     records = [
-        _sample("SCD4x", "co2", 612.0, 0),
-        _sample("SCD4x", "co2", 612.0, 60 * 60),
+        sample_record("SCD4x", "co2", 612.0, 0),
+        sample_record("SCD4x", "co2", 612.0, 60 * 60),
     ]
 
     finding = check_series_flatline("SCD4x", "co2", records)
@@ -85,8 +59,8 @@ def test_check_series_flatline_warns_for_long_zero_flatline_metrics():
     # Zero particulate/gas/radiation readings can be physically valid, so a
     # long zero flatline is suspicious but not an automatic failure.
     records = [
-        _sample("SDS", "P2", 0.0, 0),
-        _sample("SDS", "P2", 0.0, 60 * 60),
+        sample_record("SDS", "P2", 0.0, 0),
+        sample_record("SDS", "P2", 0.0, 60 * 60),
     ]
 
     finding = check_series_flatline("SDS", "P2", records)
@@ -97,11 +71,11 @@ def test_check_series_flatline_warns_for_long_zero_flatline_metrics():
 
 
 def test_check_sensor_flatlines_aggregates_findings():
-    series = _series_with_records(
-        _sample("BME280", "temperature", 24.0, 0),
-        _sample("BME280", "temperature", 24.2, 60),
-        _sample("SCD4x", "co2", 612.0, 0),
-        _sample("SCD4x", "co2", 612.0, 60 * 60),
+    series = sample_series(
+        sample_record("BME280", "temperature", 24.0, 0),
+        sample_record("BME280", "temperature", 24.2, 60),
+        sample_record("SCD4x", "co2", 612.0, 0),
+        sample_record("SCD4x", "co2", 612.0, 60 * 60),
     )
 
     report = check_sensor_flatlines(series)

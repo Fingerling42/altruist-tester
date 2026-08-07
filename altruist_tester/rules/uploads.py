@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from altruist_tester.parsers.upload_events import UploadChannel
+from altruist_tester.rules.severity import severity_for_upload_mode
 from altruist_tester.uploads import UPLOAD_CHANNELS, UploadChannelStats, UploadStats
 
 UploadMode = Literal["disabled", "optional", "required"]
@@ -55,7 +56,6 @@ class UploadChannelReport:
     attempts: int
     successes: int
     failures: int
-    skipped: int
     warnings: int
     success_rate: float | None
     max_consecutive_failures: int
@@ -81,7 +81,6 @@ class UploadChannelReport:
             "attempts": self.attempts,
             "successes": self.successes,
             "failures": self.failures,
-            "skipped": self.skipped,
             "warnings": self.warnings,
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,
@@ -127,7 +126,7 @@ class UploadHealthReport:
 
 
 def _finding_status(mode: UploadMode) -> UploadStatus:
-    return "fail" if mode == "required" else "warn"
+    return severity_for_upload_mode(mode)
 
 
 def _finding(
@@ -145,6 +144,28 @@ def _finding(
     )
 
 
+def _warning(
+    *,
+    channel: UploadChannel,
+    code: str,
+    message: str,
+) -> UploadFinding:
+    return UploadFinding(
+        status="warn",
+        channel=channel,
+        code=code,
+        message=message,
+    )
+
+
+def _warning_reasons_text(stats: UploadChannelStats) -> str:
+    if not stats.warning_reasons:
+        return "unknown"
+    return ", ".join(
+        f"{reason}={count}" for reason, count in sorted(stats.warning_reasons.items())
+    )
+
+
 def _check_channel(
     stats: UploadChannelStats,
     config: UploadChannelConfig,
@@ -157,7 +178,6 @@ def _check_channel(
             attempts=stats.effective_attempts,
             successes=stats.successes,
             failures=stats.failures,
-            skipped=stats.skipped,
             warnings=stats.warnings,
             success_rate=stats.success_rate,
             max_consecutive_failures=stats.max_consecutive_failures,
@@ -169,6 +189,17 @@ def _check_channel(
         )
 
     findings: list[UploadFinding] = []
+    if stats.warnings:
+        findings.append(
+            _warning(
+                channel=stats.channel,
+                code="UPLOAD_LOG_SEQUENCE_WARNING",
+                message=(
+                    f"{stats.channel} upload log sequence has {stats.warnings} "
+                    f"warning(s): {_warning_reasons_text(stats)}"
+                ),
+            )
+        )
     if not stats.observed:
         findings.append(
             _finding(
@@ -238,7 +269,6 @@ def _check_channel(
         attempts=stats.effective_attempts,
         successes=stats.successes,
         failures=stats.failures,
-        skipped=stats.skipped,
         warnings=stats.warnings,
         success_rate=stats.success_rate,
         max_consecutive_failures=stats.max_consecutive_failures,
