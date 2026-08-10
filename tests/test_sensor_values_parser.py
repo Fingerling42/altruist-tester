@@ -27,7 +27,7 @@ def test_parse_sensor_json_snapshot_from_fixture():
 
 def test_parse_payload_sample_supports_all_firmware_aliases():
     line = (
-        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=64 "
+        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=48 "
         "sample_available=1 sample=gc:1.5,co2:612,co:0.1,o3:0.2,no2:0.3,"
         "fa:42,ea:55"
     )
@@ -48,7 +48,7 @@ def test_parse_payload_sample_supports_all_firmware_aliases():
 def test_parse_payload_metadata_after_uart_log_prefix():
     line = (
         "[123] [INFO] [PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-        "payload_len=49 sample_available=1 sample=h:65.15,t:25.84"
+        "payload_len=15 sample_available=1 sample=h:65.15,t:25.84"
     )
 
     fields = parse_payload_metadata(line)
@@ -57,7 +57,7 @@ def test_parse_payload_metadata_after_uart_log_prefix():
         "channel": "datalog",
         "encoding": "plain",
         "encrypted": "0",
-        "payload_len": "49",
+        "payload_len": "15",
         "sample_available": "1",
         "sample": "h:65.15,t:25.84",
     }
@@ -66,7 +66,7 @@ def test_parse_payload_metadata_after_uart_log_prefix():
 def test_parse_plain_payload_sample_values():
     line = (
         "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-        "payload_len=49 sample_available=1 sample=h:65.15,t:25.84,p:99860.91"
+        "payload_len=26 sample_available=1 sample=h:65.15,t:25.84,p:99860.91"
     )
 
     samples = parse_sensor_values(line)
@@ -125,7 +125,7 @@ def test_parse_encrypted_debug_payload_uses_plain_sample_only():
 
 def test_parse_payload_sample_ignores_service_time_field():
     line = (
-        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=64 "
+        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=38 "
         "sample_available=1 sample=h:65.15,t:25.84,time:17833545,p1:16.33"
     )
 
@@ -140,7 +140,7 @@ def test_parse_payload_sample_ignores_service_time_field():
 
 def test_parse_datalog_payload_remains_sensor_sample_fallback():
     line = (
-        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=49 "
+        "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=15 "
         "sample_available=1 sample=h:65.15,t:25.84"
     )
 
@@ -150,6 +150,16 @@ def test_parse_datalog_payload_remains_sensor_sample_fallback():
         ("datalog", "humidity", "serial_payload_datalog"),
         ("datalog", "temperature", "serial_payload_datalog"),
     ]
+
+
+def test_parse_truncated_plain_payload_sample_is_ignored():
+    line = (
+        "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
+        "payload_len=54 sample_available=1 "
+        "sample=h:56.17,t:27.66,p:9967,nm:44,na:42,p1:5.80,p2:4.00"
+    )
+
+    assert parse_sensor_values(line) == []
 
 
 def test_parse_non_contract_payload_channels_do_not_create_sensor_samples():

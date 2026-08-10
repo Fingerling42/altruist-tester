@@ -130,6 +130,17 @@ def _samples_from_compact_payload(
     return samples
 
 
+def _plain_payload_sample_is_complete(fields: dict[str, str], sample: str) -> bool:
+    if fields.get("encoding") != "plain" or fields.get("encrypted") != "0":
+        return True
+
+    try:
+        payload_len = int(fields.get("payload_len", ""))
+    except ValueError:
+        return True
+    return len(sample) == payload_len
+
+
 def _parse_payload_line(line: str) -> list[SensorSample]:
     fields = parse_payload_metadata(line)
     if fields is None:
@@ -142,6 +153,8 @@ def _parse_payload_line(line: str) -> list[SensorSample]:
 
     sample = fields.get("sample")
     if not sample or fields.get("sample_available") == "0":
+        return []
+    if not _plain_payload_sample_is_complete(fields, sample):
         return []
 
     return _samples_from_compact_payload(sample, sensor=str(channel), source=source)

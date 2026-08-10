@@ -463,7 +463,7 @@ def test_capture_raw_serial_writes_sensor_samples(tmp_path):
             ),
             (
                 b"[123] [INFO] [PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=28 sample_available=1 "
+                b"encrypted=0 payload_len=24 sample_available=1 "
                 b"sample=h:65.99,t:25.51,p1:16.33\n"
             ),
         ],
@@ -498,12 +498,12 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
         [
             (
                 b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=28 sample_available=1 "
+                b"encrypted=0 payload_len=15 sample_available=1 "
                 b"sample=h:65.99,t:25.51\n"
             ),
             (
                 b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-                b"payload_len=28 sample_available=1 "
+                b"payload_len=15 sample_available=1 "
                 b"sample=h:65.99,t:25.51\n"
             ),
         ],
@@ -533,13 +533,13 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
             "channel": "sensors-connectivity",
             "encoding": "plain",
             "encrypted": False,
-            "payload_len": 28,
+            "payload_len": 15,
             "sample_available": True,
             "raw_fields": {
                 "channel": "sensors-connectivity",
                 "encoding": "plain",
                 "encrypted": "0",
-                "payload_len": "28",
+                "payload_len": "15",
                 "sample_available": "1",
             },
         },
@@ -548,13 +548,13 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
             "channel": "datalog",
             "encoding": "plain",
             "encrypted": False,
-            "payload_len": 28,
+            "payload_len": 15,
             "sample_available": True,
             "raw_fields": {
                 "channel": "datalog",
                 "encoding": "plain",
                 "encrypted": "0",
-                "payload_len": "28",
+                "payload_len": "15",
                 "sample_available": "1",
             },
         },
