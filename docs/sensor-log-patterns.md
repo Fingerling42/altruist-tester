@@ -10,9 +10,8 @@ Run summary:
 - observed full sensor JSON snapshots: `17`
 
 The captured JSON examples are stored in
-`tests/fixtures/dev_serial_with_sensor_values.log`. That fixture also contains
-historical `Datalog data` lines from an older firmware contract; current parser
-logic intentionally does not treat them as sensor samples.
+`tests/fixtures/sensor_json_snapshots.log`. Historical `Datalog data` lines
+are not current compact-reading inputs.
 
 ## Full Sensor JSON Snapshot
 
@@ -33,8 +32,10 @@ Firmware source:
 - `sensors/tiny_gps_sensor.cpp`
 - `sensors/http_altruist_sensor.cpp`
 
-Those sensor fetchers update the shared `sensors_data` document and call
-`serializeJson(data, Serial)`. The common measurement shape is:
+Those sensor fetchers update the shared `sensors_data` document. In the local
+drivers reviewed at firmware `344f123` (2026-10-22), full UART JSON serialization
+is guarded by `ALTRUIST_BUILD_DEBUG`; it is not a release reading contract.
+The common measurement shape is:
 
 ```json
 {
@@ -72,13 +73,20 @@ Other firmware-supported sensors may appear in the same JSON shape:
 
 Parser guidance:
 
-- Prefer JSON parsing for lines that start with `{` and contain
-  `"service_data"` or known sensor keys.
+- The parser searches for JSON objects within UART lines, including after
+  text prefixes and when several objects are concatenated.
 - Treat `service_data` as metadata, not a regular sensor sample, unless a
   later rule explicitly needs RSSI from `signal_strength`.
 - For normal sensor objects, emit one sample per metric object that has a
   finite numeric `value`.
 - Keep sensor and metric names as printed by firmware at this step.
+
+Current Insight BME680 JSON also carries numeric `voc_index`, `voc_level`,
+`voc_spikes_today`, `gas_resistance`, and `gas_baseline`, plus text `voc_phrase`.
+The numeric parser preserves the first five and ignores the phrase. Generic
+flatline rules currently fail constant VOC status/counter values after the
+configured threshold; dedicated semantics remain planned. Resistance/baseline
+use Ohm; the qualitative VOC index is not concentration in ppm.
 
 ## Health Contract
 
@@ -120,7 +128,7 @@ Parser guidance:
 Observed serial shape:
 
 ```text
-[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=49 sample_available=1 sample=h:65.99,t:25.51,p:101069.09,nm:83,na:81,p1:16.33,p2:7.33
+[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=56 sample_available=1 sample=h:65.99,t:25.51,p:101069.09,nm:83,na:81,p1:16.33,p2:7.33
 [PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 sample_available=0
 [PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 payload_len=280 sample_available=0
 ```
@@ -155,14 +163,21 @@ Additional aliases supported by firmware:
 
 Parser guidance:
 
-- Parse sensor values only from the optional `sample=...` field on
-  `channel=datalog` payloads.
-- Treat `sensors-connectivity` and `custom-http` payloads as upload/payload
-  observations, not as sensor-series input.
+- Parse compact sensor values only from optional `sample=...` on
+  `channel=sensors-connectivity` or `channel=datalog`.
+- Capture accepts datalog samples until the first connectivity sample, then
+  suppresses datalog samples for the rest of the run. Full JSON snapshots
+  bypass this selection; there is no full cross-source deduplication.
+- Treat `custom-http` payloads as observations, not sensor-series input.
+- For plain unencrypted samples with parseable `payload_len`, require an exact
+  length match before creating readings. Missing/unparseable lengths currently
+  bypass that guard.
 - Never parse encrypted `e...` values or full transport payloads as sensor
   metrics.
 - Treat `channel`, `encoding`, `encrypted`, `payload_len`, and
   `sample_available` as payload metadata.
-- The full JSON snapshot is richer because it preserves sensor names and units,
-  but release tester runs should rely on the stable `[PAYLOAD]` contract when
-  JSON snapshots are not present.
+- Full JSON snapshots preserve physical sensor names and units. Release runs
+  need readable samples: encrypted payloads may intentionally omit them, and
+  current C6 protobuf success skips legacy payload formatting/logging. A stable
+  transport-independent release source remains planned; `[PROTO]` cannot
+  replace it.

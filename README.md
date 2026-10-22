@@ -223,16 +223,43 @@ Payload observations:
 
 - parses stable `[PAYLOAD]` lines with `channel`, `encoding`, `encrypted`,
   `payload_len`, and `sample_available` metadata;
-- extracts sensor values only from the explicit `sample=` field;
+- extracts compact sensor values only from the explicit `sample=` field;
 - treats `channel=sensors-connectivity` as the primary sensor-sample source and
-  uses `channel=datalog` as a fallback, avoiding duplicated sensor series when
-  both channels expose the same payload.
+  accepts `channel=datalog` until the first connectivity sample, then suppresses
+  datalog samples for the rest of the run;
+- also accepts full nested sensor JSON snapshots, including after UART text
+  prefixes. These bypass payload-source selection; cross-source deduplication
+  and automatic fallback after connectivity stops are not implemented.
+
+Firmware compatibility checked on 2026-10-22 (`344f123`, tester `f0fa39d`):
+current C6 Map defaults prefer protobuf using a built-in endpoint when the
+custom URL is empty. A successful protobuf POST skips legacy JSON formatting
+and its `[PAYLOAD] sample=` output, even with both Map toggles enabled.
+Readable datalog samples depend on configuration/encryption, and full local
+sensor JSON is debug-only in the reviewed drivers. A release run without
+readable measurements still fails sensor/log-contract checks. `[PROTO]` is
+envelope-construction metadata and cannot substitute for readings.
+
+Current CONNECTIVITY statistics combine legacy JSON and protobuf HTTP results.
+They cannot prove which route succeeded, CPS finalization, or frontend
+visibility. Cloud HTTP `202` confirms ingress after Kafka acknowledgment.
+Route-specific acceptance and a transport-independent release reading contract
+remain planned. C3 remains legacy-only; the reviewed repository Stable
+publication is still firmware `d1623eb`.
+
+Insight BME680 JSON now includes VOC index, level, daily spike count, and gas
+resistance/baseline. Numeric values are preserved, while text `voc_phrase` is
+ignored. Dedicated VOC acceptance is not implemented: generic flatline checks
+currently fail constant VOC index/level/count after `flatline.fail_after`, even
+though constant status/counter values can be normal. This affects debug UART
+JSON; the reviewed release driver does not print those snapshots. VOC is a
+qualitative device-relative indicator, not calibrated concentration in ppm.
 
 Release log contract:
 
 - verifies that firmware logs contain enough stable, machine-readable telemetry
   for acceptance testing;
-- fails when `[HEALTH]` telemetry or sensor payload samples are missing;
+- fails when `[HEALTH]` telemetry or readable sensor samples are missing;
 - warns when boot/reset context is missing from `[BOOT]` or `[HEALTH]`;
 - warns when `[BUILD]` firmware identity is missing;
 - records firmware `channel` and `profile` as context, without treating
@@ -340,13 +367,20 @@ max_consecutive_failures = 3
 
 Use `required` only when the device was provisioned for that channel:
 
-- connectivity requires the device address to be added through Robonomics
-  `setDevices`;
+- legacy connectivity requires the device address to be added through
+  Robonomics `setDevices`; current C6 firmware can use protobuf instead, and
+  the combined connectivity check cannot enforce legacy-specific delivery;
 - datalog requires an active Robonomics subscription and the device address to
   be added to it.
 
 Use `optional` when you want upload statistics and warnings without failing the
 whole burn-in run.
+
+For CPS/protobuf, readiness involves the chosen endpoint's authorization and
+NodeId/anchor provisioning, rather than legacy membership alone. Until route
+attribution is implemented, `connectivity = "required"` checks only aggregate
+firmware-reported HTTP outcomes; it cannot require a particular transport or
+chain publication.
 
 ## Batch Config
 

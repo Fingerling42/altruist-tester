@@ -139,9 +139,31 @@ connectivity = "required"
 datalog = "required"
 ```
 
-Use `connectivity = "required"` only after the device address was added through
-Robonomics `setDevices`. Use `datalog = "required"` only when there is an active
-Robonomics subscription and the device address was added to it.
+For legacy delivery, use `connectivity = "required"` only after the device
+address was added through Robonomics `setDevices`. Use `datalog = "required"`
+only when there is an active Robonomics subscription and the device address
+was added to it.
+
+Compatibility check dated 2026-10-22 (firmware `344f123`, tester `f0fa39d`):
+current C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
+built-in endpoint. Success skips legacy JSON and its `[PAYLOAD] sample=`;
+both Map toggles mean JSON fallback, not unconditional dual-send. Confirm a
+readable release measurement source during a short preflight run before
+starting 24 hours. Datalog samples depend on configuration/encryption; debug
+JSON availability does not establish release observability. Missing readings
+still fail acceptance, regardless of upload success.
+
+The tester combines legacy/protobuf CONNECTIVITY results. Treat a successful
+required connectivity check as aggregate firmware HTTP evidence. It does not
+prove legacy delivery, CPS finalization, or map visibility; cloud `202` is
+Kafka ingress acceptance. CPS endpoint authorization and NodeId/anchor
+provisioning differ from legacy `setDevices`. Route-specific acceptance is
+pending. C3 remains legacy-only; reviewed repository Stable is `d1623eb`.
+
+For Insight debug runs, newly exposed VOC index/level/daily-count constants can
+trigger generic flatline FAIL despite being normal status values. Dedicated
+VOC rules are pending; inspect the affected findings and raw evidence instead
+of treating them as proof of a failed sensor or relaxing all flatline checks.
 
 ## Start a Multi-device Batch
 
