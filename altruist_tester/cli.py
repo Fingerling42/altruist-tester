@@ -26,7 +26,12 @@ from altruist_tester.artifacts import (
     utc_now,
 )
 from altruist_tester.batch_generation import generate_batch_toml
-from altruist_tester.batch_terminal import BatchSlotStatus, BatchTerminal, terminal_text
+from altruist_tester.batch_terminal import (
+    BatchSlotStatus,
+    BatchTerminal,
+    compact_worker_error,
+    terminal_text,
+)
 from altruist_tester.config import (
     BATCH_DEVICE_MODELS,
     BatchConfig,
@@ -957,7 +962,10 @@ def _print_worker_status(
         if wifi_observed_at is not None:
             fields["wifi_age"] = _format_elapsed(elapsed - wifi_observed_at)
     else:
-        fields["message"] = str(snapshot.get("message", ""))
+        message = str(snapshot.get("message", ""))
+        fields["message"] = (
+            compact_worker_error(message) if state == "ERROR" else message
+        )
     fields["status_age"] = _format_elapsed(age)
     row = BatchSlotStatus(worker.slot, str(state), fields)
     emit(row.line())
@@ -1046,8 +1054,9 @@ def _monitor_batch_workers(
                     previous = slot_rows.get(slot)
                     fields = dict(previous.fields) if previous else {}
                     fields["exit"] = str(result.get("returncode"))
+                    fields["status_age"] = "—"
                     if result.get("error"):
-                        fields["message"] = str(result["error"])
+                        fields["message"] = compact_worker_error(str(result["error"]))
                     elif result.get("failure_kind"):
                         fields["message"] = str(result["failure_kind"])
                     slot_rows[slot] = BatchSlotStatus(
@@ -1117,9 +1126,15 @@ def _write_final_batch_artifacts(
     return aggregate
 
 
-def _print_batch_result(aggregate: dict[str, object], batch_dir: Path) -> None:
+def _print_batch_result(
+    aggregate: dict[str, object], batch_dir: Path, *, slots: tuple[str, ...]
+) -> None:
     """Print verdicts from final artifacts, without replaying live snapshots."""
-    devices = aggregate["devices"]
+    positions = {slot: index for index, slot in enumerate(slots)}
+    devices = sorted(
+        aggregate["devices"],
+        key=lambda device: positions.get(device["slot"], len(slots)),
+    )
     rows = []
     for device in devices:
         failure = device.get("failure_kind")
@@ -1153,7 +1168,7 @@ def _print_batch_result(aggregate: dict[str, object], batch_dir: Path) -> None:
                 str(device["worker_returncode"])
                 if device.get("worker_returncode") is not None
                 else "-",
-                terminal_text(str(reason or "-")),
+                terminal_text(compact_worker_error(str(reason or "-"))),
             )
         )
     slot_width = max(4, min(32, max((len(row[0]) for row in rows), default=4)))
@@ -1253,7 +1268,11 @@ def _run_batch(config: BatchConfig) -> int:
             worker_results=worker_results,
         )
         typer.echo(message, err=True)
-        _print_batch_result(aggregate, artifacts.batch_dir)
+        _print_batch_result(
+            aggregate,
+            artifacts.batch_dir,
+            slots=tuple(device.slot for device in artifacts.devices),
+        )
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm_handler)
@@ -1272,7 +1291,11 @@ def _run_batch(config: BatchConfig) -> int:
     )
 
     typer.echo(message)
-    _print_batch_result(aggregate, artifacts.batch_dir)
+    _print_batch_result(
+        aggregate,
+        artifacts.batch_dir,
+        slots=tuple(device.slot for device in artifacts.devices),
+    )
     return 1 if aggregate["verdict"] == "FAIL" else 0
 
 

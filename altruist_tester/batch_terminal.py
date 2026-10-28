@@ -12,6 +12,15 @@ def terminal_text(value: str) -> str:
     return "".join(character if character.isprintable() else " " for character in value)
 
 
+def compact_worker_error(message: str) -> str:
+    """Keep the serial cause visible; the full port/message stays in artifacts."""
+    if message.startswith("Serial capture failed on "):
+        _, separator, cause = message.partition(": ")
+        if separator and cause:
+            return cause
+    return message
+
+
 @dataclass
 class BatchSlotStatus:
     slot: str

@@ -191,6 +191,9 @@ def test_tty_monitor_tracks_independent_slots_and_errors(monkeypatch, tmp_path):
     assert [r["returncode"] for r in results] == [0, 2]
     assert frames[-1][1][0].startswith("one COMPLETED")
     assert "exit=0" in frames[-1][1][0]
+    assert "status_age=—" in frames[-1][1][0]
+    assert "status_age=—" in frames[-1][1][1]
+    assert "status_age=00:" not in frames[-1][1][0]
 
 
 @pytest.mark.parametrize("source", ["summary", "snapshot", "stderr", "start"])
@@ -446,7 +449,11 @@ def test_final_results_show_verdicts_and_short_reasons(monkeypatch, tmp_path, tt
             "worker_returncode": 2,
             "failure_kind": "infrastructure_or_config_failed",
             "summary_error": "summary.json not found",
-            "worker_error": "Expected USB MAC AA, observed BB; refusing capture",
+            "worker_error": (
+                "Serial capture failed on /dev/serial/by-id/"
+                "usb-Espressif_USB_JTAG_serial_debug_unit_20:6E:F1:08:ED:AC-if00: "
+                "Expected USB MAC AA, observed BB; refusing capture"
+            ),
         },
         {
             **base,
@@ -464,17 +471,22 @@ def test_final_results_show_verdicts_and_short_reasons(monkeypatch, tmp_path, tt
     ]
     _print_batch_result(
         {
-            "devices": devices,
+            "devices": list(reversed(devices)),
             "devices_passed": 1,
             "devices_warned": 1,
             "devices_failed": 4,
         },
         tmp_path,
+        slots=tuple(device["slot"] for device in devices),
     )
     raw = output.getvalue()
     text = re.sub(r"\x1b\[[0-9;]*m", "", raw)
     lines = text.splitlines()
     assert lines[0] == "Results: 1 pass, 1 warn, 4 fail"
+    assert [line.split()[0] for line in lines[2:8]] == [
+        device["slot"] for device in devices
+    ]
+    assert "usb-Espressif_USB_JTAG_serial_debug_unit" not in text
     for slot, verdict, code in (
         ("urban-pass", "PASS_CANDIDATE", "0"),
         ("urban-warn", "WARN", "0"),
@@ -495,3 +507,33 @@ def test_final_results_show_verdicts_and_short_reasons(monkeypatch, tmp_path, tt
     assert text.count("Report:") == 1
     assert str(tmp_path / "batch_report.txt") in text
     assert ("\x1b[" in raw) is tty
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        (
+            "Serial capture failed on /dev/serial/by-id/usb_20:6E:F1:08:ED:AC: "
+            "device reports readiness to read but returned no data "
+            "(device disconnected or multiple access on port?)",
+            "device reports readiness to read but returned no data "
+            "(device disconnected or multiple access on port?)",
+        ),
+        (
+            "Serial capture failed on /dev/ttyACM0: permission denied",
+            "permission denied",
+        ),
+        (
+            "Could not start worker: permission denied",
+            "Could not start worker: permission denied",
+        ),
+        (
+            "Serial capture failed on unavailable",
+            "Serial capture failed on unavailable",
+        ),
+    ],
+)
+def test_compact_worker_error_preserves_cause(message, expected):
+    from altruist_tester.batch_terminal import compact_worker_error
+
+    assert compact_worker_error(message) == expected

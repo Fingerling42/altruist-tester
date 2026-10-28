@@ -281,7 +281,10 @@ disable it. Green capture/telemetry/Wi-Fi cells do not establish acceptance.
 It works with the terminal provided by SSH/tmux. Enlarge the terminal if a
 clipping notice appears. On completion or interruption the screen/cursor are
 restored and a compact results table is printed: slot, verdict, worker exit
-code and short finding codes/error reason. Check WARN even for worker code 0;
+code and short finding codes/error reason. Final rows keep configuration order;
+serial errors show the cause without the long port prefix. The full message
+remains in reports. Completed live rows show `—` for STATUS AGE.
+Check WARN even for worker code 0;
 ERROR identifies infrastructure failures and INTERRUPTED cancelled workers.
 Long reasons are abbreviated; use the printed `Report:` path for full details.
 The `Artifacts:` path contains worker logs; full commands are retained in

@@ -600,6 +600,9 @@ It refreshes about once a second and restores the screen/cursor on completion
 or interruption. Tables adapt to terminal size; a clipping notice asks you to
 enlarge a small terminal. On exit, a compact results table replaces the live
 status: slot, verdict, worker exit code and short finding codes/error reason.
+Final rows retain configuration order, regardless of worker completion order.
+Serial errors show the cause first; the full port/message remains in reports.
+Finished slots show `—` for STATUS AGE, since their snapshots are no longer live.
 WARN remains visible even when the worker exits with code 0. Infrastructure
 failures are labeled ERROR and cancelled workers INTERRUPTED. Long reasons
 are abbreviated; `Report:` points to the full batch report and `Artifacts:`
