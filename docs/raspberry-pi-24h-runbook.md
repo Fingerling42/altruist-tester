@@ -272,9 +272,14 @@ tmux new -s altruist-batch
 uv run altruist-tester batch --config /home/pi/batch.toml
 ```
 
-The command prints total elapsed time, worker counts, the artifact directory,
-and slot snapshots about every ten seconds. State changes, first bytes and
-first telemetry are polled every second and printed when observed.
+In a TTY the command updates a screen about once a second, showing total
+elapsed time, worker counts, the artifact directory and stable blocks for slots.
+It works with the terminal provided by SSH/tmux. Enlarge the terminal if a
+clipping notice appears. On completion or interruption the screen/cursor are
+restored and the last full status is printed in scrollback. `TERM=dumb` uses
+sequential output. With redirected output, counters are printed about every
+ten seconds; state changes, first bytes and first telemetry are polled every
+second and printed when observed.
 `WAIT_PORT` shows elapsed waiting
 and remaining time or `unlimited`; `OPENING` identifies an attempted open;
 `CAPTURE open=yes` shows an open port, capture duration/percentage, received
@@ -290,6 +295,12 @@ Output remains line-oriented when redirected to a file. Each slot's
 run's UART/evidence artifacts; it is not a resume checkpoint. USB MAC mismatch,
 unavailable required USB identity, or conflicting observed UART identity stops
 that slot with infrastructure code `2`; neighboring slots continue.
+`batch_report.txt` includes worker exit codes and available error reasons,
+including expected/observed MAC. The reason comes from the failed run summary,
+then an ERROR snapshot or a bounded stderr tail if no usable summary exists;
+worker launch errors are also retained. Full worker stdout/stderr stay in the
+slot directory. `batch_summary.json` exposes `worker_returncode` and
+`worker_error` in `devices` and `device_results`.
 
 Detach from `tmux` with `Ctrl-b`, then `d`.
 

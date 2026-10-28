@@ -590,10 +590,15 @@ worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 area. If any worker exits with a non-zero code, the batch command exits with
 code `1` after every worker has finished.
 
-While a batch is running, the CLI prints total elapsed time, worker counts,
-and per-slot progress about every ten seconds, including in redirected output.
-State changes, first-byte receipt and first telemetry are polled every second
-and printed when the next snapshot makes them visible.
+In an interactive TTY (including SSH/tmux), batch uses an updating terminal
+screen with total elapsed time, worker counts and a stable block for each slot.
+It refreshes about once a second and restores the screen/cursor on completion
+or interruption, leaving the last status in scrollback. Blocks adapt to terminal
+size; a clipping notice asks you to enlarge a small terminal. Full final status
+is printed on exit. `TERM=dumb` and redirected output use ordinary sequential
+lines without screen control codes: periodic counters about every ten seconds,
+with state changes, first bytes and first telemetry polled every second and
+printed when the next snapshot makes them visible.
 `WAIT_PORT` shows elapsed wait and remaining time, or `unlimited`. `OPENING`
 identifies the port-opening phase; `CAPTURE open=yes` confirms that it opened,
 then shows that slot's elapsed capture/percentage, byte count, first-byte receipt,
@@ -616,6 +621,15 @@ If the batch command receives Ctrl+C or SIGTERM, it asks running workers to
 terminate, waits briefly, kills any remaining workers, and writes
 `batch_summary.json`/`batch_report.txt` with status `interrupted`. Summaries
 from devices that already finished are still included when available.
+
+`batch_report.txt` includes each worker's exit code, failure kind and available
+error reason, including expected/observed USB MAC on identity mismatch. The
+same `worker_returncode` and `worker_error` fields appear in `devices` and
+`device_results` in `batch_summary.json`. Infrastructure diagnostics use the
+failed run summary's message, falling back to an ERROR snapshot or the last
+4096 bytes of worker stderr when no usable summary is available. A worker
+that cannot start retains its launch error. Full stdout/stderr logs remain in
+the slot directory. These diagnostics do not change device health verdicts.
 
 Worker failures are recorded per slot in `batch_summary.json`:
 

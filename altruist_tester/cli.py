@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from altruist_tester.artifacts import (
     utc_now,
 )
 from altruist_tester.batch_generation import generate_batch_toml
+from altruist_tester.batch_terminal import BatchTerminal, terminal_text
 from altruist_tester.config import (
     BATCH_DEVICE_MODELS,
     BatchConfig,
@@ -413,12 +415,34 @@ def _batch_worker_failure_kind(returncode: int | None) -> str | None:
     return "worker_failed"
 
 
+def _batch_worker_error(worker: BatchWorkerProcess) -> str | None:
+    try:
+        snapshot = read_worker_status(worker.output_dir / "worker.progress.json")
+        if snapshot and snapshot["state"] == "ERROR" and snapshot.get("message"):
+            return terminal_text(str(snapshot["message"]))
+    except (OSError, ValueError):
+        pass  # A broken status must not hide the worker's stderr diagnostic.
+    try:
+        with worker.stderr_log.open("rb") as error_log:
+            error_log.seek(0, 2)
+            error_log.seek(max(0, error_log.tell() - 4096))
+            return (
+                terminal_text(
+                    error_log.read().decode("utf-8", errors="replace").strip()
+                )
+                or None
+            )
+    except OSError as exc:
+        return f"Could not read worker stderr: {exc}"
+
+
 def _batch_worker_result(
     worker: BatchWorkerProcess,
     returncode: int,
 ) -> dict[str, object]:
     failure_kind = _batch_worker_failure_kind(returncode)
     return {
+        "error": _batch_worker_error(worker) if returncode else None,
         "slot": worker.slot,
         "status": "completed" if returncode == 0 else "failed",
         "failure_kind": failure_kind,
@@ -538,6 +562,13 @@ def _device_result_from_summary(
         "worker_status": worker_result.get("status"),
         "worker_returncode": worker_result.get("returncode"),
         "failure_kind": worker_result.get("failure_kind"),
+        "worker_error": (
+            summary.get("message")
+            if worker_result.get("returncode") not in (0, 1, None)
+            and summary.get("status") == "failed"
+            and summary.get("message")
+            else worker_result.get("error")
+        ),
         "summary_json": str(summary_path),
         "report_txt": str(summary_path.parent / "report.txt"),
         "run_dir": summary.get("run_dir"),
@@ -567,6 +598,7 @@ def _device_result_without_summary(
         "worker_status": worker_result.get("status"),
         "worker_returncode": worker_result.get("returncode"),
         "failure_kind": worker_result.get("failure_kind"),
+        "worker_error": worker_result.get("error"),
         "summary_json": None,
         "report_txt": None,
         "run_dir": None,
@@ -652,6 +684,8 @@ def _batch_device_entry(device_result: dict[str, object]) -> dict[str, object]:
         "failed_checks": device_result.get("failed_checks"),
         "failure_kind": device_result.get("failure_kind"),
         "summary_error": device_result.get("summary_error"),
+        "worker_returncode": device_result.get("worker_returncode"),
+        "worker_error": device_result.get("worker_error"),
     }
 
 
@@ -852,11 +886,12 @@ def _print_worker_status(
     *,
     last_status: dict[str, tuple[object, ...]] | None = None,
     force: bool = True,
+    emit: Callable[[str], None] = typer.echo,
 ) -> None:
     try:
         snapshot = read_worker_status(worker.output_dir / "worker.progress.json")
     except (OSError, ValueError) as exc:
-        typer.echo(f"{worker.slot} STATUS_ERROR: {exc}")
+        emit(f"{worker.slot} STATUS_ERROR: {exc}")
         return
     signature = (
         ("STATUS_PENDING",)
@@ -876,7 +911,7 @@ def _print_worker_status(
             return
         last_status[worker.slot] = signature
     if snapshot is None:
-        typer.echo(f"{worker.slot} STATUS_PENDING (no worker snapshot)")
+        emit(f"{worker.slot} STATUS_PENDING (no worker snapshot)")
         return
     state = snapshot["state"]
     age = max(0.0, time.monotonic() - snapshot["updated_monotonic"])
@@ -920,7 +955,7 @@ def _print_worker_status(
     else:
         details.append(str(snapshot.get("message", "")))
     details.append(f"status_age={_format_elapsed(age)}")
-    typer.echo(f"{worker.slot} {state} " + " | ".join(details))
+    emit(terminal_text(f"{worker.slot} {state} " + " | ".join(details)))
 
 
 def _wait_for_batch_workers(
@@ -931,15 +966,37 @@ def _wait_for_batch_workers(
     batch_dir: Path,
     slots: tuple[str, ...],
 ) -> None:
+    with BatchTerminal() as terminal:
+        _monitor_batch_workers(
+            workers,
+            worker_results,
+            duration_seconds=duration_seconds,
+            batch_dir=batch_dir,
+            slots=slots,
+            terminal=terminal,
+        )
+
+
+def _monitor_batch_workers(
+    workers: list[BatchWorkerProcess],
+    worker_results: list[dict[str, object]],
+    *,
+    duration_seconds: int,
+    batch_dir: Path,
+    slots: tuple[str, ...],
+    terminal: BatchTerminal,
+) -> None:
     running = {worker.slot: worker for worker in workers}
     started_monotonic = time.monotonic()
     next_progress_monotonic = started_monotonic
     last_worker_status: dict[str, tuple[object, ...]] = {}
+    slot_lines: dict[str, str] = {}
+    finished_display_slots: set[str] = set()
 
-    while running:
+    while True:
         now_monotonic = time.monotonic()
         force_status = now_monotonic >= next_progress_monotonic
-        if force_status:
+        if force_status and not terminal.enabled:
             _emit_batch_progress(
                 started_monotonic=started_monotonic,
                 now_monotonic=now_monotonic,
@@ -952,39 +1009,70 @@ def _wait_for_batch_workers(
             next_progress_monotonic = now_monotonic + BATCH_PROGRESS_INTERVAL_SECONDS
 
         for worker in tuple(running.values()):
+            lines: list[str] = []
             _print_worker_status(
-                worker, last_status=last_worker_status, force=force_status
+                worker,
+                last_status=last_worker_status,
+                force=force_status or terminal.enabled,
+                emit=lines.append if terminal.enabled else typer.echo,
             )
+            if lines:
+                slot_lines[worker.slot] = lines[0]
             returncode = _worker_returncode(worker)
             if returncode is None:
                 continue
             result = _batch_worker_result(worker, returncode)
             worker_results.append(result)
             del running[worker.slot]
-            typer.echo(f"{worker.slot} finished with exit code {returncode}.")
-            _print_worker_status(worker, last_status=last_worker_status, force=False)
-            if returncode:
-                with worker.stderr_log.open("rb") as error_log:
-                    error_log.seek(0, 2)
-                    error_log.seek(max(0, error_log.tell() - 4096))
-                    diagnostic = (
-                        error_log.read().decode("utf-8", errors="replace").strip()
+            if not terminal.enabled:
+                typer.echo(f"{worker.slot} finished with exit code {returncode}.")
+                _print_worker_status(
+                    worker, last_status=last_worker_status, force=False
+                )
+                if result.get("error"):
+                    typer.echo(f"{worker.slot} worker error: {result['error']}")
+
+        if terminal.enabled:
+            for result in worker_results:
+                slot = str(result["slot"])
+                # Preserve the last snapshot after the process has exited.
+                if slot not in finished_display_slots:
+                    finished_display_slots.add(slot)
+                    previous = slot_lines.get(slot, "")
+                    slot_lines[slot] = (
+                        f"{slot} EXIT {str(result['status']).upper()} "
+                        f"code={result.get('returncode')} "
+                        f"{result.get('failure_kind') or ''} "
+                        f"{result.get('error') or ''}"
+                        + (f" | last: {previous}" if previous else "")
                     )
-                if diagnostic:
-                    typer.echo(f"{worker.slot} worker error: {diagnostic}")
+            terminal.draw(
+                _batch_progress_line(
+                    elapsed_seconds=now_monotonic - started_monotonic,
+                    duration_seconds=duration_seconds,
+                    running_count=len(running),
+                    completed_count=sum(
+                        r["status"] == "completed" for r in worker_results
+                    ),
+                    failed_count=sum(r["status"] == "failed" for r in worker_results),
+                    batch_dir=batch_dir,
+                ),
+                [slot_lines.get(slot, f"{slot} PENDING") for slot in slots],
+            )
+        if not running:
+            break
+        time.sleep(min(1.0, BATCH_PROGRESS_INTERVAL_SECONDS))
 
-        if running:
-            time.sleep(min(1.0, BATCH_PROGRESS_INTERVAL_SECONDS))
-
-    _emit_batch_progress(
-        started_monotonic=started_monotonic,
-        now_monotonic=time.monotonic(),
-        duration_seconds=duration_seconds,
-        batch_dir=batch_dir,
-        slots=slots,
-        running_slots=set(),
-        worker_results=worker_results,
-    )
+    if not terminal.enabled:
+        _emit_batch_progress(
+            started_monotonic=started_monotonic,
+            now_monotonic=time.monotonic(),
+            duration_seconds=duration_seconds,
+            batch_dir=batch_dir,
+            slots=slots,
+            running_slots=set(),
+            worker_results=worker_results,
+        )
 
 
 def _write_final_batch_artifacts(

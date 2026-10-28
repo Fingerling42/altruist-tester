@@ -657,6 +657,12 @@ def _append_batch_report_device_details(
         lines.append("  findings:")
         for message in finding_messages:
             lines.append(f"    - {message}")
+    if device.get("worker_returncode") is not None:
+        lines.append(f"  worker exit code: {device['worker_returncode']}")
+    if device.get("failure_kind"):
+        lines.append(f"  worker failure: {device['failure_kind']}")
+    if device.get("worker_error"):
+        lines.append(f"  worker error: {device['worker_error']}")
     summary_error = device.get("summary_error")
     if summary_error:
         lines.append(f"  summary error: {summary_error}")
