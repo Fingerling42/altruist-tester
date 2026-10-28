@@ -1423,6 +1423,23 @@ def batch_generate(
         ),
     ] = None,
     duration: Annotated[str, typer.Option("--duration")] = "24h",
+    baud: Annotated[
+        int,
+        typer.Option("--baud", min=1, help="Serial baud rate for all batch devices."),
+    ] = 115200,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help=(
+                "Directory for all batch artifacts; "
+                "relative to the batch launch directory."
+            ),
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=False,
+        ),
+    ] = DEFAULT_OUTPUT_DIR,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Print TOML without writing it.")
     ] = False,
@@ -1437,6 +1454,8 @@ def batch_generate(
             ],
             destination=output,
             duration=duration,
+            baud=baud,
+            output_dir=output_dir,
             port_template=port_template,
             port_infos=list_serial_ports(),
         )

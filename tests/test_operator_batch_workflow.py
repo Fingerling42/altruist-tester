@@ -1,8 +1,11 @@
 import json
+import tomllib
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from altruist_tester.batch_generation import generate_batch_toml
 from altruist_tester.cli import _print_worker_status, _wait_for_explicit_port, app
 from altruist_tester.config import ConfigError, load_batch_config, parse_mac
 from altruist_tester.ports import SerialPortInfo
@@ -40,6 +43,10 @@ def test_generate_operator_batches(monkeypatch, tmp_path, urban_count, insight_c
     assert result.exit_code == 0, result.output
     assert "UNVERIFIED" in result.output
     batch = load_batch_config(destination)
+    generated = tomllib.loads(destination.read_text())
+    assert generated["batch"]["baud"] == batch.baud == 115200
+    assert generated["batch"]["output_dir"] == "runs"
+    assert batch.output_dir == Path("runs")
     assert len(batch.devices) == urban_count + insight_count
     assert batch.wait_port_timeout_seconds == 120
     for device in batch.devices:
@@ -55,6 +62,86 @@ def test_generate_operator_batches(monkeypatch, tmp_path, urban_count, insight_c
     assert preview.exit_code == 0
     assert original.decode() in preview.output
     assert destination.read_bytes() == original
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_generate_batch_options_round_trip_and_preview(monkeypatch, tmp_path, absolute):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+
+    def unexpected_side_effect(*args, **kwargs):
+        pytest.fail("generation and dry-run must not open serial or start workers")
+
+    monkeypatch.setattr("altruist_tester.cli.serial.Serial", unexpected_side_effect)
+    monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", unexpected_side_effect)
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    folder = tmp_path / "nested"
+    folder.mkdir()
+    destination = folder / "batch.toml"
+    output_dir = Path('результаты партии "ночь"')
+    if absolute:
+        output_dir = tmp_path / output_dir
+    args = [
+        "batch-generate",
+        "--output",
+        str(destination),
+        "--urban-profile",
+        str(profile),
+        "--urban-mac",
+        "AABBCCDDEEFF",
+        "--port-template",
+        "/dev/serial/by-id/fixture_{mac}",
+        "--baud",
+        "9600",
+        "--output-dir",
+        str(output_dir),
+    ]
+    preview = CliRunner().invoke(app, [*args, "--dry-run"])
+    assert preview.exit_code == 0, preview.output
+    assert not destination.exists()
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert preview.output == destination.read_text()
+    generated = tomllib.loads(preview.output)
+    assert generated["batch"]["baud"] == 9600
+    assert generated["batch"]["output_dir"] == str(output_dir)
+    batch = load_batch_config(destination)
+    assert batch.baud == 9600
+    assert batch.output_dir == output_dir
+    assert batch.output_dir.resolve() == tmp_path / output_dir
+    assert batch.devices[0].effective_config.resolve() == profile
+    dry_run = CliRunner().invoke(
+        app, ["batch", "--config", str(destination), "--dry-run"]
+    )
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "- baud: 9600" in dry_run.output
+    assert f"- output_dir: {output_dir}" in dry_run.output
+    assert not output_dir.exists()
+
+
+@pytest.mark.parametrize("baud", ["0", "-1", "not-an-integer"])
+def test_generate_rejects_invalid_baud_before_writing(tmp_path, baud):
+    destination = tmp_path / "batch.toml"
+    result = CliRunner().invoke(
+        app, ["batch-generate", "--output", str(destination), "--baud", baud]
+    )
+    assert result.exit_code == 2
+    assert "--baud" in result.output
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("baud", [0, -1, True, 9600.5])
+def test_generator_rejects_invalid_baud(baud, tmp_path):
+    with pytest.raises(ConfigError, match="batch.baud must be a positive integer"):
+        generate_batch_toml(
+            [],
+            destination=tmp_path / "batch.toml",
+            duration="24h",
+            port_template=None,
+            port_infos=[],
+            baud=baud,
+        )
 
 
 @pytest.mark.parametrize(

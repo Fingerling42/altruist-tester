@@ -174,6 +174,7 @@ copying TOML device sections or transferring a new batch from another computer:
 
 ```bash
 uv run altruist-tester batch-generate --output batch.toml \
+  --output-dir /home/pi/altruist-runs --baud 115200 \
   --urban-profile configs/urban.example.toml \
   --insight-profile configs/insight.example.toml \
   --urban-mac 10:51:DB:01:0D:54 --urban-mac 10:51:DB:01:0D:55 \
@@ -187,6 +188,16 @@ repeat only that model's MAC option and supply only that model's profile.
 Generation matches connected USB identities and rejects missing/ambiguous matches,
 duplicate MACs, and existing output files. Add `--dry-run` to review the TOML
 without writing it. Neither generation nor preview opens serial ports.
+
+`--output` names the new configuration file; `--output-dir` names the directory
+for the whole batch, including reports, worker logs and device evidence. The
+generator always writes `output_dir` and `baud` into `[batch]`; omitted options
+use `runs` and `115200`. `--baud` accepts positive integers and applies to every
+slot. A relative `output_dir` is resolved from the working directory where you
+launch `batch`, whereas profile paths are relative to the TOML directory. Prefer
+an absolute output directory when launching from different SSH/tmux directories.
+Generation and preview do not create the artifact directory. Check the loaded
+values with `batch --config batch.toml --dry-run` before starting capture.
 
 To prepare before connecting devices, add an explicit `--port-template` matching
 your stand, for example

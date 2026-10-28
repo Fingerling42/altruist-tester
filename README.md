@@ -445,6 +445,7 @@ existing Urban and Insight profiles:
 
 ```bash
 uv run altruist-tester batch-generate --output batch.toml \
+  --output-dir /home/pi/altruist-runs --baud 115200 \
   --urban-profile configs/urban.example.toml \
   --insight-profile configs/insight.example.toml \
   --urban-mac 10:51:DB:01:0D:54 \
@@ -459,6 +460,16 @@ for missing or ambiguous matches. Profiles are validated, and their paths are
 written relative to the generated TOML. Existing output files are never replaced.
 The destination directory must already exist. `batch-generate --dry-run` prints
 the proposed TOML without writing it; generation never opens serial ports.
+
+`--output` selects the new TOML file. `--output-dir` selects the directory for
+the entire batch, including batch reports, worker logs, and per-device evidence;
+it defaults to `runs`. `--baud` sets the serial rate for every slot and must be
+a positive integer (default `115200`). Both values are always written into
+`[batch]`, including defaults. Relative `output_dir` paths are interpreted from
+the working directory when `batch` is launched, while relative profile paths
+are interpreted from the TOML directory. Use an absolute `--output-dir` when
+launching from different directories. Generation and preview do not create the
+artifact directory; `batch --config batch.toml --dry-run` shows the loaded values.
 
 For devices that are not yet connected, explicitly provide the expected path
 format for your stand, for example:

@@ -20,11 +20,17 @@ def generate_batch_toml(
     duration: str,
     port_template: str | None,
     port_infos: list[SerialPortInfo],
+    baud: int = 115200,
+    output_dir: Path = Path("runs"),
 ) -> str:
     """Resolve connected USB identities or require an explicit pending path."""
+    if not isinstance(baud, int) or isinstance(baud, bool) or baud <= 0:
+        raise ConfigError("batch.baud must be a positive integer")
     lines = [
         "[batch]",
         f"duration = {json.dumps(duration, ensure_ascii=False)}",
+        f"baud = {baud}",
+        f"output_dir = {json.dumps(str(output_dir), ensure_ascii=False)}",
         "wait_port = true",
         '# Use "infinite" explicitly when devices may be connected at any time.',
         'wait_port_timeout = "2m"',
