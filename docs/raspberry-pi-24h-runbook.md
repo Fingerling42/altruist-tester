@@ -273,10 +273,19 @@ uv run altruist-tester batch --config /home/pi/batch.toml
 ```
 
 In a TTY the command updates a screen about once a second, showing total
-elapsed time, worker counts, the artifact directory and stable blocks for slots.
+elapsed time, worker counts, the artifact directory and compact aligned rows
+for slots. Devices appear consecutively below shared column headings; narrow
+windows split metric columns into groups with repeated slot/state columns.
+Color distinguishes states, errors and observations; use `NO_COLOR=1` to
+disable it. Green capture/telemetry/Wi-Fi cells do not establish acceptance.
 It works with the terminal provided by SSH/tmux. Enlarge the terminal if a
 clipping notice appears. On completion or interruption the screen/cursor are
-restored and the last full status is printed in scrollback. `TERM=dumb` uses
+restored and a compact results table is printed: slot, verdict, worker exit
+code and short finding codes/error reason. Check WARN even for worker code 0;
+ERROR identifies infrastructure failures and INTERRUPTED cancelled workers.
+Long reasons are abbreviated; use the printed `Report:` path for full details.
+The `Artifacts:` path contains worker logs; full commands are retained in
+`batch_summary.json` instead of long startup lines. `TERM=dumb` uses
 sequential output. With redirected output, counters are printed about every
 ten seconds; state changes, first bytes and first telemetry are polled every
 second and printed when observed.

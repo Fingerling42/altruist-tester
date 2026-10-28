@@ -1,9 +1,12 @@
 """Command line interface for the Altruist tester."""
 
 import json
+import os
+import shutil
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
@@ -23,7 +26,7 @@ from altruist_tester.artifacts import (
     utc_now,
 )
 from altruist_tester.batch_generation import generate_batch_toml
-from altruist_tester.batch_terminal import BatchTerminal, terminal_text
+from altruist_tester.batch_terminal import BatchSlotStatus, BatchTerminal, terminal_text
 from altruist_tester.config import (
     BATCH_DEVICE_MODELS,
     BatchConfig,
@@ -887,12 +890,13 @@ def _print_worker_status(
     last_status: dict[str, tuple[object, ...]] | None = None,
     force: bool = True,
     emit: Callable[[str], None] = typer.echo,
-) -> None:
+) -> BatchSlotStatus | None:
     try:
         snapshot = read_worker_status(worker.output_dir / "worker.progress.json")
     except (OSError, ValueError) as exc:
-        emit(f"{worker.slot} STATUS_ERROR: {exc}")
-        return
+        row = BatchSlotStatus(worker.slot, "STATUS_ERROR", {"message": str(exc)})
+        emit(row.line())
+        return row
     signature = (
         ("STATUS_PENDING",)
         if snapshot is None
@@ -911,20 +915,22 @@ def _print_worker_status(
             return
         last_status[worker.slot] = signature
     if snapshot is None:
-        emit(f"{worker.slot} STATUS_PENDING (no worker snapshot)")
-        return
+        row = BatchSlotStatus(
+            worker.slot, "STATUS_PENDING", {"message": "(no worker snapshot)"}
+        )
+        emit(row.line())
+        return row
     state = snapshot["state"]
     age = max(0.0, time.monotonic() - snapshot["updated_monotonic"])
-    details = []
+    fields: dict[str, str] = {}
     if state == "WAIT_PORT":
         elapsed = snapshot["wait_elapsed_seconds"] + age
         timeout = snapshot["wait_timeout_seconds"]
-        details.append(f"wait={_format_elapsed(elapsed)}")
-        details.append(
-            "unlimited"
-            if timeout is None
-            else f"remaining={_format_elapsed(max(0, timeout - elapsed))}"
-        )
+        fields["wait"] = _format_elapsed(elapsed)
+        if timeout is None:
+            fields["wait_limit"] = "unlimited"
+        else:
+            fields["remaining"] = _format_elapsed(max(0, timeout - elapsed))
     elif state == "CAPTURE":
         elapsed = snapshot["elapsed_seconds"] + age
         duration = snapshot["duration_seconds"]
@@ -936,26 +942,26 @@ def _print_worker_status(
         )
         wifi = snapshot.get("wifi_state") or "unknown"
         wifi_observed_at = snapshot.get("wifi_observed_elapsed_seconds")
-        if wifi_observed_at is not None:
-            wifi += f" (health age={_format_elapsed(elapsed - wifi_observed_at)})"
-        details.extend(
-            [
-                "open=yes",
-                f"capture={_format_elapsed(elapsed)}/{_format_elapsed(duration)}",
-                f"{percent:.1f}%",
-                f"bytes={snapshot['bytes_read']}",
-                f"first_bytes={'yes' if snapshot['bytes_read'] else 'no'}",
-                f"quiet={_format_elapsed(snapshot['current_silence_seconds'] + age)}",
-                f"telemetry={telemetry}",
-                f"health={snapshot['dev_metrics_count']}",
-                f"samples={snapshot['sensor_samples_count']}",
-                f"wifi={wifi}",
-            ]
+        fields.update(
+            open="yes",
+            capture=f"{_format_elapsed(elapsed)}/{_format_elapsed(duration)}",
+            progress=f"{percent:.1f}%",
+            bytes=str(snapshot["bytes_read"]),
+            first_bytes="yes" if snapshot["bytes_read"] else "no",
+            quiet=_format_elapsed(snapshot["current_silence_seconds"] + age),
+            telemetry=telemetry,
+            health=str(snapshot["dev_metrics_count"]),
+            samples=str(snapshot["sensor_samples_count"]),
+            wifi=wifi,
         )
+        if wifi_observed_at is not None:
+            fields["wifi_age"] = _format_elapsed(elapsed - wifi_observed_at)
     else:
-        details.append(str(snapshot.get("message", "")))
-    details.append(f"status_age={_format_elapsed(age)}")
-    emit(terminal_text(f"{worker.slot} {state} " + " | ".join(details)))
+        fields["message"] = str(snapshot.get("message", ""))
+    fields["status_age"] = _format_elapsed(age)
+    row = BatchSlotStatus(worker.slot, str(state), fields)
+    emit(row.line())
+    return row
 
 
 def _wait_for_batch_workers(
@@ -990,7 +996,7 @@ def _monitor_batch_workers(
     started_monotonic = time.monotonic()
     next_progress_monotonic = started_monotonic
     last_worker_status: dict[str, tuple[object, ...]] = {}
-    slot_lines: dict[str, str] = {}
+    slot_rows: dict[str, BatchSlotStatus] = {}
     finished_display_slots: set[str] = set()
 
     while True:
@@ -1009,15 +1015,14 @@ def _monitor_batch_workers(
             next_progress_monotonic = now_monotonic + BATCH_PROGRESS_INTERVAL_SECONDS
 
         for worker in tuple(running.values()):
-            lines: list[str] = []
-            _print_worker_status(
+            row = _print_worker_status(
                 worker,
                 last_status=last_worker_status,
                 force=force_status or terminal.enabled,
-                emit=lines.append if terminal.enabled else typer.echo,
+                emit=(lambda line: None) if terminal.enabled else typer.echo,
             )
-            if lines:
-                slot_lines[worker.slot] = lines[0]
+            if row is not None:
+                slot_rows[worker.slot] = row
             returncode = _worker_returncode(worker)
             if returncode is None:
                 continue
@@ -1038,13 +1043,15 @@ def _monitor_batch_workers(
                 # Preserve the last snapshot after the process has exited.
                 if slot not in finished_display_slots:
                     finished_display_slots.add(slot)
-                    previous = slot_lines.get(slot, "")
-                    slot_lines[slot] = (
-                        f"{slot} EXIT {str(result['status']).upper()} "
-                        f"code={result.get('returncode')} "
-                        f"{result.get('failure_kind') or ''} "
-                        f"{result.get('error') or ''}"
-                        + (f" | last: {previous}" if previous else "")
+                    previous = slot_rows.get(slot)
+                    fields = dict(previous.fields) if previous else {}
+                    fields["exit"] = str(result.get("returncode"))
+                    if result.get("error"):
+                        fields["message"] = str(result["error"])
+                    elif result.get("failure_kind"):
+                        fields["message"] = str(result["failure_kind"])
+                    slot_rows[slot] = BatchSlotStatus(
+                        slot, str(result["status"]).upper(), fields
                     )
             terminal.draw(
                 _batch_progress_line(
@@ -1057,7 +1064,10 @@ def _monitor_batch_workers(
                     failed_count=sum(r["status"] == "failed" for r in worker_results),
                     batch_dir=batch_dir,
                 ),
-                [slot_lines.get(slot, f"{slot} PENDING") for slot in slots],
+                [
+                    slot_rows.get(slot, BatchSlotStatus(slot, "PENDING", {}))
+                    for slot in slots
+                ],
             )
         if not running:
             break
@@ -1107,6 +1117,81 @@ def _write_final_batch_artifacts(
     return aggregate
 
 
+def _print_batch_result(aggregate: dict[str, object], batch_dir: Path) -> None:
+    """Print verdicts from final artifacts, without replaying live snapshots."""
+    devices = aggregate["devices"]
+    rows = []
+    for device in devices:
+        failure = device.get("failure_kind")
+        verdict = str(device.get("verdict") or "UNKNOWN")
+        if failure == "interrupted":
+            verdict = "INTERRUPTED"
+        elif failure in {
+            "worker_start_failed",
+            "infrastructure_or_config_failed",
+            "worker_failed",
+        } or device.get("summary_error"):
+            verdict = "ERROR"
+        elif device.get("worker_returncode") == 1:
+            verdict = "FAIL"
+        messages = device.get("finding_messages") or []
+        reason = (
+            device.get("worker_error") if verdict == "ERROR" else None
+        ) or device.get("summary_error")
+        if not reason:
+            reason = ", ".join(message.split(":", 1)[0] for message in messages[:2])
+            if len(messages) > 2:
+                reason += f" (+{len(messages) - 2})"
+        if not reason:
+            reason = ", ".join(device.get("failed_checks") or [])
+        if not reason and device.get("findings_count"):
+            reason = f"{device['findings_count']} finding(s)"
+        rows.append(
+            (
+                terminal_text(str(device["slot"])),
+                verdict,
+                str(device["worker_returncode"])
+                if device.get("worker_returncode") is not None
+                else "-",
+                terminal_text(str(reason or "-")),
+            )
+        )
+    slot_width = max(4, min(32, max((len(row[0]) for row in rows), default=4)))
+    result_width = max(6, max((len(row[1]) for row in rows), default=6))
+    width = shutil.get_terminal_size(fallback=(120, 24)).columns
+    reason_width = max(12, width - slot_width - result_width - 12)
+    color = (
+        sys.stdout.isatty()
+        and os.environ.get("TERM") != "dumb"
+        and "NO_COLOR" not in os.environ
+    )
+    typer.echo(
+        f"Results: {aggregate['devices_passed']} pass, "
+        f"{aggregate['devices_warned']} warn, {aggregate['devices_failed']} fail"
+    )
+    typer.echo(f"{'SLOT':<{slot_width}}  {'RESULT':<{result_width}}  EXIT  DETAILS")
+    for slot, result, code, reason in rows:
+        shade = (
+            typer.colors.GREEN
+            if result == "PASS_CANDIDATE"
+            else typer.colors.YELLOW
+            if result in {"WARN", "INTERRUPTED", "UNKNOWN"}
+            else typer.colors.RED
+        )
+        label = (
+            typer.style(f"{result:<{result_width}}", fg=shade, bold=True)
+            if color
+            else f"{result:<{result_width}}"
+        )
+        typer.echo(
+            f"{slot[:slot_width]:<{slot_width}}  {label}  {code:>4}  "
+            + textwrap.shorten(reason, width=reason_width, placeholder="..."),
+            color=color,
+        )
+    typer.echo(f"Report: {batch_dir / 'batch_report.txt'}")
+    typer.echo(f"Artifacts: {batch_dir}")
+
+
 def _run_batch(config: BatchConfig) -> int:
     artifacts = create_batch_artifacts(config.output_dir, config=config)
     typer.echo(
@@ -1143,7 +1228,7 @@ def _run_batch(config: BatchConfig) -> int:
                 continue
             else:
                 workers.append(worker)
-                typer.echo(f"Started {worker.slot}: {' '.join(worker.command)}")
+                typer.echo(f"Started {worker.slot}.")
 
         _wait_for_batch_workers(
             workers,
@@ -1161,14 +1246,14 @@ def _run_batch(config: BatchConfig) -> int:
             f"Batch interrupted: {completed_workers}/"
             f"{len(artifacts.devices)} workers completed before shutdown."
         )
-        _write_final_batch_artifacts(
+        aggregate = _write_final_batch_artifacts(
             artifacts,
             status="interrupted",
             message=message,
             worker_results=worker_results,
         )
         typer.echo(message, err=True)
-        typer.echo(f"Batch artifacts were written under {artifacts.batch_dir}.")
+        _print_batch_result(aggregate, artifacts.batch_dir)
         return 130
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm_handler)
@@ -1187,7 +1272,7 @@ def _run_batch(config: BatchConfig) -> int:
     )
 
     typer.echo(message)
-    typer.echo(f"Batch artifacts were written under {artifacts.batch_dir}.")
+    _print_batch_result(aggregate, artifacts.batch_dir)
     return 1 if aggregate["verdict"] == "FAIL" else 0
 
 

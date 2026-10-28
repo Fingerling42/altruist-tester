@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from altruist_tester.batch_terminal import BatchTerminal
+from altruist_tester.batch_terminal import BatchSlotStatus, BatchTerminal
 from altruist_tester.cli import _wait_for_batch_workers, app
 from altruist_tester.progress import write_worker_status
 from tests.cli_helpers import patch_batch_worker_processes
@@ -32,17 +33,25 @@ def test_terminal_restores_screen_and_cursor(monkeypatch, interrupt):
     )
     try:
         with BatchTerminal() as terminal:
-            terminal.draw("elapsed=00:01", ["one WAIT_PORT\x1b[2J | unlimited"])
+            terminal.draw(
+                "elapsed=00:01",
+                [
+                    BatchSlotStatus(
+                        "one", "WAIT_PORT", {"message": "\x1b[2J | unlimited"}
+                    )
+                ],
+            )
             if interrupt:
                 raise KeyboardInterrupt
     except KeyboardInterrupt:
         pass
     text = output.getvalue()
     assert text.startswith("\x1b[?1049h\x1b[?25l")
-    assert "one WAIT_PORT [2J | unlimited" in text
+    assert "one:  [2J | unlimited" in text
     assert "\x1b[2J" not in text
     assert "\x1b[?25h\x1b[?1049l" in text
-    assert text.endswith("one WAIT_PORT [2J | unlimited\n")
+    assert text.endswith("\x1b[?25h\x1b[?1049l")
+    assert text.count("elapsed=00:01") == 1
 
 
 def test_small_terminal_and_resize(monkeypatch):
@@ -55,14 +64,27 @@ def test_small_terminal_and_resize(monkeypatch):
         lambda **kwargs: os.terminal_size(size),
     )
     with BatchTerminal() as terminal:
-        terminal.draw("Batch", ["one " + "x" * 100, "two OPENING"])
+        terminal.draw(
+            "Batch",
+            [
+                BatchSlotStatus("one", "ERROR", {"message": "x" * 100}),
+                BatchSlotStatus("two", "OPENING", {}),
+            ],
+        )
         first = output.getvalue().split("\x1b[H")[-1].removesuffix("\x1b[J")
         assert len(first.splitlines()) <= 5
         assert "Clipped" in first
         size[:] = [100, 24]
-        terminal.draw("Batch", ["one CAPTURE open=yes", "two OPENING"])
-    assert "one CAPTURE open=yes" in output.getvalue()
-    assert "two OPENING" in output.getvalue()
+        terminal.draw(
+            "Batch",
+            [
+                BatchSlotStatus("one", "CAPTURE", {"open": "yes"}),
+                BatchSlotStatus("two", "OPENING", {}),
+            ],
+        )
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", output.getvalue())
+    assert re.search(r"one +CAPTURE +yes", plain)
+    assert re.search(r"two +OPENING", plain)
 
 
 @pytest.mark.parametrize("tty,term", [(False, "xterm"), (True, "dumb")])
@@ -85,7 +107,7 @@ def test_tty_monitor_tracks_independent_slots_and_errors(monkeypatch, tmp_path):
     draw = BatchTerminal.draw
 
     def record_draw(self, header, slots):
-        frames.append((header, list(slots)))
+        frames.append((header, [row.line() for row in slots]))
         draw(self, header, slots)
 
     monkeypatch.setattr(BatchTerminal, "draw", record_draw)
@@ -147,7 +169,7 @@ def test_tty_monitor_tracks_independent_slots_and_errors(monkeypatch, tmp_path):
     _wait_for_batch_workers(
         workers, results, duration_seconds=10, batch_dir=tmp_path, slots=("one", "two")
     )
-    text = output.getvalue()
+    text = "\n".join(line for _, rows in frames for line in rows)
     for expected in (
         "one WAIT_PORT",
         "unlimited",
@@ -161,13 +183,14 @@ def test_tty_monitor_tracks_independent_slots_and_errors(monkeypatch, tmp_path):
         "samples=1",
         "wifi=OK (health age=00:00)",
         "two STATUS_ERROR",
-        "code=2",
+        "exit=2",
         "Expected USB MAC AA, observed BB",
     ):
         assert expected in text
     assert all("%" not in header for header, _ in frames)
     assert [r["returncode"] for r in results] == [0, 2]
-    assert frames[-1][1][0].startswith("one EXIT COMPLETED code=0")
+    assert frames[-1][1][0].startswith("one COMPLETED")
+    assert "exit=0" in frames[-1][1][0]
 
 
 @pytest.mark.parametrize("source", ["summary", "snapshot", "stderr", "start"])
@@ -292,5 +315,183 @@ def test_real_pty_batch_restores_terminal(tmp_path, interrupt):
     assert "WAIT_PORT" in text
     assert "\x1b[?25h\x1b[?1049l" in text
     assert process.returncode == (130 if interrupt else 1), text
+    final = text.split("\x1b[?1049l")[-1]
+    assert "RESULT" in final
+    assert "Report:" in final
+    assert "status_age=" not in final
+    assert "Captured" not in final
     report = next((tmp_path / "runs").glob("*/batch_report.txt")).read_text()
     assert "interrupted" in report if interrupt else "worker exit code: 2" in report
+
+
+@pytest.mark.parametrize("no_color", [False, True])
+def test_tty_table_is_compact_aligned_and_colored(monkeypatch, no_color):
+    output = TerminalOutput()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    if no_color:
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    size = [190, 60]
+    monkeypatch.setattr(
+        "altruist_tester.batch_terminal.shutil.get_terminal_size",
+        lambda **kwargs: os.terminal_size(size),
+    )
+    fields = {
+        "open": "yes",
+        "capture": "00:03/03:00",
+        "progress": "2.0%",
+        "bytes": "105",
+        "first_bytes": "yes",
+        "quiet": "00:03",
+        "telemetry": "unseen",
+        "health": "0",
+        "samples": "0",
+        "wifi": "unknown",
+        "status_age": "00:00",
+    }
+    rows = [
+        BatchSlotStatus("urban-1051db010dc0", "CAPTURE", fields),
+        BatchSlotStatus(
+            "insight-206ef108edac",
+            "CAPTURE",
+            {
+                **fields,
+                "bytes": "123456",
+                "health": "12",
+                "samples": "120",
+                "wifi": "OK",
+                "wifi_age": "01:02",
+                "telemetry": "seen",
+            },
+        ),
+        BatchSlotStatus(
+            "late", "WAIT_PORT", {"wait": "00:04", "remaining": "unlimited"}
+        ),
+        BatchSlotStatus("failed", "FAILED", {"exit": "2", "message": "USB mismatch"}),
+    ]
+    with BatchTerminal() as terminal:
+        terminal.draw("Batch elapsed=00:04", rows)
+        frame = output.getvalue().split("\x1b[H")[-1].removesuffix("\x1b[J")
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", frame)
+        lines = plain.splitlines()
+        assert lines[1].startswith("SLOT")
+        assert lines[2].startswith("urban-")
+        assert lines[3].startswith("insight-")
+        assert lines[4].startswith("late ")
+        assert lines[5].startswith("failed ")
+        assert lines[2].index("CAPTURE") == lines[3].index("CAPTURE")
+        for column, first, second in (
+            ("BYTES", "105", "123456"),
+            ("HEALTH", "0", "12"),
+            ("SAMPLES", "0", "120"),
+            ("WIFI", "unknown", "OK"),
+        ):
+            offset = lines[1].index(column)
+            assert lines[2][offset:].startswith(first)
+            assert lines[3][offset:].startswith(second)
+        assert "failed: USB mismatch" in plain
+        assert len(lines) < 12  # A tall terminal must not add space between devices.
+        assert ("\x1b[1;32m" in frame) is not no_color
+        assert ("\x1b[1;31m" in frame) is not no_color
+        assert ("\x1b[1;36m" in frame) is not no_color
+        # Changing only terminal height must preserve the compact layout.
+        size[1] = 20
+        terminal.draw("Batch elapsed=00:04", rows)
+        second_frame = output.getvalue().split("\x1b[H")[-1].removesuffix("\x1b[J")
+        assert second_frame == frame
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_final_results_show_verdicts_and_short_reasons(monkeypatch, tmp_path, tty):
+    from altruist_tester.cli import _print_batch_result
+
+    output = TerminalOutput() if tty else io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(
+        "altruist_tester.cli.shutil.get_terminal_size",
+        lambda **kwargs: os.terminal_size((120, 24)),
+    )
+    base = {"worker_returncode": 0, "findings_count": 0}
+    devices = [
+        {**base, "slot": "urban-pass", "verdict": "PASS_CANDIDATE"},
+        {
+            **base,
+            "slot": "urban-warn",
+            "verdict": "WARN",
+            "finding_messages": [
+                "OPTIONAL_UPLOAD: No upload",
+                "NO_HEALTH: No HEALTH",
+                "OTHER: Extra warning",
+            ],
+        },
+        {
+            **base,
+            "slot": "insight-fail",
+            "verdict": "FAIL",
+            "worker_returncode": 1,
+            "failure_kind": "health_check_failed",
+            "finding_messages": [
+                "SENSOR_MISSING: Missing CO2",
+                "SUBSYSTEM_FAILED: Sensor failed",
+            ],
+            "worker_error": "FAIL: Captured 90 serial lines " * 50,
+        },
+        {
+            **base,
+            "slot": "usb-error",
+            "worker_returncode": 2,
+            "failure_kind": "infrastructure_or_config_failed",
+            "summary_error": "summary.json not found",
+            "worker_error": "Expected USB MAC AA, observed BB; refusing capture",
+        },
+        {
+            **base,
+            "slot": "start-error",
+            "worker_returncode": None,
+            "failure_kind": "worker_start_failed",
+            "worker_error": "Permission denied",
+        },
+        {
+            **base,
+            "slot": "cancelled",
+            "worker_returncode": -15,
+            "failure_kind": "interrupted",
+        },
+    ]
+    _print_batch_result(
+        {
+            "devices": devices,
+            "devices_passed": 1,
+            "devices_warned": 1,
+            "devices_failed": 4,
+        },
+        tmp_path,
+    )
+    raw = output.getvalue()
+    text = re.sub(r"\x1b\[[0-9;]*m", "", raw)
+    lines = text.splitlines()
+    assert lines[0] == "Results: 1 pass, 1 warn, 4 fail"
+    for slot, verdict, code in (
+        ("urban-pass", "PASS_CANDIDATE", "0"),
+        ("urban-warn", "WARN", "0"),
+        ("insight-fail", "FAIL", "1"),
+        ("usb-error", "ERROR", "2"),
+        ("start-error", "ERROR", "-"),
+        ("cancelled", "INTERRUPTED", "-15"),
+    ):
+        line = next(line for line in lines if line.startswith(slot))
+        assert line.split()[:3] == [slot, verdict, code]
+        assert len(line) <= 120
+    assert "OPTIONAL_UPLOAD, NO_HEALTH (+1)" in text
+    assert "SENSOR_MISSING, SUBSYSTEM_FAILED" in text
+    assert "Expected USB MAC AA, observed BB" in text
+    assert "Permission denied" in text
+    assert "Captured 90 serial lines" not in text
+    assert "summary.json not found" not in text  # Prefer the actual worker error.
+    assert text.count("Report:") == 1
+    assert str(tmp_path / "batch_report.txt") in text
+    assert ("\x1b[" in raw) is tty

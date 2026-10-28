@@ -591,11 +591,20 @@ area. If any worker exits with a non-zero code, the batch command exits with
 code `1` after every worker has finished.
 
 In an interactive TTY (including SSH/tmux), batch uses an updating terminal
-screen with total elapsed time, worker counts and a stable block for each slot.
+screen with total elapsed time, worker counts and a compact table of slots.
+Devices occupy consecutive rows with aligned status/metric columns. In narrow
+terminals, columns split into groups that repeat the slot name and state.
+States, errors and telemetry/Wi-Fi observations use color; set `NO_COLOR=1`
+to disable colors. Colors indicate activity/observations, not acceptance verdicts.
 It refreshes about once a second and restores the screen/cursor on completion
-or interruption, leaving the last status in scrollback. Blocks adapt to terminal
-size; a clipping notice asks you to enlarge a small terminal. Full final status
-is printed on exit. `TERM=dumb` and redirected output use ordinary sequential
+or interruption. Tables adapt to terminal size; a clipping notice asks you to
+enlarge a small terminal. On exit, a compact results table replaces the live
+status: slot, verdict, worker exit code and short finding codes/error reason.
+WARN remains visible even when the worker exits with code 0. Infrastructure
+failures are labeled ERROR and cancelled workers INTERRUPTED. Long reasons
+are abbreviated; `Report:` points to the full batch report and `Artifacts:`
+to the batch directory. Startup lines show slot names; full worker commands
+remain in `batch_summary.json`. `TERM=dumb` and redirected output use ordinary sequential
 lines without screen control codes: periodic counters about every ten seconds,
 with state changes, first bytes and first telemetry polled every second and
 printed when the next snapshot makes them visible.
