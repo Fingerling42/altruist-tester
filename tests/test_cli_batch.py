@@ -272,7 +272,7 @@ def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):
 
     urban_command = started[0].args
     insight_command = started[1].args
-    assert urban_command[1:4] == ["-m", "altruist_tester.cli", "run"]
+    assert urban_command[1:5] == ["-u", "-m", "altruist_tester.cli", "run"]
     assert urban_command[urban_command.index("--port") + 1] == (
         "/dev/serial/by-path/urban"
     )
@@ -420,7 +420,7 @@ def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     output = plain_output(result)
-    assert "Batch   0.0% (00:00/1:00:00)" in output
+    assert "Batch elapsed=00:00 | capture per slot=1:00:00" in output
     assert "running=2 completed=0 failed=0" in output
     assert "Slots: slot-01=running slot-02=running" in output
     assert "running=0 completed=2 failed=0" in output

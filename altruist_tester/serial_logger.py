@@ -33,6 +33,10 @@ from altruist_tester.uploads import UploadStats
 Number = int | float
 
 
+class SerialIdentityError(ValueError):
+    """UART identifies a different device from the requested batch target."""
+
+
 class SerialReader(Protocol):
     """Minimal serial reader protocol used by the logger.
 
@@ -266,6 +270,10 @@ class SerialLogProgress:
     keyword_alerts_count: int
     sensor_samples_count: int
     complete: bool = False
+    structured_events_count: int = 0
+    first_byte_elapsed_seconds: float | None = None
+    wifi_state: str | None = None
+    wifi_observed_elapsed_seconds: float | None = None
 
     @property
     def percent(self) -> float:
@@ -535,6 +543,9 @@ def _build_progress(
     keyword_alerts_count: int,
     sensor_series: SensorSampleSeries,
     complete: bool = False,
+    structured_events_count: int = 0,
+    first_byte_elapsed_seconds: float | None = None,
+    wifi_observed_elapsed_seconds: float | None = None,
 ) -> SerialLogProgress:
     elapsed_seconds = max(0.0, now - started_at)
     if last_line_elapsed_seconds is None:
@@ -552,6 +563,10 @@ def _build_progress(
         keyword_alerts_count=keyword_alerts_count,
         sensor_samples_count=sensor_series.count(),
         complete=complete,
+        structured_events_count=structured_events_count,
+        first_byte_elapsed_seconds=first_byte_elapsed_seconds,
+        wifi_state=(metrics_summary.last_metrics or {}).get("wifi_state"),
+        wifi_observed_elapsed_seconds=wifi_observed_elapsed_seconds,
     )
 
 
@@ -564,6 +579,7 @@ def capture_raw_serial(
     mirror_lines_to_events: bool = False,
     progress_callback: Callable[[SerialLogProgress], None] | None = None,
     progress_interval_seconds: float = 1.0,
+    expected_device_id: str | None = None,
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses.
 
@@ -609,6 +625,8 @@ def capture_raw_serial(
     primary_payload_samples_seen = False
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
+    structured_events_count = 0
+    wifi_observed_elapsed_seconds: float | None = None
 
     def emit_progress(now: float, *, complete: bool = False) -> None:
         if progress_callback is None:
@@ -625,6 +643,9 @@ def capture_raw_serial(
                 keyword_alerts_count=len(keyword_alerts),
                 sensor_series=sensor_series,
                 complete=complete,
+                structured_events_count=structured_events_count,
+                first_byte_elapsed_seconds=first_line_elapsed_seconds,
+                wifi_observed_elapsed_seconds=wifi_observed_elapsed_seconds,
             )
         )
 
@@ -695,6 +716,16 @@ def capture_raw_serial(
                     device_id=serial_device_id,
                 )
 
+            if (
+                expected_device_id is not None
+                and serial_device_id is not None
+                and serial_device_id != expected_device_id
+            ):
+                raise SerialIdentityError(
+                    f"Expected MAC {expected_device_id}, "
+                    f"UART reports {serial_device_id}"
+                )
+
             keyword_alerts.extend(
                 _append_keyword_alerts(
                     artifacts,
@@ -724,6 +755,7 @@ def capture_raw_serial(
 
             metrics = metrics_parser.feed(decoded_line)
             if metrics is not None:
+                wifi_observed_elapsed_seconds = line_elapsed_seconds
                 metrics_summary = _append_dev_metrics(
                     artifacts,
                     metrics,
@@ -731,6 +763,18 @@ def capture_raw_serial(
                     metrics_summary,
                 )
 
+            if any(
+                item is not None
+                for item in (
+                    boot_event,
+                    build_event,
+                    subsystem_event,
+                    payload_observation,
+                    upload_event,
+                    metrics,
+                )
+            ):
+                structured_events_count += 1
             if now >= next_progress_at:
                 emit_progress(now)
                 next_progress_at = now + progress_interval_seconds

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ class BatchDeviceConfig:
     effective_config: Path | None = None
     expected_sensors: tuple[str, ...] = ()
     expected_metrics: tuple[str, ...] = ()
+    expected_mac: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +49,7 @@ class BatchConfig:
     device_config: Path | None = None
     wait_port: bool = False
     wait_port_timeout_input: str = "2m"
-    wait_port_timeout_seconds: int = 120
+    wait_port_timeout_seconds: int | None = 120
     devices: tuple[BatchDeviceConfig, ...] = ()
 
 
@@ -342,6 +344,21 @@ def _load_toml(path: Path) -> Mapping[str, Any]:
     return data
 
 
+def parse_mac(value: str) -> str:
+    """Accept full MAC addresses, returning their canonical 12-hex identity."""
+    if not re.fullmatch(
+        r"(?:[0-9a-fA-F]{12}|(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})",
+        value,
+    ):
+        raise ConfigError(f"Invalid MAC address: {value}")
+    return value.replace(":", "").replace("-", "").upper()
+
+
+def parse_wait_port_timeout(value: str) -> int | None:
+    """Keep infinite waiting explicit and separate from capture durations."""
+    return None if value == "infinite" else parse_duration_seconds(value)
+
+
 def _batch_device_config(
     value: object,
     *,
@@ -353,6 +370,7 @@ def _batch_device_config(
     table = _require_mapping(value, name)
     config = _path_value(table.get("config"), f"{name}.config", base_dir=base_dir)
     return BatchDeviceConfig(
+        expected_mac=table.get("expected_mac"),
         slot=_required_string(table.get("slot"), f"{name}.slot"),
         port=cast(Path, _path_value(table.get("port"), f"{name}.port", required=True)),
         model=_optional_model(table.get("model"), f"{name}.model"),
@@ -396,6 +414,10 @@ def validate_batch_config(config: BatchConfig) -> None:
 
     for index, device in enumerate(config.devices):
         name = f"devices[{index}]"
+        if device.expected_mac is not None:
+            if not isinstance(device.expected_mac, str):
+                raise ConfigError(f"{name}.expected_mac must be a MAC address")
+            parse_mac(device.expected_mac)
         if device.config is not None:
             _ensure_file_exists(device.config, f"{name}.config")
         if device.effective_config is None:
@@ -412,6 +434,18 @@ def validate_batch_config(config: BatchConfig) -> None:
         name="port",
     )
 
+    _validate_unique_batch_values(
+        tuple((device.port.resolve(), device.slot) for device in config.devices),
+        name="resolved port",
+    )
+    _validate_unique_batch_values(
+        tuple(
+            (parse_mac(device.expected_mac), device.slot)
+            for device in config.devices
+            if device.expected_mac is not None
+        ),
+        name="MAC",
+    )
     models = {device.model for device in config.devices if device.model is not None}
     if len(models) > 1:
         devices_without_config = [
@@ -469,10 +503,12 @@ def load_batch_config(path: Path) -> BatchConfig:
             batch.get("wait_port_timeout", "2m"),
             "batch.wait_port_timeout",
         ),
-        wait_port_timeout_seconds=_duration_value(
-            batch.get("wait_port_timeout", "2m"),
-            "batch.wait_port_timeout",
-            120,
+        wait_port_timeout_seconds=(
+            None
+            if batch.get("wait_port_timeout") == "infinite"
+            else _duration_value(
+                batch.get("wait_port_timeout", "2m"), "batch.wait_port_timeout", 120
+            )
         ),
         devices=tuple(
             _batch_device_config(

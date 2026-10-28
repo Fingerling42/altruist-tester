@@ -60,6 +60,8 @@ uv run altruist-tester run --auto --wait-port --duration 24h \
 
 `--wait-port` waits up to 2 minutes by default. Change that with
 `--wait-port-timeout`, for example `--wait-port-timeout 5m`.
+Use `--wait-port --wait-port-timeout infinite` to wait without a deadline;
+Ctrl+C cancels the wait. Capture duration starts after the port opens.
 
 Use `--output-dir` to write artifacts somewhere other than `runs/`:
 
@@ -430,12 +432,61 @@ all slots use the same tester profile.
 Batch config validation rejects:
 
 - empty or duplicate `slot` values;
-- duplicate `port` values;
+- duplicate `port` values or paths resolving to the same port;
+- invalid or duplicate `expected_mac` values;
 - missing referenced tester profile files;
 - devices without an effective profile config;
 - unknown `model` values;
 - mixed Urban and Insight batches that rely on one shared
   `[batch].device_config`.
+
+Generate a batch directly on the test host (locally or over SSH), reusing the
+existing Urban and Insight profiles:
+
+```bash
+uv run altruist-tester batch-generate --output batch.toml \
+  --urban-profile configs/urban.example.toml \
+  --insight-profile configs/insight.example.toml \
+  --urban-mac 10:51:DB:01:0D:54 \
+  --insight-mac 10:51:DB:01:0C:70
+```
+
+Repeat `--urban-mac` and `--insight-mac` for more devices; omit a model and its
+profile when that model is absent. MACs accept colon, hyphen, or 12-hex forms.
+Slots are reproducible names based on model and MAC, sorted within each model.
+Connected devices are matched against USB serial/by-id metadata, with an error
+for missing or ambiguous matches. Profiles are validated, and their paths are
+written relative to the generated TOML. Existing output files are never replaced.
+The destination directory must already exist. `batch-generate --dry-run` prints
+the proposed TOML without writing it; generation never opens serial ports.
+
+For devices that are not yet connected, explicitly provide the expected path
+format for your stand, for example:
+
+```bash
+uv run altruist-tester batch-generate --output batch.toml \
+  --urban-profile configs/urban.example.toml \
+  --urban-mac 10:51:DB:01:0D:54 \
+  --port-template '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_{mac}-if00' \
+  --dry-run
+```
+
+This is an example for one USB interface, not an automatic MAC-to-port rule.
+Check the actual `ports` output and `/dev/serial/by-id` entries on your host first.
+Templates support `{mac}` (uppercase with colons), `{mac_lower}`, `{id}` (12
+uppercase hex digits), and `{id_lower}`. Pending paths are marked `UNVERIFIED`
+in generated TOML comments and preview. Remove `--dry-run` to save the file.
+See [configs/batch.mac.example.toml](configs/batch.mac.example.toml).
+
+Generated slots include `expected_mac`. The worker requires matching USB serial
+metadata before and immediately after opening the port; a missing or different
+USB MAC exits with code `2`. If later `ChipId`/`sensor_id` identifies another
+device, capture stops with code `2`, preserving the UART received so far.
+An expected path name alone does not verify identity. USB bridges whose serial
+number is not the device MAC cannot use this check; existing manual TOML and
+`by-path` workflows without `expected_mac` retain their behavior. This validates
+initial identity and subsequent observed UART IDs; reconnect/resume is separate
+future work. The single-device equivalent is `run --expected-mac <MAC>`.
 
 Preview a batch setup before running real burn-in tests:
 
@@ -455,14 +506,32 @@ uv run altruist-tester batch --config configs/batch.usb.example.toml
 ```
 
 With `wait_port = true`, each worker waits for its configured port before
-opening UART. This lets you start the batch first, then plug in or power all
-devices so boot-time `[BOOT]` and `[BUILD]` lines are captured. The same behavior
+opening UART. This lets you start the batch first, then plug in or power
+devices. Early `[BOOT]` and `[BUILD]` lines can still be missed before the host
+opens the port. The same behavior
 can be enabled from CLI:
 
 ```bash
 uv run altruist-tester batch --config configs/batch.usb.example.toml \
   --wait-port --wait-port-timeout 5m
 ```
+
+To connect expected devices at any pace, explicitly request unlimited waiting:
+
+```bash
+uv run altruist-tester batch --config batch.toml \
+  --wait-port --wait-port-timeout infinite
+```
+
+The TOML equivalent is `wait_port = true` and `wait_port_timeout = "infinite"`.
+The default timeout remains two minutes; existing finite settings are unchanged.
+Each slot starts its full capture duration independently after opening its port.
+Absent slots remain in `WAIT_PORT`; unrelated devices are never added. The batch
+remains unfinished while any expected device is absent. Ctrl+C/SIGTERM stops
+waiting and capturing workers; results of already completed workers are retained.
+Interrupted captures keep their raw files but are not resumed or reported as a
+completed full-duration run. No reset or Wi-Fi preparation phase is performed by
+this workflow yet; capture begins immediately on opening the port.
 
 For a quick homogeneous batch, pass ports explicitly and use one shared tester
 profile:
@@ -497,9 +566,11 @@ runs/batch_<timestamp>/
     slot-01/
       worker.stdout.log
       worker.stderr.log
+      worker.progress.json
     slot-02/
       worker.stdout.log
       worker.stderr.log
+      worker.progress.json
 ```
 
 Each slot directory is reserved as the output directory for its single-device
@@ -508,9 +579,27 @@ worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 area. If any worker exits with a non-zero code, the batch command exits with
 code `1` after every worker has finished.
 
-While a batch is running, the CLI prints live progress with elapsed time,
-planned duration, running/completed/failed worker counts, per-slot state, and
-the batch artifact directory.
+While a batch is running, the CLI prints total elapsed time, worker counts,
+and per-slot progress about every ten seconds, including in redirected output.
+State changes, first-byte receipt and first telemetry are polled every second
+and printed when the next snapshot makes them visible.
+`WAIT_PORT` shows elapsed wait and remaining time, or `unlimited`. `OPENING`
+identifies the port-opening phase; `CAPTURE open=yes` confirms that it opened,
+then shows that slot's elapsed capture/percentage, byte count, first-byte receipt,
+UART silence, parsed telemetry presence, HEALTH/sample counts, and the last
+Wi-Fi state from HEALTH with its age. Before HEALTH, Wi-Fi is `unknown`;
+`wifi=OK` means the last HEALTH reported an associated station, not verified
+IP readiness, sustained stability, or delivery. UART silence does not diagnose
+AP mode or Wi-Fi failure. Worker exit codes and error diagnostics appear on the
+parent CLI without opening report files.
+
+There is no overall time percentage: late devices receive their own full
+capture window. Workers publish bounded, atomically replaced
+`worker.progress.json` snapshots independently of stdout buffering. The parent
+reads these snapshots, not raw UART. `status_age` shows snapshot age; missing or
+invalid status is explicit. Snapshots are operator progress, not acceptance
+evidence or resumable checkpoints. `serial.log` and existing run artifacts
+remain the evidence used for verdicts.
 
 If the batch command receives Ctrl+C or SIGTERM, it asks running workers to
 terminate, waits briefly, kills any remaining workers, and writes
@@ -544,7 +633,8 @@ verdict, device counters, and one compact section per slot with model, profile,
 device id or MAC, USB identity details, port, verdict, short findings, failed
 checks, and the path to the per-device `report.txt`. Missing identity and
 conflicting identity sources are shown as warnings in the report, but they do
-not fail the batch by themselves.
+not fail the batch by themselves. Explicit `expected_mac` mismatches are
+infrastructure failures as described above.
 
 ## Firmware Notes
 

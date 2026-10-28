@@ -167,6 +167,54 @@ of treating them as proof of a failed sensor or relaxing all flatline checks.
 
 ## Start a Multi-device Batch
 
+The same CLI workflow works over SSH on other supported hosts and ordinary
+powered USB hubs. The host model and hub model are not configuration requirements.
+Keep device profiles on the host and generate each new batch there, without
+copying TOML device sections or transferring a new batch from another computer:
+
+```bash
+uv run altruist-tester batch-generate --output batch.toml \
+  --urban-profile configs/urban.example.toml \
+  --insight-profile configs/insight.example.toml \
+  --urban-mac 10:51:DB:01:0D:54 --urban-mac 10:51:DB:01:0D:55 \
+  --insight-mac 10:51:DB:01:0C:70 --insight-mac 10:51:DB:01:0C:71 \
+  --insight-mac 10:51:DB:01:0C:72 --insight-mac 10:51:DB:01:0C:73 \
+  --insight-mac 10:51:DB:01:0C:74 --insight-mac 10:51:DB:01:0C:75
+```
+
+Replace these sample MACs with the actual devices. For six Urban or three Insight,
+repeat only that model's MAC option and supply only that model's profile.
+Generation matches connected USB identities and rejects missing/ambiguous matches,
+duplicate MACs, and existing output files. Add `--dry-run` to review the TOML
+without writing it. Neither generation nor preview opens serial ports.
+
+To prepare before connecting devices, add an explicit `--port-template` matching
+your stand, for example
+`--port-template '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_{mac}-if00'`.
+This particular example applies only when actual USB/by-id metadata has that
+format. Use `ports` and `/dev/serial/by-id` to verify it. `{mac_lower}`, `{id}`
+and `{id_lower}` are also supported. Review `UNVERIFIED` pending paths before
+saving. The generated `expected_mac` requires real matching USB serial metadata
+at startup; a path string alone is insufficient. Bridges with an unrelated USB
+serial need a manual configuration instead. Relative profile paths are generated
+from the output TOML directory. The destination directory must already exist.
+
+Start and observe a generated batch in the SSH `tmux` session:
+
+```bash
+uv run altruist-tester batch --config batch.toml --dry-run
+uv run altruist-tester batch --config batch.toml \
+  --wait-port --wait-port-timeout infinite
+```
+
+Plug expected devices in at any pace. Each slot waits independently and receives
+the full configured capture duration after its port opens. Other USB devices are
+not added. An absent expected device keeps the batch unfinished; Ctrl+C/SIGTERM
+stops waiting and capturing workers and retains completed workers' results.
+Interrupted raw captures remain on disk but have not completed acceptance.
+No automatic reset or Wi-Fi preparation/retry is enabled. Existing finite wait
+timeouts remain available, with two minutes as the default.
+
 Create a batch config that maps each physical hub slot to a `by-path` port and
 to the correct tester profile:
 
@@ -213,8 +261,24 @@ tmux new -s altruist-batch
 uv run altruist-tester batch --config /home/pi/batch.toml
 ```
 
-The command prints live batch progress with elapsed time, worker counts,
-per-slot state, and the batch artifact directory.
+The command prints total elapsed time, worker counts, the artifact directory,
+and slot snapshots about every ten seconds. State changes, first bytes and
+first telemetry are polled every second and printed when observed.
+`WAIT_PORT` shows elapsed waiting
+and remaining time or `unlimited`; `OPENING` identifies an attempted open;
+`CAPTURE open=yes` shows an open port, capture duration/percentage, received
+bytes/first-byte receipt, UART silence, parsed telemetry and HEALTH/sample counts.
+The last Wi-Fi HEALTH state includes its age; `unknown` means no observation,
+and `OK` does not prove IP readiness or sustained stability. A silent open port
+does not establish AP mode or a Wi-Fi failure. Worker failures include the exit
+code and diagnostics on this console. Snapshots have `status_age` so stale status
+is visible. Total batch time has no percentage because capture starts differ.
+
+Output remains line-oriented when redirected to a file. Each slot's
+`worker.progress.json` is a bounded atomic status snapshot, separate from the
+run's UART/evidence artifacts; it is not a resume checkpoint. USB MAC mismatch,
+unavailable required USB identity, or conflicting observed UART identity stops
+that slot with infrastructure code `2`; neighboring slots continue.
 
 Detach from `tmux` with `Ctrl-b`, then `d`.
 

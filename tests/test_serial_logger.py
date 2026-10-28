@@ -745,3 +745,49 @@ def test_capture_raw_serial_writes_health_event_with_reset_context(tmp_path):
     assert metrics_events[0]["reset_reason"] == "power_on_reset"
     assert metrics_events[0]["last_section"] == "Idle/MainLoop"
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
+
+
+def test_progress_exposes_structured_telemetry_and_wifi_observation_age(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"noise\n",
+            b"[HEALTH] uptime=10 boot=1 heap=10000 rssi=-50 tx=0 errors=0 "
+            b"wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0\n",
+        ],
+        clock,
+    )
+    progress = []
+    capture_raw_serial(
+        serial,
+        artifacts,
+        1,
+        clock=clock,
+        progress_interval_seconds=0,
+        progress_callback=progress.append,
+    )
+    assert progress[0].bytes_read > 0
+    assert progress[0].structured_events_count == 0
+    assert progress[0].first_byte_elapsed_seconds == 0.25
+    assert progress[-1].structured_events_count == 1
+    assert progress[-1].wifi_state == "OK"
+    assert progress[-1].wifi_observed_elapsed_seconds == 0.5
+
+
+def test_expected_uart_identity_mismatch_preserves_raw_evidence(tmp_path):
+    import pytest
+
+    from altruist_tester.serial_logger import SerialIdentityError
+
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    line = b"ChipId: 11:22:33:44:55:66\n"
+    serial = FakeSerial([line], clock)
+    with pytest.raises(SerialIdentityError, match="UART reports 112233445566"):
+        capture_raw_serial(
+            serial, artifacts, 1, clock=clock, expected_device_id="AABBCCDDEEFF"
+        )
+    assert artifacts.serial_log.read_bytes() == line
+    events = _read_jsonl(artifacts.events_jsonl)
+    assert any(event.get("device_id") == "112233445566" for event in events)

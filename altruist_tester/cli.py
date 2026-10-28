@@ -5,7 +5,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Protocol
@@ -21,6 +21,7 @@ from altruist_tester.artifacts import (
     create_run_artifacts,
     utc_now,
 )
+from altruist_tester.batch_generation import generate_batch_toml
 from altruist_tester.config import (
     BATCH_DEVICE_MODELS,
     BatchConfig,
@@ -29,11 +30,14 @@ from altruist_tester.config import (
     TesterConfig,
     load_batch_config,
     load_tester_config,
+    parse_mac,
+    parse_wait_port_timeout,
     validate_batch_config,
 )
 from altruist_tester.duration import DurationParseError, parse_duration_seconds
 from altruist_tester.identity import detect_device_identity, normalize_device_id
 from altruist_tester.ports import SerialPortInfo, list_serial_ports
+from altruist_tester.progress import read_worker_status, write_worker_status
 from altruist_tester.rules.engine import (
     RuleEngineConfig,
     RuleEngineResult,
@@ -43,7 +47,11 @@ from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
     expected_metrics_for_sensors,
 )
-from altruist_tester.serial_logger import SerialLogProgress, capture_raw_serial
+from altruist_tester.serial_logger import (
+    SerialIdentityError,
+    SerialLogProgress,
+    capture_raw_serial,
+)
 
 DEFAULT_OUTPUT_DIR = Path("runs")
 BATCH_PROGRESS_INTERVAL_SECONDS = 10.0
@@ -185,6 +193,8 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
         typer.echo(
             f"- wait_port_timeout: {config.wait_port_timeout_input} "
             f"({config.wait_port_timeout_seconds}s)"
+            if config.wait_port_timeout_seconds is not None
+            else "- wait_port_timeout: infinite"
         )
     typer.echo(f"- default_config: {_format_optional_path(config.device_config)}")
     typer.echo("Devices:")
@@ -196,6 +206,18 @@ def _print_batch_dry_run(config: BatchConfig) -> None:
         typer.echo(f"    port_exists: {port_exists}")
         typer.echo(f"    config: {_format_optional_path(device.effective_config)}")
         typer.echo(f"    identity: {_format_batch_identity(device.port, port_infos)}")
+        if device.expected_mac is not None:
+            identity = detect_device_identity(device.port, port_infos=port_infos)
+            actual = normalize_device_id(identity.usb_serial)
+            mapping = "UNVERIFIED (USB MAC unavailable)"
+            if actual is not None:
+                mapping = (
+                    "USB verified"
+                    if actual == parse_mac(device.expected_mac)
+                    else f"MISMATCH (observed USB MAC {actual})"
+                )
+            typer.echo(f"    expected_mac: {device.expected_mac}")
+            typer.echo(f"    mapping: {mapping}")
 
 
 def _explicit_batch_config(
@@ -230,7 +252,7 @@ def _explicit_batch_config(
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
     wait_port_timeout_input = wait_port_timeout or "2m"
     try:
-        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout_input)
+        wait_port_timeout_seconds = parse_wait_port_timeout(wait_port_timeout_input)
     except DurationParseError as exc:
         raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
 
@@ -282,7 +304,7 @@ def _load_batch_cli_config(
             raise typer.BadParameter(str(exc), param_hint="--config") from exc
         if wait_port_timeout is not None:
             try:
-                wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+                wait_port_timeout_seconds = parse_wait_port_timeout(wait_port_timeout)
             except DurationParseError as exc:
                 raise typer.BadParameter(
                     str(exc),
@@ -315,6 +337,7 @@ def _batch_worker_command(
     device = device_artifacts.device
     command = [
         sys.executable,
+        "-u",
         "-m",
         "altruist_tester.cli",
         "run",
@@ -329,6 +352,11 @@ def _batch_worker_command(
     ]
     if device.effective_config is not None:
         command.extend(["--config", str(device.effective_config)])
+    command.extend(
+        ["--status-file", str(device_artifacts.output_dir / "worker.progress.json")]
+    )
+    if device.expected_mac is not None:
+        command.extend(["--expected-mac", device.expected_mac])
     if device.model is not None:
         command.extend(["--device-model", device.model])
     if config.wait_port:
@@ -689,12 +717,9 @@ def _batch_progress_line(
     failed_count: int,
     batch_dir: Path,
 ) -> str:
-    percent = 100.0
-    if duration_seconds > 0:
-        percent = min(100.0, elapsed_seconds / duration_seconds * 100.0)
     return (
-        f"Batch {percent:5.1f}% "
-        f"({_format_elapsed(elapsed_seconds)}/{_format_elapsed(duration_seconds)}) "
+        f"Batch elapsed={_format_elapsed(elapsed_seconds)} "
+        f"| capture per slot={_format_elapsed(duration_seconds)} "
         f"| running={running_count} "
         f"completed={completed_count} "
         f"failed={failed_count} "
@@ -822,6 +847,82 @@ def _terminate_batch_workers(
         worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
 
 
+def _print_worker_status(
+    worker: BatchWorkerProcess,
+    *,
+    last_status: dict[str, tuple[object, ...]] | None = None,
+    force: bool = True,
+) -> None:
+    try:
+        snapshot = read_worker_status(worker.output_dir / "worker.progress.json")
+    except (OSError, ValueError) as exc:
+        typer.echo(f"{worker.slot} STATUS_ERROR: {exc}")
+        return
+    signature = (
+        ("STATUS_PENDING",)
+        if snapshot is None
+        else (
+            snapshot["state"],
+            bool(snapshot.get("bytes_read")),
+            bool(
+                snapshot.get("structured_events_count")
+                or snapshot.get("sensor_samples_count")
+            ),
+            snapshot.get("wifi_state"),
+        )
+    )
+    if last_status is not None:
+        if not force and last_status.get(worker.slot) == signature:
+            return
+        last_status[worker.slot] = signature
+    if snapshot is None:
+        typer.echo(f"{worker.slot} STATUS_PENDING (no worker snapshot)")
+        return
+    state = snapshot["state"]
+    age = max(0.0, time.monotonic() - snapshot["updated_monotonic"])
+    details = []
+    if state == "WAIT_PORT":
+        elapsed = snapshot["wait_elapsed_seconds"] + age
+        timeout = snapshot["wait_timeout_seconds"]
+        details.append(f"wait={_format_elapsed(elapsed)}")
+        details.append(
+            "unlimited"
+            if timeout is None
+            else f"remaining={_format_elapsed(max(0, timeout - elapsed))}"
+        )
+    elif state == "CAPTURE":
+        elapsed = snapshot["elapsed_seconds"] + age
+        duration = snapshot["duration_seconds"]
+        percent = min(100.0, 100.0 * elapsed / duration)
+        telemetry = (
+            "seen"
+            if snapshot["structured_events_count"] or snapshot["sensor_samples_count"]
+            else "unseen"
+        )
+        wifi = snapshot.get("wifi_state") or "unknown"
+        wifi_observed_at = snapshot.get("wifi_observed_elapsed_seconds")
+        if wifi_observed_at is not None:
+            wifi += f" (health age={_format_elapsed(elapsed - wifi_observed_at)})"
+        details.extend(
+            [
+                "open=yes",
+                f"capture={_format_elapsed(elapsed)}/{_format_elapsed(duration)}",
+                f"{percent:.1f}%",
+                f"bytes={snapshot['bytes_read']}",
+                f"first_bytes={'yes' if snapshot['bytes_read'] else 'no'}",
+                f"quiet={_format_elapsed(snapshot['current_silence_seconds'] + age)}",
+                f"telemetry={telemetry}",
+                f"health={snapshot['dev_metrics_count']}",
+                f"samples={snapshot['sensor_samples_count']}",
+                f"wifi={wifi}",
+            ]
+        )
+    else:
+        details.append(str(snapshot.get("message", "")))
+    details.append(f"status_age={_format_elapsed(age)}")
+    typer.echo(f"{worker.slot} {state} " + " | ".join(details))
+
+
 def _wait_for_batch_workers(
     workers: list[BatchWorkerProcess],
     worker_results: list[dict[str, object]],
@@ -833,10 +934,12 @@ def _wait_for_batch_workers(
     running = {worker.slot: worker for worker in workers}
     started_monotonic = time.monotonic()
     next_progress_monotonic = started_monotonic
+    last_worker_status: dict[str, tuple[object, ...]] = {}
 
     while running:
         now_monotonic = time.monotonic()
-        if now_monotonic >= next_progress_monotonic:
+        force_status = now_monotonic >= next_progress_monotonic
+        if force_status:
             _emit_batch_progress(
                 started_monotonic=started_monotonic,
                 now_monotonic=now_monotonic,
@@ -849,6 +952,9 @@ def _wait_for_batch_workers(
             next_progress_monotonic = now_monotonic + BATCH_PROGRESS_INTERVAL_SECONDS
 
         for worker in tuple(running.values()):
+            _print_worker_status(
+                worker, last_status=last_worker_status, force=force_status
+            )
             returncode = _worker_returncode(worker)
             if returncode is None:
                 continue
@@ -856,6 +962,16 @@ def _wait_for_batch_workers(
             worker_results.append(result)
             del running[worker.slot]
             typer.echo(f"{worker.slot} finished with exit code {returncode}.")
+            _print_worker_status(worker, last_status=last_worker_status, force=False)
+            if returncode:
+                with worker.stderr_log.open("rb") as error_log:
+                    error_log.seek(0, 2)
+                    error_log.seek(max(0, error_log.tell() - 4096))
+                    diagnostic = (
+                        error_log.read().decode("utf-8", errors="replace").strip()
+                    )
+                if diagnostic:
+                    typer.echo(f"{worker.slot} worker error: {diagnostic}")
 
         if running:
             time.sleep(min(1.0, BATCH_PROGRESS_INTERVAL_SECONDS))
@@ -1068,45 +1184,61 @@ def _resolve_run_port(port: Path | None, auto: bool) -> Path:
 def _wait_for_explicit_port(
     port: Path,
     *,
-    timeout_seconds: int,
+    timeout_seconds: int | None,
     poll_interval_seconds: float = 0.25,
+    status_file: Path | None = None,
 ) -> Path:
     if port.exists():
         return port
-
-    typer.echo(f"Waiting up to {_format_elapsed(timeout_seconds)} for {port}...")
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
+    limit = (
+        "without a deadline"
+        if timeout_seconds is None
+        else f"up to {_format_elapsed(timeout_seconds)}"
+    )
+    typer.echo(f"Waiting {limit} for {port}...")
+    started = time.monotonic()
+    next_update = started
+    while True:
+        now = time.monotonic()
+        elapsed = now - started
+        if timeout_seconds is not None and elapsed >= timeout_seconds:
+            break
+        if now >= next_update:
+            write_worker_status(
+                status_file,
+                "WAIT_PORT",
+                wait_elapsed_seconds=elapsed,
+                wait_timeout_seconds=timeout_seconds,
+                port=str(port),
+            )
+            remaining = (
+                "unlimited"
+                if timeout_seconds is None
+                else f"remaining={_format_elapsed(timeout_seconds - elapsed)}"
+            )
+            typer.echo(f"WAIT_PORT wait={_format_elapsed(elapsed)} {remaining}: {port}")
+            next_update = now + BATCH_PROGRESS_INTERVAL_SECONDS
         time.sleep(poll_interval_seconds)
         if port.exists():
             typer.echo(f"Serial port appeared: {port}")
             return port
-
-    typer.secho(
-        f"Serial port did not appear within {_format_elapsed(timeout_seconds)}: {port}",
-        fg=typer.colors.RED,
-        err=True,
+    message = (
+        f"Serial port did not appear within {_format_elapsed(timeout_seconds)}: {port}"
     )
+    write_worker_status(status_file, "ERROR", message=message)
+    typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=2)
 
 
 def _wait_for_auto_port(
     *,
-    timeout_seconds: int,
+    timeout_seconds: int | None,
     poll_interval_seconds: float = 0.25,
+    status_file: Path | None = None,
 ) -> Path:
-    port_infos = list_serial_ports()
-    if len(port_infos) == 1:
-        return Path(port_infos[0].device)
-    if len(port_infos) > 1:
-        _resolve_run_port(None, auto=True)
-
-    typer.echo(
-        f"Waiting up to {_format_elapsed(timeout_seconds)} for one serial port..."
-    )
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        time.sleep(poll_interval_seconds)
+    started = time.monotonic()
+    next_update = started
+    while True:
         port_infos = list_serial_ports()
         if len(port_infos) == 1:
             resolved_port = Path(port_infos[0].device)
@@ -1114,12 +1246,31 @@ def _wait_for_auto_port(
             return resolved_port
         if len(port_infos) > 1:
             _resolve_run_port(None, auto=True)
-
-    typer.secho(
-        f"No serial ports found within {_format_elapsed(timeout_seconds)}.",
-        fg=typer.colors.RED,
-        err=True,
-    )
+        now = time.monotonic()
+        elapsed = now - started
+        if timeout_seconds is not None and elapsed >= timeout_seconds:
+            break
+        if now >= next_update:
+            write_worker_status(
+                status_file,
+                "WAIT_PORT",
+                wait_elapsed_seconds=elapsed,
+                wait_timeout_seconds=timeout_seconds,
+            )
+            remaining = (
+                "unlimited"
+                if timeout_seconds is None
+                else f"remaining={_format_elapsed(timeout_seconds - elapsed)}"
+            )
+            typer.echo(
+                f"WAIT_PORT wait={_format_elapsed(elapsed)} "
+                f"{remaining}: one serial port"
+            )
+            next_update = now + BATCH_PROGRESS_INTERVAL_SECONDS
+        time.sleep(poll_interval_seconds)
+    message = f"No serial ports found within {_format_elapsed(timeout_seconds)}."
+    write_worker_status(status_file, "ERROR", message=message)
+    typer.secho(message, fg=typer.colors.RED, err=True)
     raise typer.Exit(code=2)
 
 
@@ -1128,7 +1279,8 @@ def _resolve_or_wait_for_run_port(
     auto: bool,
     *,
     wait_port: bool,
-    wait_port_timeout_seconds: int,
+    wait_port_timeout_seconds: int | None,
+    status_file: Path | None = None,
 ) -> Path:
     if not wait_port:
         return _resolve_run_port(port, auto)
@@ -1138,10 +1290,13 @@ def _resolve_or_wait_for_run_port(
         return _wait_for_explicit_port(
             port,
             timeout_seconds=wait_port_timeout_seconds,
+            status_file=status_file,
         )
     if not auto:
         raise typer.BadParameter("Specify --port or --auto.")
-    return _wait_for_auto_port(timeout_seconds=wait_port_timeout_seconds)
+    return _wait_for_auto_port(
+        timeout_seconds=wait_port_timeout_seconds, status_file=status_file
+    )
 
 
 def _append_check_message(message: str, check_message: str) -> str:
@@ -1243,6 +1398,57 @@ def ports() -> None:
     _print_ports(list_serial_ports())
 
 
+@app.command("batch-generate")
+def batch_generate(
+    output: Annotated[
+        Path, typer.Option("--output", help="New batch TOML path; must not exist.")
+    ],
+    urban_mac: Annotated[
+        list[str] | None, typer.Option("--urban-mac", help="Repeat for Urban devices.")
+    ] = None,
+    insight_mac: Annotated[
+        list[str] | None,
+        typer.Option("--insight-mac", help="Repeat for Insight devices."),
+    ] = None,
+    urban_profile: Annotated[Path | None, typer.Option("--urban-profile")] = None,
+    insight_profile: Annotated[Path | None, typer.Option("--insight-profile")] = None,
+    port_template: Annotated[
+        str | None,
+        typer.Option(
+            "--port-template",
+            help=(
+                "Expected path for absent devices; fields: "
+                "{mac}, {mac_lower}, {id}, {id_lower}."
+            ),
+        ),
+    ] = None,
+    duration: Annotated[str, typer.Option("--duration")] = "24h",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print TOML without writing it.")
+    ] = False,
+) -> None:
+    """Generate a mixed batch from MAC lists using existing tester profiles."""
+    try:
+        parse_duration_seconds(duration)
+        content = generate_batch_toml(
+            [
+                ("urban", urban_mac or [], urban_profile),
+                ("insight", insight_mac or [], insight_profile),
+            ],
+            destination=output,
+            duration=duration,
+            port_template=port_template,
+            port_infos=list_serial_ports(),
+        )
+        typer.echo(content, nl=False)
+        if not dry_run:
+            with output.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+            typer.echo(f"Created batch config: {output}")
+    except (ConfigError, DurationParseError, OSError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @app.command()
 def batch(
     config: Annotated[
@@ -1321,7 +1527,7 @@ def batch(
         str | None,
         typer.Option(
             "--wait-port-timeout",
-            help="Override the per-worker wait-port timeout, for example 30s or 2m.",
+            help="Override wait-port timeout: 30s, 2m, or infinite (requires waiting).",
         ),
     ] = None,
     dry_run: Annotated[
@@ -1393,7 +1599,7 @@ def run(
         str,
         typer.Option(
             "--wait-port-timeout",
-            help="Maximum time to wait for --wait-port, for example 30s or 2m.",
+            help="Maximum time for --wait-port: 30s, 2m, or infinite.",
         ),
     ] = "2m",
     duration: Annotated[
@@ -1453,6 +1659,14 @@ def run(
             ),
         ),
     ] = None,
+    status_file: Annotated[
+        Path | None,
+        typer.Option("--status-file", hidden=True),
+    ] = None,
+    expected_mac: Annotated[
+        str | None,
+        typer.Option("--expected-mac", help="Require matching USB MAC before capture."),
+    ] = None,
     device_model: Annotated[
         str | None,
         typer.Option(
@@ -1477,19 +1691,15 @@ def run(
         raise typer.BadParameter(str(exc), param_hint="--duration") from exc
 
     try:
-        wait_port_timeout_seconds = parse_duration_seconds(wait_port_timeout)
+        wait_port_timeout_seconds = parse_wait_port_timeout(wait_port_timeout)
     except DurationParseError as exc:
         raise typer.BadParameter(str(exc), param_hint="--wait-port-timeout") from exc
 
-    try:
-        resolved_port = _resolve_or_wait_for_run_port(
-            port,
-            auto,
-            wait_port=wait_port,
-            wait_port_timeout_seconds=wait_port_timeout_seconds,
-        )
-    except typer.BadParameter as exc:
-        raise typer.BadParameter(str(exc), param_hint="--port") from exc
+    if expected_mac is not None:
+        try:
+            expected_mac = parse_mac(expected_mac)
+        except ConfigError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--expected-mac") from exc
 
     try:
         tester_config = load_tester_config(config)
@@ -1503,6 +1713,17 @@ def run(
         expected_metrics_for_sensors(expected_sensors)
     except UnknownExpectedSensorError as exc:
         raise typer.BadParameter(str(exc), param_hint="--expect-sensor") from exc
+
+    try:
+        resolved_port = _resolve_or_wait_for_run_port(
+            port,
+            auto,
+            wait_port=wait_port,
+            wait_port_timeout_seconds=wait_port_timeout_seconds,
+            status_file=status_file,
+        )
+    except typer.BadParameter as exc:
+        raise typer.BadParameter(str(exc), param_hint="--port") from exc
 
     # Create run artifacts only after static CLI/config validation; from this
     # point on, hardware failures are part of the run record.
@@ -1525,6 +1746,7 @@ def run(
 
     if not resolved_port.exists():
         message = f"Serial port does not exist: {resolved_port}"
+        write_worker_status(status_file, "ERROR", message=message)
         artifacts.append_event(
             "run_failed", reason="missing_serial_port", message=message
         )
@@ -1538,20 +1760,66 @@ def run(
         )
         raise typer.Exit(code=2)
 
+    def verify_expected_usb() -> None:
+        if expected_mac is None:
+            return
+        observed = detect_device_identity(resolved_port, port_infos=list_serial_ports())
+        actual = normalize_device_id(observed.usb_serial)
+        if actual != expected_mac:
+            raise serial.SerialException(
+                f"Expected USB MAC {expected_mac}, observed {actual or 'unavailable'} "
+                f"on {resolved_port}; refusing capture"
+            )
+
+    if expected_mac is not None:
+        artifacts.append_event("device_identity_expected", expected_mac=expected_mac)
+
+    printer = _make_progress_printer()
+
+    def show_progress(progress: SerialLogProgress) -> None:
+        write_worker_status(status_file, "CAPTURE", **asdict(progress))
+        printer(progress)
+
+    serial_opened = False
     try:
+        write_worker_status(status_file, "OPENING", message=str(resolved_port))
+        verify_expected_usb()
         with serial.Serial(str(resolved_port), baudrate=baud, timeout=1) as serial_port:
+            verify_expected_usb()
+            serial_opened = True
+            write_worker_status(
+                status_file,
+                "CAPTURE",
+                elapsed_seconds=0,
+                duration_seconds=duration_seconds,
+                bytes_read=0,
+                current_silence_seconds=0,
+                dev_metrics_count=0,
+                sensor_samples_count=0,
+                structured_events_count=0,
+            )
             artifacts.append_event("serial_opened", port=str(resolved_port), baud=baud)
             artifacts.append_event("serial_capture_started")
             stats = capture_raw_serial(
                 serial_port,
                 artifacts,
                 duration_seconds,
-                progress_callback=_make_progress_printer(),
+                progress_callback=show_progress,
+                **({"expected_device_id": expected_mac} if expected_mac else {}),
             )
-    except serial.SerialException as exc:
-        message = f"Could not open serial port {resolved_port}: {exc}"
+    except (serial.SerialException, SerialIdentityError) as exc:
+        message = f"Serial capture failed on {resolved_port}: {exc}"
+        write_worker_status(status_file, "ERROR", message=message)
         artifacts.append_event(
-            "run_failed", reason="serial_open_failed", message=message
+            "run_failed",
+            reason=(
+                "identity_mismatch"
+                if isinstance(exc, SerialIdentityError)
+                else "serial_capture_failed"
+                if serial_opened
+                else "serial_open_failed"
+            ),
+            message=message,
         )
         finished_at = utc_now()
         artifacts.write_summary("failed", message=message, finished_at=finished_at)
@@ -1668,6 +1936,11 @@ def run(
         message=message,
         finished_at=finished_at,
         details=final_details,
+    )
+    write_worker_status(
+        status_file,
+        "ERROR" if run_status == "failed" else "COMPLETED",
+        message=f"{rule_result.verdict}: {message}",
     )
     _emit_report_messages(report_messages)
     if run_status == "failed":
