@@ -174,7 +174,8 @@ class BatchTerminal:
             else "Ctrl+C stops batch. Status snapshots are not acceptance evidence."
         )
         lines.append(self._paint(footer[:width], "33" if clipped else "2"))
-        sys.stdout.write("\x1b[H" + "\r\n".join(lines) + "\x1b[J")
+        # Shorter rows must erase old cells to their right, not just rows below.
+        sys.stdout.write("\x1b[H" + "\x1b[K\r\n".join(lines) + "\x1b[J")
         sys.stdout.flush()
 
     def __exit__(self, exc_type, exc_value, traceback):

@@ -537,3 +537,99 @@ def test_compact_worker_error_preserves_cause(message, expected):
     from altruist_tester.batch_terminal import compact_worker_error
 
     assert compact_worker_error(message) == expected
+
+
+def test_redraw_clears_old_columns_after_wait_and_wifi_changes(monkeypatch):
+    output = TerminalOutput()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr(
+        "altruist_tester.batch_terminal.shutil.get_terminal_size",
+        lambda **kwargs: os.terminal_size((180, 24)),
+    )
+
+    def screen_after(stream):
+        # Model cursor movement and erase semantics, not just emitted strings:
+        # erase-to-end-of-screen does not clear tails of earlier rows.
+        screen = [[" "] * 180 for _ in range(24)]
+        row = column = 0
+        for token in re.split(r"(\x1b\[[0-?]*[ -/]*[@-~])", stream):
+            if token == "\x1b[H":
+                row = column = 0
+            elif token == "\x1b[K":
+                screen[row][column:] = [" "] * (180 - column)
+            elif token == "\x1b[J":
+                screen[row][column:] = [" "] * (180 - column)
+                for line in screen[row + 1 :]:
+                    line[:] = [" "] * 180
+            elif not token.startswith("\x1b["):
+                for char in token:
+                    if char == "\r":
+                        column = 0
+                    elif char == "\n":
+                        row += 1
+                    else:
+                        screen[row][column] = char
+                        column += 1
+        return ["".join(line).rstrip() for line in screen]
+
+    capture = {
+        "open": "yes",
+        "capture": "00:23/03:00",
+        "progress": "13.1%",
+        "bytes": "1794",
+        "first_bytes": "yes",
+        "quiet": "00:00",
+        "telemetry": "seen",
+        "health": "0",
+        "samples": "0",
+        "wifi": "unknown",
+        "status_age": "00:00",
+    }
+    frames = [
+        [
+            BatchSlotStatus(
+                "urban",
+                "CAPTURE",
+                capture,
+            ),
+            BatchSlotStatus(
+                "insight",
+                "WAIT_PORT",
+                {
+                    "wait": "00:47",
+                    "wait_limit": "unlimited",
+                    "status_age": "00:00",
+                },
+            ),
+        ],
+        [
+            BatchSlotStatus("urban", "CAPTURE", capture),
+            BatchSlotStatus("insight", "CAPTURE", capture),
+        ],
+        [
+            BatchSlotStatus(
+                "urban", "CAPTURE", {**capture, "wifi": "OK", "wifi_age": "00:12"}
+            ),
+            BatchSlotStatus("insight", "CAPTURE", capture),
+        ],
+        [
+            BatchSlotStatus("urban", "COMPLETED", {"exit": "0", "status_age": "—"}),
+            BatchSlotStatus("insight", "COMPLETED", {"exit": "0", "status_age": "—"}),
+        ],
+    ]
+    terminal = BatchTerminal()
+    previous = ""
+    for index, slots in enumerate(frames):
+        output.seek(0)
+        output.truncate()
+        terminal.draw("Batch", slots)
+        current = output.getvalue()
+        assert screen_after(previous + current) == screen_after(current)
+        if index:
+            visible = "\n".join(screen_after(previous + current))
+            assert "unlimited" not in visible
+            assert "nlimited" not in visible
+            assert "REMAINING" not in visible
+        previous += current
