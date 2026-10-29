@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from altruist_tester.rules.presence import canonical_metric_name
+from altruist_tester.rules.presence import canonical_metric_name, canonical_sensor_name
 from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
 
 FlatlineStatus = Literal["ok", "warn", "fail"]
@@ -161,6 +161,26 @@ def check_series_flatline(
             message=f"{sensor}/{metric} has not enough samples for flatline check",
         )
 
+    # Derived status and daily counts need not vary, even in polluted air.
+    # Invalid values and the unavailable sentinel are diagnosed by range checks.
+    if canonical_sensor_name(sensor) == "bme680" and canonical_metric in {
+        "voc_index",
+        "voc_level",
+        "voc_spikes_today",
+    }:
+        return SensorFlatlineFinding(
+            status="ok",
+            sensor=sensor,
+            metric=metric,
+            canonical_metric=canonical_metric,
+            samples_count=samples_count,
+            distinct_values_count=distinct_values_count,
+            elapsed_seconds=elapsed_seconds,
+            message=(
+                f"{sensor}/{metric} is a VOC indicator/counter; variation is optional"
+            ),
+        )
+
     if distinct_values_count >= min_distinct_values:
         return SensorFlatlineFinding(
             status="ok",
@@ -247,7 +267,7 @@ def check_sensor_flatlines(
         message = f"{warning_count} sensor metric series need more variation"
     else:
         status = "ok"
-        message = "All sensor metric series changed enough"
+        message = "All sensor metric series passed flatline checks"
 
     return SensorFlatlineReport(
         status=status,

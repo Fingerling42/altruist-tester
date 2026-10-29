@@ -791,3 +791,25 @@ def test_expected_uart_identity_mismatch_preserves_raw_evidence(tmp_path):
     assert artifacts.serial_log.read_bytes() == line
     events = _read_jsonl(artifacts.events_jsonl)
     assert any(event.get("device_id") == "112233445566" for event in events)
+
+
+def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    values = {
+        "voc_index": 0,
+        "voc_level": -1,
+        "voc_spikes_today": 7,
+        "gas_resistance": 0,
+        "gas_baseline": 120000,
+    }
+    snapshot = {
+        "BME680": {metric: {"value": value} for metric, value in values.items()}
+    }
+    snapshot["BME680"]["voc_phrase"] = {"value": "No VOC detected"}
+    raw_line = (json.dumps(snapshot) + "\n").encode()
+    stats = capture_raw_serial(FakeSerial([raw_line], clock), artifacts, 1, clock=clock)
+    samples = _read_jsonl(artifacts.samples_jsonl)
+    assert {sample["metric"]: sample["value"] for sample in samples} == values
+    assert stats.sensor_series.count() == 5
+    assert artifacts.serial_log.read_bytes() == raw_line

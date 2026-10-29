@@ -26,6 +26,9 @@ name = "co2_ppm"
 minimum = 350.0
 maximum = 10000.0
 
+# BME680 VOC indicator/counter constants are allowed; cadence still applies.
+# Default ranges: integer index 0..100, level 0..3 (unavailable -1 warns),
+# daily count 0..65535. VOC is qualitative, not ppm; fields are not mandatory.
 [flatline]
 window = "30m"
 fail_after = "1h"

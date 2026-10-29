@@ -109,6 +109,9 @@ DEFAULT_SENSOR_RANGES: dict[str, SensorRange] = {
     "no2": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
     "fast_aqi": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
     "epa_aqi": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
+    "voc_index": SensorRange("voc_index_au", minimum=0.0, maximum=100.0),
+    "voc_level": SensorRange("voc_level", minimum=0.0, maximum=3.0),
+    "voc_spikes_today": SensorRange("voc_daily_count", minimum=0.0, maximum=65535.0),
 }
 
 DEFAULT_NON_NEGATIVE_METRICS = frozenset(
@@ -174,6 +177,24 @@ def check_sensor_value_range(
         )
 
     rule = ranges.get(metric)
+    if metric in {"voc_index", "voc_level", "voc_spikes_today"}:
+        if not numeric_value.is_integer():
+            return SensorRangeCheck(
+                status="fail",
+                metric=metric,
+                value=numeric_value,
+                rule=rule.name if rule else None,
+                message=f"{metric} must be an integer",
+            )
+        # Firmware uses -1 for an unavailable gas reading, not baseline warmup.
+        if metric == "voc_level" and numeric_value == -1:
+            return SensorRangeCheck(
+                status="warn",
+                metric=metric,
+                value=numeric_value,
+                rule=rule.name if rule else None,
+                message="voc_level=-1: VOC unavailable (invalid gas reading)",
+            )
     if rule is None:
         if numeric_value < 0.0 and _is_unknown_non_negative_metric(
             metric, unknown_non_negative_metrics
@@ -264,7 +285,7 @@ def check_sensor_sample_ranges(
         message = f"{failure_count} sensor samples are outside sane ranges"
     elif warning_count:
         status = "warn"
-        message = f"{warning_count} sensor samples need range configuration"
+        message = f"{warning_count} sensor samples need attention during range checks"
     else:
         status = "ok"
         message = "All parsed sensor samples are inside sane ranges"

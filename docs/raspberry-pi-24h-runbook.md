@@ -160,10 +160,17 @@ Kafka ingress acceptance. CPS endpoint authorization and NodeId/anchor
 provisioning differ from legacy `setDevices`. Route-specific acceptance is
 pending. C3 remains legacy-only; reviewed repository Stable is `d1623eb`.
 
-For Insight debug runs, newly exposed VOC index/level/daily-count constants can
-trigger generic flatline FAIL despite being normal status values. Dedicated
-VOC rules are pending; inspect the affected findings and raw evidence instead
-of treating them as proof of a failed sensor or relaxing all flatline checks.
+For observed Insight BME680 JSON, constant `voc_index`, `voc_level`, and
+`voc_spikes_today` are allowed; do not provoke pollution to make them change.
+Default ranges require integer index 0–100, level 0–3, and daily count 0–65535.
+Level -1 gives WARN for unavailable VOC (invalid gas reading), including a
+transient occurrence; inspect raw evidence and gas resistance/baseline.
+Warmup produces level/index zero during the first four valid gas readings;
+late UART capture cannot prove warmup completion. The daily count may reset
+at the device's local midnight/time synchronization or survive a reboot;
+no monotonicity is required. Runtime reboot failures and gas diagnostic
+flatline/cadence checks still apply. These rules do not add readable release
+VOC samples; confirm the available measurement source during preflight.
 
 ## Start a Multi-device Batch
 

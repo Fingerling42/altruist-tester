@@ -181,7 +181,10 @@ Flatline detection:
 
 - checks each `(sensor, metric)` series for enough value variation;
 - short or inconclusive flatlines are warnings;
-- flatlines lasting `flatline.fail_after` fail the run.
+- flatlines lasting `flatline.fail_after` fail the run (selected all-zero
+  environmental metrics warn);
+- BME680 `voc_index`, `voc_level`, and `voc_spikes_today` do not require
+  variation; their validity is checked by sensor ranges.
 
 Update cadence:
 
@@ -249,13 +252,32 @@ Route-specific acceptance and a transport-independent release reading contract
 remain planned. C3 remains legacy-only; the reviewed repository Stable
 publication is still firmware `d1623eb`.
 
-Insight BME680 JSON now includes VOC index, level, daily spike count, and gas
+Insight BME680 JSON includes VOC index, level, daily spike count, and gas
 resistance/baseline. Numeric values are preserved, while text `voc_phrase` is
-ignored. Dedicated VOC acceptance is not implemented: generic flatline checks
-currently fail constant VOC index/level/count after `flatline.fail_after`, even
-though constant status/counter values can be normal. This affects debug UART
-JSON; the reviewed release driver does not print those snapshots. VOC is a
-qualitative device-relative indicator, not calibrated concentration in ppm.
+ignored. VOC is a qualitative device-relative indicator, not calibrated
+concentration in ppm. The policy follows firmware `344f123`:
+
+- `voc_index`: integer 0–100; `voc_level`: integer 0–3; `voc_spikes_today`:
+  integer 0–65535. Out-of-range or fractional values fail range checks with
+  the default profile. Range bounds can be overridden through `sensor_ranges`.
+- Constant zero or nonzero values in these three BME680 series pass flatline
+  checks once enough samples are present. Pollution events are not required.
+- The first four valid gas readings initialize the baseline with level/index
+  zero. These zeros are valid; UART snapshots cannot establish warmup completion
+  because capture may start late or miss readings.
+- `voc_level=-1` means unavailable VOC due to an invalid gas reading, rather
+  than warmup. It produces a range WARN, even if later readings recover.
+- The daily counter can remain unchanged, saturate, increase, or decrease.
+  Firmware resets it by its local calendar date and persists it on SPIFFS;
+  a reboot may restore it. The tester does not enforce monotonicity or infer
+  day boundaries from the host clock. Reboots still fail runtime checks.
+- `gas_resistance` and `gas_baseline` remain diagnostic values in Ohm under
+  existing range/flatline/cadence rules; they do not prove calibrated VOC
+  concentration. Other measurements and cadence rules are unchanged.
+
+This applies to observed JSON samples. The reviewed release driver does not
+print those snapshots; the policy does not add a release measurement source
+or make VOC fields mandatory in the Insight presence preset.
 
 Release log contract:
 
