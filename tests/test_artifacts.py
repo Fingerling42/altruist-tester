@@ -341,3 +341,21 @@ def test_write_report_includes_final_fail_details(tmp_path):
     assert "[FAIL] NO_SERIAL_OUTPUT: No serial output was received" in report
     assert "- dev metrics seen: False" in report
     assert "- missing metrics: temperature" in report
+
+
+def test_payload_report_supports_new_and_older_summary_fields(tmp_path):
+    for malformed_count in (None, 2):
+        artifacts = create_run_artifacts(
+            tmp_path / str(malformed_count),
+            port=Path("/dev/test"),
+            baud=115200,
+            duration_input="1s",
+            duration_seconds=1,
+        )
+        payloads = {"payload_observations_count": 3}
+        if malformed_count is not None:
+            payloads["malformed_payload_observations_count"] = malformed_count
+        artifacts.write_report("completed", details={"payload_observations": payloads})
+        report = artifacts.report_txt.read_text()
+        assert "- observations: 3" in report
+        assert f"- malformed observations: {malformed_count or 0}" in report

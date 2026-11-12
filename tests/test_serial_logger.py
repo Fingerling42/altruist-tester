@@ -813,3 +813,77 @@ def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path)
     assert {sample["metric"]: sample["value"] for sample in samples} == values
     assert stats.sensor_series.count() == 5
     assert artifacts.serial_log.read_bytes() == raw_line
+
+
+def test_capture_quarantines_unknown_payload_channel(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    raw = (
+        b"[PAYLOAD] channel=sensors-connectivit encoding=plain encrypted=0 "
+        b"payload_len=4 sample_available=1 sample=t:20\n"
+    )
+    stats = capture_raw_serial(FakeSerial([raw], clock), artifacts, 1, clock=clock)
+    assert artifacts.serial_log.read_bytes() == raw
+    assert stats.payload_observations.count == 0
+    assert stats.payload_observation_records == ()
+    assert stats.sensor_samples_count == 0
+    assert stats.payload_observations.malformed_count == 1
+
+
+def test_malformed_payload_examples_are_bounded_and_do_not_reset_valid_counts(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="10s", duration_seconds=10)
+    invalid = (
+        "[PAYLOAD] channel="
+        + "界" * 1000
+        + " encoding="
+        + "界" * 1000
+        + " encrypted=0 payload_len=5 sample_available=1 sample=t:999 wire=SECRET\n"
+    ).encode()
+    lines = [invalid] * 7 + [
+        b"[PAYLOAD]\n",
+        b"[PAYLOAD] channel=custom-http encoding=plain\n",
+    ]
+    stats = capture_raw_serial(FakeSerial(lines, clock), artifacts, 10, clock=clock)
+    payloads = stats.payload_observations
+    assert artifacts.serial_log.read_bytes() == b"".join(lines)
+    assert payloads.count == 1
+    assert payloads.by_channel == {"custom-http": 1}
+    assert payloads.by_encoding == {"plain": 1}
+    assert payloads.encrypted_count == 0
+    assert payloads.sample_available_count == 0
+    assert len(stats.payload_observation_records) == 1
+    assert payloads.malformed_count == 8
+    assert payloads.malformed_by_reason == {"unknown_channel": 7, "missing_channel": 1}
+    assert stats.sensor_samples_count == 0
+    assert len(payloads.malformed_examples) == 5
+    events = _read_jsonl(artifacts.events_jsonl)
+    malformed = [e for e in events if e["type"] == "malformed_payload_observation"]
+    assert malformed == list(payloads.malformed_examples)
+    assert [e["line_number"] for e in malformed] == list(range(1, 6))
+    for example in malformed:
+        assert example["truncated"] is True
+        assert len(json.dumps(example, sort_keys=True).encode()) <= 1024
+        assert all(len(v) <= 128 for v in example["metadata"].values())
+        assert "sample" not in example["metadata"]
+        assert "wire" not in example["metadata"]
+        assert "SECRET" not in json.dumps(example)
+    assert payloads.as_dict()["malformed_payload_observations_count"] == 8
+
+
+def test_invalid_payload_cannot_smuggle_json_samples(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    line = b'[PAYLOAD] channel=broken sample={"bme280":{"temperature":{"value":25}}}\n'
+    stats = capture_raw_serial(FakeSerial([line], clock), artifacts, 1, clock=clock)
+    assert stats.sensor_samples_count == 0
+    assert stats.payload_observations.malformed_count == 1
+
+
+def test_malformed_payload_references_physical_uart_line_after_partial_read(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    chunks = [b"partial prefix ", b"[PAYLOAD] channel=broken\n"]
+    stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 1, clock=clock)
+    assert artifacts.serial_log.read_bytes() == b"".join(chunks)
+    assert stats.payload_observations.malformed_examples[0]["line_number"] == 1

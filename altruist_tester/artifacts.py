@@ -272,11 +272,15 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             else "none"
         )
         observations_count = payload_observations.get("payload_observations_count")
+        malformed_count = payload_observations.get(
+            "malformed_payload_observations_count", 0
+        )
         lines.extend(
             [
                 "",
                 "Payloads:",
                 f"- observations: {observations_count}",
+                f"- malformed observations: {malformed_count}",
                 f"- channels: {channels}",
                 "- encrypted: "
                 f"{payload_observations.get('encrypted_payload_observations_count')}",

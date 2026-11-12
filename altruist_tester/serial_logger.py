@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
@@ -192,6 +193,9 @@ class PayloadObservationsSummary:
     encrypted_count: int = 0
     sample_available_count: int = 0
     last_observation: dict[str, Any] | None = None
+    malformed_count: int = 0
+    malformed_by_reason: dict[str, int] = field(default_factory=dict)
+    malformed_examples: tuple[dict[str, Any], ...] = ()
 
     @property
     def seen(self) -> bool:
@@ -214,6 +218,9 @@ class PayloadObservationsSummary:
                 self.sample_available_count
             ),
             "last_payload_observation": self.last_observation,
+            "malformed_payload_observations_count": self.malformed_count,
+            "malformed_payload_observations_by_reason": self.malformed_by_reason,
+            "malformed_payload_observation_examples": list(self.malformed_examples),
         }
 
 
@@ -399,7 +406,8 @@ def _update_payload_observations_summary(
     if observation.encoding is not None:
         by_encoding = _increment_counter(by_encoding, observation.encoding)
 
-    return PayloadObservationsSummary(
+    return replace(
+        summary,
         count=summary.count + 1,
         first_seen=summary.first_seen or event_ts,
         last_seen=event_ts,
@@ -466,7 +474,49 @@ def _append_payload_observation(
     observation: PayloadObservation,
     records: list[dict[str, object]],
     summary: PayloadObservationsSummary,
+    *,
+    line_number: int,
 ) -> PayloadObservationsSummary:
+    reason = observation.malformed_reason
+    if reason is not None:
+        examples = summary.malformed_examples
+        if len(examples) < 5:
+            metadata: dict[str, str] = {}
+            example = {
+                "ts": format_timestamp(utc_now()),
+                "line_number": line_number,
+                "reason": reason,
+                "metadata": metadata,
+                "truncated": False,
+            }
+            for key in (
+                "channel",
+                "encoding",
+                "encrypted",
+                "payload_len",
+                "sample_available",
+            ):
+                value = (observation.raw_fields or {}).get(key)
+                if value is None:
+                    continue
+                metadata[key] = value[:128]
+                if len(value) > 128:
+                    example["truncated"] = True
+                # Bound the serialized event as well as individual text fields;
+                # non-ASCII metadata may expand to six-byte JSON escapes.
+                event = {"type": "malformed_payload_observation", **example}
+                if len(json.dumps(event, sort_keys=True).encode("utf-8")) > 1024:
+                    del metadata[key]
+                    example["truncated"] = True
+            event = artifacts.append_event("malformed_payload_observation", **example)
+            examples = (*examples, event)
+        return replace(
+            summary,
+            malformed_count=summary.malformed_count + 1,
+            malformed_by_reason=_increment_counter(summary.malformed_by_reason, reason),
+            malformed_examples=examples,
+        )
+
     payload = observation.as_event_payload()
     event = artifacts.append_event("payload_observation", **payload)
     records.append({"ts": event["ts"], **payload})
@@ -605,6 +655,7 @@ def capture_raw_serial(
     deadline = started_at + duration_seconds
     next_progress_at = started_at
     lines_read = 0
+    raw_line_number = 1
     bytes_read = 0
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
@@ -659,6 +710,8 @@ def capture_raw_serial(
                     next_progress_at = now + progress_interval_seconds
                 continue
 
+            line_number = raw_line_number
+            raw_line_number += line.count(b"\n")
             raw_log.write(line)
             raw_log.flush()
             lines_read += 1
@@ -739,12 +792,18 @@ def capture_raw_serial(
                     payload_observation,
                     payload_observation_records,
                     payload_observations_summary,
+                    line_number=line_number,
                 )
 
             sensor_samples, primary_payload_samples_seen = (
                 _select_payload_sensor_samples(
                     decoded_line,
-                    parse_sensor_values(decoded_line),
+                    (
+                        []
+                        if payload_observation is not None
+                        and payload_observation.malformed_reason is not None
+                        else parse_sensor_values(decoded_line)
+                    ),
                     primary_payload_samples_seen=primary_payload_samples_seen,
                 )
             )

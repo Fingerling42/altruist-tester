@@ -6,7 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-_PAYLOAD_RE = re.compile(r"\[PAYLOAD\]\s+(?P<metadata>.+)$")
+_PAYLOAD_RE = re.compile(r"\[PAYLOAD\](?:\s+(?P<metadata>.*))?$")
+_PAYLOAD_CHANNELS = frozenset({"datalog", "sensors-connectivity", "custom-http"})
 _PAYLOAD_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 
@@ -24,7 +25,7 @@ def parse_payload_metadata(line: str) -> dict[str, str] | None:
     if match is None:
         return None
 
-    metadata = match.group("metadata")
+    metadata = match.group("metadata") or ""
     field_matches = list(_PAYLOAD_FIELD_RE.finditer(metadata))
     if not field_matches:
         return {}
@@ -73,6 +74,16 @@ class PayloadObservation:
     sample_available: bool | None = None
     raw_fields: dict[str, str] | None = None
 
+    @property
+    def malformed_reason(self) -> str | None:
+        """Classify channel errors without treating future names as known channels."""
+
+        if not self.channel:
+            return "missing_channel"
+        if self.channel not in _PAYLOAD_CHANNELS:
+            return "unknown_channel"
+        return None
+
     def as_event_payload(self) -> dict[str, Any]:
         """Return payload metadata as a JSON-friendly event payload."""
 
@@ -105,6 +116,6 @@ def parse_payload_observation(line: str) -> PayloadObservation | None:
     """Parse one current firmware ``[PAYLOAD]`` metadata line."""
 
     fields = parse_payload_metadata(line)
-    if fields is None or not fields:
+    if fields is None:
         return None
     return payload_observation_from_fields(fields)

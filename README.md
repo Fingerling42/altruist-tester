@@ -720,3 +720,13 @@ uv run altruist-tester --help
 uv run altruist-tester run --help
 uv run pytest
 ```
+
+
+## Malformed PAYLOAD diagnostics
+
+Missing, unknown or truncated PAYLOAD channels are counted separately from valid
+observations and produce no sensor readings. The report shows the malformed
+count; summary and events retain up to five bounded, sanitized examples with
+UART line numbers. Raw serial bytes and existing verdict/exit-code policies are
+unchanged. See [the parser contract](docs/sensor-log-patterns.md#malformed-payload-diagnostics)
+for fields, limits and compatibility.

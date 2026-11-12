@@ -196,3 +196,27 @@ Parser guidance:
   current C6 protobuf success skips legacy payload formatting/logging. A stable
   transport-independent release source remains planned; `[PROTO]` cannot
   replace it.
+
+
+## Malformed PAYLOAD diagnostics
+
+Only `datalog`, `sensors-connectivity`, and `custom-http` are known PAYLOAD
+channels. Missing/empty channels (including a bare `[PAYLOAD]`) are classified
+as `missing_channel`; other names, including truncated names, as `unknown_channel`.
+These records do not contribute to normal payload counts, channel/encoding
+statistics, observation records or sensor samples. `custom-http` remains a valid
+metadata observation without compact sensor readings. Valid JSON snapshots and
+existing datalog/connectivity selection and plain-length checks are unchanged.
+
+`summary.json` adds `malformed_payload_observations_count`,
+`malformed_payload_observations_by_reason`, and
+`malformed_payload_observation_examples` inside `payload_observations`.
+The report shows the malformed count; the diagnostic itself adds no verdict
+severity and CLI exit codes remain 0/1/2. The first five malformed records also
+produce `malformed_payload_observation` events. Each example includes its UTC
+time, one-based line number in `serial.log`, reason, allowlisted metadata and
+an explicit `truncated` flag; values are capped at 128 characters and each
+serialized example at 1 KiB. Fields that exceed the total budget are omitted.
+Samples, transport bodies, signatures and unknown fields are not copied into
+examples. Further malformed records only increment counters. The complete raw
+UART is preserved unchanged in `serial.log`; old artifacts are not rewritten.

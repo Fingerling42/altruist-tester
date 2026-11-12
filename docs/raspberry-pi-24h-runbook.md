@@ -433,3 +433,16 @@ report.txt
 
 If sending a compact result to chat or an issue, start with `report.txt` and add
 the relevant `summary.json` section.
+
+
+## Inspect malformed PAYLOAD diagnostics
+
+Check the report's malformed observation count, then
+`summary.json` → `payload_observations` for counts/reasons and the first five
+bounded examples. Use each example's one-based `line_number` to locate the
+original bytes in `serial.log`; do not edit run artifacts. Further malformed
+records still increment counters. Missing/unknown channels are excluded from
+normal payload statistics and readings; this diagnostic alone adds no severity.
+Older summaries without these fields remain readable. See
+[the parser contract](sensor-log-patterns.md#malformed-payload-diagnostics)
+for the exact fields and bounds.
