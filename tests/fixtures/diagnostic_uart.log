@@ -1,0 +1,6 @@
+# Synthetic fixture; never captured from a real device.
+{"sensor_id":"001122334455","ip":"192.0.2.10","wlanpwd":"FICTITIOUS_CREDENTIAL_739_DO_NOT_USE","www_password":"FICTITIOUS_CREDENTIAL_739_DO_NOT_USE"}
+[BUILD] version=R-INS_test-testing+abc1234 channel=testing commit=abc1234 model=insight target=esp32c6 language=en profile=debug
+[LOG] status uptime=100 boot=1 reset_reason=power_on_reset heap=100000 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0
+[HEALTH] uptime=100 boot=1 heap=100000 rssi=-50 tx=1 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0
+{"BME680":{"voc_index":{"value":0},"voc_level":{"value":0},"voc_spikes_today":{"value":0},"gas_resistance":{"value":100},"gas_baseline":{"value":100}},"SCD4x":{"co2":{"value":500}}}

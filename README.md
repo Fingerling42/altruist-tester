@@ -56,6 +56,11 @@ paths, SD/Improv/LoRa/recovery scenarios and long-duration acceptance remain
 open. Local flashing did not publish firmware artifacts. Freshness and
 deduplication remain planned.
 
+For the maintained safe extraction, bounded UART capture and separate HTTP/reboot
+checks, see [diagnostic procedures](docs/diagnostic-procedures.md). The replacement
+procedures have synthetic software coverage; their hardware confirmation is still
+pending. Historical hardware results above remain evidence for their original scripts.
+
 ## Quick Start
 
 Install dependencies:

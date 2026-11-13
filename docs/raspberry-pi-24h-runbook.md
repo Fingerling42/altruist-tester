@@ -19,6 +19,12 @@ Local flashing did not publish artifacts. Keep the exact commit, target,
 language, channel and profile with each capture. A successful debug run does not
 validate release firmware.
 
+The [maintained diagnostic procedures](diagnostic-procedures.md) provide safe
+summaries, explicit startup/cadence windows, bounded HTTP checks and durable
+per-attempt checkpoints. Their software tests do not replace a new approved
+hardware confirmation. Raw startup logs may contain credentials; use safe
+extraction instead of printing matching configuration lines.
+
 ## Goals
 
 - Keep one assembled device powered over USB-C for 24 hours.

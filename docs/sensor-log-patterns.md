@@ -16,6 +16,11 @@ interval when choosing a capture window.
 
 The historical examples below are not evidence for the modified firmware.
 
+Use [safe diagnostic extraction](diagnostic-procedures.md#safe-extraction-without-devices)
+for model-facing summaries. It reuses the UART parser but emits only fixed metric
+names/counts and validated identity/status fields; unknown keys, raw_fields,
+credentials and entire matching lines are never summary fields.
+
 Source run: `runs/2026-06-11T12-27-51Z_ttyACM0`
 
 Run summary:
