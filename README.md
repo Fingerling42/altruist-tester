@@ -9,7 +9,25 @@ captures raw firmware logs, parses health, build, payload, upload, and sensor
 observations, evaluates health rules, and writes machine-readable and
 human-readable artifacts.
 
-Firmware builds with health telemetry emit a compact snapshot once per minute:
+USB sensor acceptance runs target **debug firmware**. Detailed UART tags,
+sensor JSON and diagnostic SD files require `ALTRUIST_BUILD_DEBUG`. Release
+retains a bounded operational log for local web support and the webflasher USB
+console: BUILD identity, LOG status and curated errors/events, without sensor
+values, payloads, response bodies or credentials.
+
+The release log UI offers named Off / Errors only / Events modes; higher
+compatibility values cannot enable debug output. Debug also has Detailed / Most
+detailed and hides modes below its forced minimum. The active mode is highlighted,
+without a duplicate numeric input. Live changes do not reboot. Save and restart
+persists the current mode and deliberately reboots. Status snapshot preserves
+the mode and is available explicitly even with automatic logs off.
+
+Testing is a publication channel, not a debug profile. The existing
+`release_log_contract` rule name remains for compatibility: support logs do not
+satisfy its HEALTH/measurement requirements. PASS on debug does not validate
+release. See the firmware [profile policy](../altruist-firmware/DIAGNOSTICS.md).
+
+Debug firmware builds with health telemetry emit a compact snapshot once per minute:
 
 ```text
 [HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 reset_reason=power_on_reset reset_code=1 crash_valid=0 prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop
@@ -18,6 +36,25 @@ Firmware builds with health telemetry emit a compact snapshot once per minute:
 The tester parses the base runtime fields even if reset context is absent, but
 the release log contract warns when neither `[BOOT]` nor `[HEALTH]` exposes
 reset context.
+
+## Firmware Profile Verification
+
+On 2026-11-13, firmware `7d961c4` was built and flashed on four ESP32-C6 EN
+Testing devices: Urban and Insight, each with debug and release profiles.
+Short UART checks confirmed debug HEALTH and sensor JSON, including all five
+Insight VOC/gas fields. Both release devices were silent for 20 seconds in Off;
+the checked Errors/Events windows contained no detailed tags or sensor JSON.
+HTTP checks covered allowed log modes, status snapshot, Save and restart
+persistence, and loss of unsaved live changes after reboot. Original log settings
+were restored. Full logs and binaries are retained locally under
+`runs/l2a-20261113T112800Z/` (ignored by Git).
+
+This verifies the selected C6 EN Testing builds only. The full target/language/
+channel matrix, maximum compile-time logging flags, browser rendering and
+JavaScript execution, authenticated `/serial`, encrypted/successful-protobuf
+paths, SD/Improv/LoRa/recovery scenarios and long-duration acceptance remain
+open. Local flashing did not publish firmware artifacts. Freshness and
+deduplication remain planned.
 
 ## Quick Start
 
@@ -248,8 +285,8 @@ envelope-construction metadata and cannot substitute for readings.
 Current CONNECTIVITY statistics combine legacy JSON and protobuf HTTP results.
 They cannot prove which route succeeded, CPS finalization, or frontend
 visibility. Cloud HTTP `202` confirms ingress after Kafka acknowledgment.
-Route-specific acceptance and a transport-independent release reading contract
-remain planned. C3 remains legacy-only; the reviewed repository Stable
+Route-specific acceptance and a debug reading contract covering freshness and
+deduplication remain planned. C3 remains legacy-only; the reviewed repository Stable
 publication is still firmware `d1623eb`.
 
 Insight BME680 JSON includes VOC index, level, daily spike count, and gas

@@ -3,6 +3,22 @@
 This runbook describes the first real 24-hour Altruist burn-in test on a
 Raspberry Pi or another Linux host.
 
+Use `_debug` firmware for USB sensor acceptance and diagnostic burn-in.
+Detailed sensor/protocol diagnostics and diagnostic SD files are debug-only.
+Release, including Testing/release, retains a bounded operational USB/web log
+with named Off / Errors only / Events modes, BUILD identity and an explicit
+status snapshot that preserves the mode. Release has no acceptance sensor JSON
+or periodic HEALTH. Mode changes are live; Save and restart persists the current
+mode and reboots. There is no separate numeric input. Debug exposes only modes
+allowed by its forced minimum (normally Detailed and Most detailed).
+
+Short checks of firmware `7d961c4` on Urban/Insight C6 EN Testing debug/release
+completed on 2026-11-13; see [verification scope and remaining checks](../README.md#firmware-profile-verification).
+They do not replace 24/48-hour burn-in or verify the full firmware matrix.
+Local flashing did not publish artifacts. Keep the exact commit, target,
+language, channel and profile with each capture. A successful debug run does not
+validate release firmware.
+
 ## Goals
 
 - Keep one assembled device powered over USB-C for 24 hours.
@@ -147,11 +163,14 @@ was added to it.
 Compatibility check dated 2026-10-22 (firmware `344f123`, tester `f0fa39d`):
 current C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
 built-in endpoint. Success skips legacy JSON and its `[PAYLOAD] sample=`;
-both Map toggles mean JSON fallback, not unconditional dual-send. Confirm a
-readable release measurement source during a short preflight run before
-starting 24 hours. Datalog samples depend on configuration/encryption; debug
-JSON availability does not establish release observability. Missing readings
-still fail acceptance, regardless of upload success.
+both Map toggles mean JSON fallback, not unconditional dual-send. Confirm
+debug sensor JSON and HEALTH during a preflight run before starting 24 hours,
+including Insight VOC/gas when applicable. At firmware `7d961c4`, BME680 and
+SCD4x have a minimum 300-second fetch interval; cover the configured interval
+with a margin (the verified 300-second setup used a 330-second capture).
+Datalog samples depend on configuration/encryption. Release intentionally lacks
+this diagnostic contract. Missing readings still fail acceptance, regardless
+of upload success.
 
 The tester combines legacy/protobuf CONNECTIVITY results. Treat a successful
 required connectivity check as aggregate firmware HTTP evidence. It does not

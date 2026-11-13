@@ -1,5 +1,21 @@
 # Sensor Log Patterns
 
+Full sensor JSON and detailed acceptance/protocol tags require debug. Release
+has operational BUILD/LOG records for support, without sensor values, PAYLOAD
+samples or periodic HEALTH. LOG operational events/status are not a measurement
+source. Runtime/forced verbosity and Testing cannot enable detailed diagnostics
+in release. BME680/SCD4x snapshots end with a newline; parser behavior is unchanged.
+
+Short debug/release checks completed on 2026-11-13 for firmware `7d961c4`,
+Urban/Insight C6 EN Testing only. See [verification scope and remaining checks](../README.md#firmware-profile-verification).
+Freshness and deduplication remain planned. At this revision, BME680 and SCD4x
+have a minimum 300-second fetch interval; a 150-second capture can miss the next
+sensor JSON. A 330-second capture of the tested 300-second configuration
+confirmed both snapshots and all five VOC/gas fields. Use the actual configured
+interval when choosing a capture window.
+
+The historical examples below are not evidence for the modified firmware.
+
 Source run: `runs/2026-06-11T12-27-51Z_ttyACM0`
 
 Run summary:
@@ -191,11 +207,11 @@ Parser guidance:
   metrics.
 - Treat `channel`, `encoding`, `encrypted`, `payload_len`, and
   `sample_available` as payload metadata.
-- Full JSON snapshots preserve physical sensor names and units. Release runs
-  need readable samples: encrypted payloads may intentionally omit them, and
-  current C6 protobuf success skips legacy payload formatting/logging. A stable
-  transport-independent release source remains planned; `[PROTO]` cannot
-  replace it.
+- Full JSON snapshots preserve physical sensor names and units. Historical release
+  runs needed readable samples: encrypted payloads may intentionally omit them, and
+  current C6 protobuf success skips legacy payload formatting/logging. Use debug
+  local sensor JSON; freshness/deduplication remain planned. `[PROTO]` cannot
+  replace sensor readings.
 
 
 ## Malformed PAYLOAD diagnostics
