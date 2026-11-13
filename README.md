@@ -521,6 +521,21 @@ number is not the device MAC cannot use this check; existing manual TOML and
 initial identity and subsequent observed UART IDs; reconnect/resume is separate
 future work. The single-device equivalent is `run --expected-mac <MAC>`.
 
+To require an expected MAC for every slot, opt in when previewing or running:
+
+```bash
+uv run altruist-tester batch --config batch.toml --require-expected-mac --dry-run
+uv run altruist-tester batch --config batch.toml --require-expected-mac
+```
+
+If any slot lacks `expected_mac`, the command exits with code `2` and lists all
+such slots in configuration order before USB discovery, worker startup, or
+creation of batch artifacts. Dry-run validates the declared expectations even
+when devices are absent; it does not verify a physical USB match. Real workers
+still perform the USB/UART checks above. Explicit `batch --port` mode has no
+per-slot expected MACs, so this flag requires a TOML batch config. Without the
+flag, manual configurations and explicit port mode retain their behavior.
+
 Preview a batch setup before running real burn-in tests:
 
 ```bash

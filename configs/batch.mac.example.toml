@@ -2,6 +2,8 @@
 # Check actual USB serial/by-id data on your host; this is not a universal rule.
 # Generate a fresh file using batch-generate and your existing device profiles.
 # --baud and --output-dir are always written, with defaults 115200 and runs.
+# Require expected_mac in every slot with batch --config <file> --require-expected-mac.
+# Add --dry-run to validate expectations without opening serial ports.
 [batch]
 duration = "24h"
 baud = 115200

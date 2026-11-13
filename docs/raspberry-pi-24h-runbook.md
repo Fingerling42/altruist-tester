@@ -220,10 +220,17 @@ from the output TOML directory. The destination directory must already exist.
 Start and observe a generated batch in the SSH `tmux` session:
 
 ```bash
-uv run altruist-tester batch --config batch.toml --dry-run
-uv run altruist-tester batch --config batch.toml \
+uv run altruist-tester batch --config batch.toml --require-expected-mac --dry-run
+uv run altruist-tester batch --config batch.toml --require-expected-mac \
   --wait-port --wait-port-timeout infinite
 ```
+
+`--require-expected-mac` rejects the whole batch with code `2` if any slot lacks
+`expected_mac`, listing every missing slot before any worker or run artifact is
+created. Preview works while devices are absent; a declared MAC is not a physical
+USB verification. Real workers still check USB/UART identity at capture time.
+Use TOML for this mode; explicit `--port` slots have no expected MACs. Omit the
+flag for the existing manual workflow with bridges that cannot expose a MAC.
 
 Plug expected devices in at any pace. Each slot waits independently and receives
 the full configured capture duration after its port opens. Other USB devices are

@@ -1745,6 +1745,13 @@ def batch(
             help="Override wait-port timeout: 30s, 2m, or infinite (requires waiting).",
         ),
     ] = None,
+    require_expected_mac: Annotated[
+        bool,
+        typer.Option(
+            "--require-expected-mac",
+            help="Require expected_mac in every slot before preview or worker startup.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -1765,6 +1772,19 @@ def batch(
         wait_port=wait_port,
         wait_port_timeout=wait_port_timeout,
     )
+
+    if require_expected_mac:
+        missing_slots = [
+            device.slot
+            for device in batch_config.devices
+            if device.expected_mac is None
+        ]
+        if missing_slots:
+            raise typer.BadParameter(
+                f"Missing expected_mac for slots: {', '.join(missing_slots)}. "
+                "Use a TOML batch config with expected_mac for every slot.",
+                param_hint="--require-expected-mac",
+            )
 
     if dry_run:
         _print_batch_dry_run(batch_config)
