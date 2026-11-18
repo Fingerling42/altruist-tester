@@ -11,6 +11,7 @@ from tests.cli_helpers import (
     plain_output,
     release_log_stats,
     series_with_metrics,
+    uart_cadence_report,
 )
 from tests.helpers import sample_record, sample_series, uart_snapshot
 
@@ -251,7 +252,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
                 max_errors={"wifi": 0, "sensor": 0, "sd": 0},
             ),
             sensor_samples_count=2,
-            sensor_observations={"selected": True},
+            sensor_observations=uart_cadence_report(0),
             sensor_series=series_with_metrics("temperature", "humidity"),
             serial_device_ids=("1051DB010C70",),
         ),
@@ -738,7 +739,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
-            sensor_observations={"selected": True},
+            sensor_observations=uart_cadence_report(0, 25 * 60),
             sensor_series=sample_series(
                 sample_record("BME280", "temperature", 24.0, 0),
                 sample_record("BME280", "temperature", 24.5, 25 * 60),
@@ -762,14 +763,14 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     )
 
     assert result.exit_code == 1
-    assert "sensor metric series missed too many updates" in plain_output(result)
+    assert "UART v2 cadence: 3 failures" in plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
     assert summary["sensor_presence"]["status"] == "ok"
     assert summary["sensor_flatlines"]["status"] == "ok"
     assert summary["sensor_cadence"]["status"] == "fail"
-    assert summary["sensor_cadence"]["failure_count"] == 1
+    assert summary["sensor_cadence"]["failure_count"] == 3
     # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "sensor_cadence_checked" not in (run_dir / "events.jsonl").read_text()
 

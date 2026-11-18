@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,8 +10,10 @@ from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.rules.defaults import check_sensor_value_range
 from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
 from altruist_tester.rules.flatline import check_series_flatline
+from altruist_tester.sensor_contract import METRICS
+from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.serial_logger import BuildEventsSummary, SerialLogStats
-from tests.helpers import sample_record, sample_series
+from tests.helpers import sample_record, sample_series, uart_snapshot
 
 
 @pytest.mark.parametrize(
@@ -108,12 +110,32 @@ def test_voc_exception_does_not_relax_other_series(sensor, metric, value):
 
 def _evaluate_voc(values, *, reboot=False):
     series = sample_series()
+    start = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    tracker = SensorObservationTracker(capture_started_at=start)
+    data = uart_snapshot("BME680", {m: 1 for m in METRICS["BME680"]})
+    tested = set().union(*(v.keys() for v in values))
     for offset, snapshot in enumerate(values):
+        meta = data["_observations"]
+        now = 1000 + offset * 300000
+        meta.update(time_ms=now, snapshot_seq=offset + 1, cycle_seq=offset + 1)
+        for c in meta["channels"].values():
+            c.update(cycles_total=offset + 1, ok_total=offset + 1, last_ok_ms=now)
+        for metric, item in data["BME680"].items():
+            if metric in snapshot or metric not in tested:
+                item["value"] = snapshot.get(metric, 1)
+                item["observation"].update(
+                    seq=1 if offset == 0 else item["observation"]["seq"] + 1,
+                    measured_ms=now,
+                )
+        event, _ = tracker.feed(
+            json.dumps(data), start + timedelta(seconds=offset * 300)
+        )
+        assert "invalid_reason" not in event
         for metric, value in snapshot.items():
             series.append(sample_record("BME680", metric, value, offset * 300))
     return evaluate_rules(
         SerialLogStats(
-            sensor_observations={"selected": True},
+            sensor_observations=tracker.as_dict(),
             lines_read=len(values),
             bytes_read=100,
             first_line_elapsed_seconds=0,

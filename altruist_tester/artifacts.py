@@ -208,6 +208,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                         k: observations.get(k)
                         for k in (
                             "coverage",
+                            "acceptance",
                             "expected_settings",
                             "profile_rules",
                             "profile_error",

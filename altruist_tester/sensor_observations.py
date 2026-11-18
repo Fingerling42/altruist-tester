@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from altruist_tester.samples import SensorSample
+from altruist_tester.sensor_acceptance import (
+    SensorAcceptanceLedger,
+    acceptance_findings,
+)
 from altruist_tester.sensor_contract import metric_channel, parse_contract
 
 MARKER = '"_observations"'
@@ -17,6 +21,8 @@ parse_sensor_observation = parse_contract
 class SensorObservationTracker:
     """Keep only latest identities; snapshots do not promise every measurement."""
 
+    capture_started_at: datetime | None = None
+    acceptance: SensorAcceptanceLedger = field(default_factory=SensorAcceptanceLedger)
     expected_settings: dict | None = None
     profile_rules: dict = field(default_factory=dict)
     profile_error: dict | None = None
@@ -170,6 +176,9 @@ class SensorObservationTracker:
                     self.coverage["noise_window_loss"] += completed - len(
                         snapshot["noise"]["windows"]
                     )
+        if self.acceptance.started_at is None:
+            self.acceptance.started_at = self.capture_started_at
+        self.acceptance.feed(snapshot, previous, received)
         self._snapshots[sensor] = snapshot
         samples = []
         for item in snapshot["metrics"]:
@@ -217,6 +226,7 @@ class SensorObservationTracker:
 
     def as_dict(self) -> dict:
         return {
+            "acceptance": self.acceptance.as_dict(),
             "expected_settings": self.expected_settings,
             "profile_rules": self.profile_rules,
             "profile_error": self.profile_error,
@@ -243,11 +253,8 @@ def observation_findings(
     report: dict,
     *,
     reference_time: datetime | None,
-    interval: int,
-    warn_after: int,
-    fail_after: int,
 ) -> list[dict]:
-    """Apply tester freshness thresholds, never firmware-reported PASS labels."""
+    """Combine contract integrity and capture-wide acceptance evidence."""
     findings = []
     if not report.get("selected"):
         return [
@@ -276,58 +283,7 @@ def observation_findings(
                 "rule": "sensor_observations",
             }
         )
-    for sensor in report.get("sensors", []):
-        for name, channel in sensor["channels"].items():
-            if channel["failed_total"] or channel["state"] == "error":
-                findings.append(
-                    {
-                        "severity": "fail" if channel["state"] == "error" else "warn",
-                        "code": "SENSOR_OBSERVATION_READ_ERRORS",
-                        "message": (
-                            f"{sensor['sensor']}.{name}: state={channel['state']}, "
-                            f"failed cycles={channel['failed_total']}, "
-                            f"reason={channel['reason']}"
-                        ),
-                        "rule": "sensor_observations",
-                    }
-                )
-    for item in report.get("latest", []):
-        age = item["age_seconds"]
-        if age is None:
-            continue
-        if reference_time:
-            age += max(
-                0,
-                (
-                    reference_time - datetime.fromisoformat(item["received_ts"])
-                ).total_seconds(),
-            )
-        status = (
-            "fail"
-            if age >= interval * fail_after
-            else "warn"
-            if age >= interval * warn_after
-            else None
-        )
-        message = (
-            f"{item['sensor']}.{item['metric']}: "
-            f"last successful measurement age {age:.1f}s"
-        )
-        if item["state"] == "error":
-            status = "fail"
-            message += "; reading failed; cached value is not a new measurement"
-        elif item["state"] != "ok":
-            status = status or "warn"
-            message += f"; state={item['state']}"
-        if status:
-            findings.append(
-                {
-                    "severity": status,
-                    "code": "SENSOR_OBSERVATION_FRESHNESS",
-                    "message": message,
-                    "rule": "sensor_observations",
-                }
-            )
+    findings.extend(acceptance_findings(report, reference_time))
     return findings
 
 
@@ -412,6 +368,19 @@ def validate_transition(previous: dict, current: dict) -> None:
     require(old["started_ms"] == new["started_ms"], "noise_start_changed")
     for key in ("successful_blocks_total", "active_ms_total"):
         require(new[key] >= old[key], "noise_counter_regression")
+    active_delta = new["active_ms_total"] - old["active_ms_total"]
+    if new["successful_blocks_total"] == old["successful_blocks_total"]:
+        require(
+            new["interval"]["open_gap_active_ms"]
+            == old["interval"]["open_gap_active_ms"] + active_delta,
+            "noise_open_gap_regression",
+        )
+    if current["snapshot_seq"] == previous["snapshot_seq"] + 1:
+        require(
+            new["interval"]["max_gap_active_ms"]
+            >= old["interval"]["open_gap_active_ms"],
+            "noise_gap_lost",
+        )
     p, q = old["sds_pause"], new["sds_pause"]
     require(
         q["cycle_seq"] >= p["cycle_seq"]

@@ -233,9 +233,13 @@ Flatline detection:
 
 Update cadence:
 
-- checks whether each parsed metric updates regularly;
-- by default, the expected interval is 5 minutes;
-- warnings and failures are configured as missed-interval multipliers.
+- uses each sensor's explicit UART v2 profile interval T;
+- slow BME/SCD/SDS measurements warn at gaps/ages >=T+60 seconds and fail at
+  >=2T+300 seconds; first success warns at >=T+60 and fails at >=T+300;
+- requires three distinct successful measurements per mandatory slow metric;
+  one or two give coverage WARN, while explicit failures retain their severity;
+- checks microphone blocks over complete 300-second active windows and checks
+  audio gaps independently of average frequency.
 
 Runtime counters:
 
@@ -401,7 +405,7 @@ sensor samples, and keyword alert count.
 - `[sensor_ranges.<metric>]` for sane min/max values;
 - `[range_checks]` for unknown metric behavior;
 - `[flatline]` for stuck-value thresholds;
-- `[cadence]` for update interval thresholds;
+- `[observations.settings.SENSOR]` for effective per-sensor firmware intervals;
 - `[serial]` for serial silence thresholds;
 - `[log_contract]` for release-log sufficiency checks;
 - `[uploads]` for sensors-connectivity and Robonomics Datalog delivery checks.
@@ -420,11 +424,6 @@ metrics = []
 window = "30m"
 fail_after = "1h"
 min_distinct_values = 2
-
-[cadence]
-expected_interval = "5m"
-warn_after_missed = 2
-fail_after_missed = 4
 
 [serial]
 silence_warn_after = "2m"
@@ -814,12 +813,55 @@ The capture uses this source from the start; malformed or absent observations
 cannot fall back to PAYLOAD or ordinary sensor JSON. Missing telemetry produces
 FAIL/exit 1. Full JSON extraction remains available through diagnostic commands.
 
-Freshness uses the configured cadence interval and missed-count thresholds;
-current read failures or an invalid contract produce FAIL/exit 1. Cadence and
-flatline use projected measurement time, while artifacts retain host receipt
-time and provenance. `summary.sensor_observations` shows the required source,
-repeat/loss counters, per-channel cycles, bounded failure history, noise statistics,
-sensor states and last successful ages. See the
+For slow sensors, cadence uses the explicit profile's measurement interval T:
+WARN at gap/age >=T+60 seconds, FAIL at >=2T+300 seconds. The first successful
+measurement has a separate wait window: WARN at >=T+60, FAIL at >=T+300.
+With T=300 seconds these are 360/900 seconds and 360/600 seconds respectively.
+Device measurement times measure gaps; host time since receipt extends the
+last successful age even while independent HEALTH lines continue. A new equal
+value refreshes freshness; cached identities do not. A recovered excessive gap
+still affects the final verdict. Global `[cadence]` multipliers are rejected;
+set effective firmware intervals in the per-sensor profile before capture.
+
+Cadence needs at least three distinct successful capture measurements per
+mandatory slow metric, covering two intervals. One or two give coverage WARN.
+Historical cached readings do not count. Missing metrics/telemetry and explicit
+failures retain their severity. Missing intermediate measurement identities
+give coverage WARN; their time span is not proof that the sensor stopped.
+
+Microphone frequency uses complete non-overlapping windows of 300 seconds of
+active time, wholly after the first accepted microphone snapshot. WARN is <2 Hz;
+FAIL is <1 Hz. Partial or historical windows cannot establish a frequency PASS.
+A successful full audio block counts once for noiseAvg/noiseMax together.
+Independent active gaps warn at >=60 seconds and fail at >=300 seconds,
+including an unfinished gap during UART silence. Only a confirmed SDS pause
+can exclude time, capped at the profile warmup+collection budget (20 seconds)
+per cycle. Repeated flags or the same cycle cannot renew that allowance;
+overruns, network work and other worker delays count toward audio gaps.
+
+The error budget counts failed external cycles separately by sensor/channel,
+including separate BME680 environment and gas channels. The first recovered
+failure gives WARN; the second within any rolling 24-hour window gives FAIL
+for the rest of capture. Midnight and later recovery do not reset it. Internal
+retries succeeding in the same cycle do not spend the budget. An unrecovered
+error at capture end fails even before a hard-gap deadline. Confirmed
+pre-capture errors are historical WARN outside the current budget; a continuing
+old error still fails. Uncertain start attribution or evicted failure times
+produce coverage WARN unless retained evidence/counter deltas already prove a
+budget breach. No error rate is inferred from UART line counts.
+
+Known sensor read/init SUBSYSTEM reasons corroborated by the v2 ledger are
+reported as warnings, with failure/recovery decided by that ledger. Unmatched
+subsystem errors, overflow/contract errors, crashes and runtime/identity failures
+keep their failure behavior. The sensor first-wait windows replace the common
+startup deadline for sensor data; HEALTH/BUILD/BOOT startup checks remain.
+
+Cadence and flatline retain measurement time and provenance.
+`summary.sensor_observations.acceptance` and the UART report section retain
+capture baselines, distinct measurement counts, maximum gaps, failure counters,
+rolling-budget evidence and complete noise-window counts. The observation summary
+also retains repeat/loss counters, bounded firmware failure history, noise
+statistics, sensor states and last successful ages. See the
 [versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations).
 
 Choose a capture window that covers the configured sensor intervals with a

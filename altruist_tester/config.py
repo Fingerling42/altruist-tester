@@ -74,9 +74,6 @@ class TesterConfig:
     flatline_window_seconds: int = 30 * 60
     flatline_fail_after_seconds: int = 60 * 60
     flatline_min_distinct_values: int = 2
-    cadence_expected_interval_seconds: int = 5 * 60
-    cadence_warn_after_missed: int = 2
-    cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
     log_contract_startup_window_seconds: int = 10 * 60
@@ -546,7 +543,11 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     expect = _optional_table(data, "expect")
     range_checks = _optional_table(data, "range_checks")
     flatline = _optional_table(data, "flatline")
-    cadence = _optional_table(data, "cadence")
+    if "cadence" in data:
+        raise ConfigError(
+            "[cadence] is not supported: UART v2 uses per-sensor "
+            "[observations.settings.SENSOR] intervals and fixed acceptance policy"
+        )
     serial = _optional_table(data, "serial")
     log_contract = _optional_table(data, "log_contract")
     uploads = _optional_table(data, "uploads")
@@ -590,21 +591,6 @@ def load_tester_config(path: Path | None) -> TesterConfig:
             flatline.get("min_distinct_values"),
             "flatline.min_distinct_values",
             2,
-        ),
-        cadence_expected_interval_seconds=_duration_value(
-            cadence.get("expected_interval"),
-            "cadence.expected_interval",
-            5 * 60,
-        ),
-        cadence_warn_after_missed=_int_value(
-            cadence.get("warn_after_missed"),
-            "cadence.warn_after_missed",
-            2,
-        ),
-        cadence_fail_after_missed=_int_value(
-            cadence.get("fail_after_missed"),
-            "cadence.fail_after_missed",
-            4,
         ),
         silence_warn_after_seconds=_duration_value(
             serial.get("silence_warn_after"),

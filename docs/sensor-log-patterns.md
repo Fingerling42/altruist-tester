@@ -368,8 +368,48 @@ sensor declarations, duplicate/loss counters and latest metric ages. A rejected
 profile declaration is retained inside profile_error.declared and its event.
 BUILD is saved separately even when unknown or absent.
 
-Freshness uses device age plus host time since receipt with configured cadence
-thresholds. Current errors fail; recovered cumulative failed cycles warn without
-claiming their capture attribution. Contract evidence alone does not establish
-a rolling error budget or a noise-frequency verdict. Delivery checks remain
-independent of local sensor measurements.
+The acceptance ledger in `summary.sensor_observations.acceptance` preserves
+per-boot/sensor baselines, capture/historical/uncertain failed-cycle counts,
+rolling failure timestamps and retained findings. Recovery cannot erase a
+proven budget violation. At first receipt, host elapsed time and device time
+estimate the capture boundary; failures whose attribution is uncertain give
+coverage WARN. Only counter increases after the accepted baseline spend the
+capture budget. Repeated history is deduplicated. A missing bounded-tail prefix
+keeps its counter delta, but its exact times are never invented.
+
+Slow-metric cadence uses the explicit profile's `measurement_interval_ms` T.
+Gaps and freshness WARN at >=T+60 seconds and FAIL at >=2T+300 seconds. First
+success WARNs at >=T+60 and FAILs at >=T+300. Host time extends the last age
+without a UART snapshot; HEALTH does not refresh sensor evidence. At least
+three distinct successful capture identities per mandatory metric are needed
+for a positive cadence result. One or two give coverage WARN. Historical
+cache does not count. A sequence jump records incomplete coverage instead of
+claiming the full span was a physical measurement gap. Observed delayed
+successes and stale cache retain their gap evidence after recovery.
+
+One recovered failed external cycle per channel gives WARN; two within any
+rolling 86400000 device milliseconds give sticky FAIL. Gas is independent of
+BME680 environmental readings. Repeated fields/records and internal successful
+retries do not multiply failures. An unrecovered error at the end fails even
+with a single failure or no completed init cycle. Historical errors warn
+outside the capture budget; active historical errors still fail. Lost times
+produce coverage WARN unless retained timestamps or interval/counter bounds
+already prove a breach. Error percentages are not computed from snapshots.
+
+Only complete microphone windows starting at/after the accepted microphone
+baseline establish frequency. Each is 300000 active milliseconds: frequency
+<2 Hz WARN, <1 Hz FAIL. Historical/partial or missed windows leave coverage
+incomplete, and an observed failure remains. Gaps independently WARN at
+>=60000 and FAIL at >=300000 active milliseconds. The open gap continues on
+host time after the latest snapshot. An active SDS pause grants only its
+remaining warmup+collection allowance, capped at 20000 milliseconds per cycle;
+repeated/reentered cycle state cannot renew it. The temporal validator rejects
+a reset open gap without new successful blocks, including across snapshots.
+Noise-window statistics never become metric samples.
+
+Known sensor read/init SUBSYSTEM reasons corroborated by accepted v2 evidence
+use the ledger's recovery/budget decision. Unmatched and contract/overflow
+errors retain FAIL. Sensor first-wait windows take precedence over the common
+sensor-sample startup deadline; independent HEALTH/BUILD/BOOT rules remain.
+The profile rejects global `[cadence]` settings; effective intervals are explicit
+per sensor. Delivery checks remain independent of local sensor measurements.

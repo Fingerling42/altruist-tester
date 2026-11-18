@@ -1,4 +1,4 @@
-# L3 uses these cadence thresholds for measurement freshness; heartbeat repeats do not count.
+# UART v2 uses per-sensor intervals below; repeated cache is not a measurement.
 # Sensor presets require metrics from each named physical JSON source.
 # UART v2 settings below are operator expectations, never learned from the device.
 [expect]
@@ -48,11 +48,6 @@ maximum = 130.0
 window = "30m"
 fail_after = "1h"
 min_distinct_values = 2
-
-[cadence]
-expected_interval = "5m"
-warn_after_missed = 2
-fail_after_missed = 4
 
 [serial]
 silence_warn_after = "2m"

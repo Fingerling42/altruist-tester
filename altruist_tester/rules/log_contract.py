@@ -293,7 +293,12 @@ def check_log_contract(
                 startup_window_seconds=startup_window_seconds,
             )
         )
-    if signals["sensor_samples"] and samples_in_window is False:
+    # UART v2 has per-metric first-wait windows from the explicit profile.
+    if (
+        signals["sensor_samples"]
+        and samples_in_window is False
+        and not stats.sensor_observations.get("selected")
+    ):
         findings.append(
             _late_signal_finding(
                 signal="sensor_samples",

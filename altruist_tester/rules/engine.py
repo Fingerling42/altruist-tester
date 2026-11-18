@@ -10,7 +10,6 @@ from typing import Literal
 from altruist_tester.rules.cadence import (
     SensorCadenceFinding,
     SensorCadenceReport,
-    check_sensor_cadence,
 )
 from altruist_tester.rules.defaults import (
     DEFAULT_NON_NEGATIVE_METRICS,
@@ -42,6 +41,7 @@ from altruist_tester.rules.urban_pm import (
     UrbanPmReport,
     check_urban_pm_nearly_zero,
 )
+from altruist_tester.sensor_acceptance import check_observation_cadence
 from altruist_tester.sensor_observations import observation_findings
 from altruist_tester.serial_logger import SerialLogStats
 
@@ -69,9 +69,6 @@ class RuleEngineConfig:
     flatline_window_seconds: int = 30 * 60
     flatline_fail_after_seconds: int = 60 * 60
     flatline_min_distinct_values: int = 2
-    cadence_expected_interval_seconds: int = 5 * 60
-    cadence_warn_after_missed: int = 2
-    cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
     connectivity_upload: UploadChannelConfig = field(
@@ -80,7 +77,6 @@ class RuleEngineConfig:
     datalog_upload: UploadChannelConfig = field(default_factory=UploadChannelConfig)
     log_contract_startup_window_seconds: int = 10 * 60
     reference_time: datetime | None = None
-    max_tail_window_seconds: int | None = None
     duration_seconds: int = 0
 
 
@@ -445,13 +441,8 @@ def evaluate_rules(
         flatline_fail_after_seconds=config.flatline_fail_after_seconds,
         min_distinct_values=config.flatline_min_distinct_values,
     )
-    sensor_cadence = check_sensor_cadence(
-        stats.sensor_series,
-        reference_time=config.reference_time,
-        max_tail_window_seconds=config.max_tail_window_seconds,
-        expected_interval_seconds=config.cadence_expected_interval_seconds,
-        warn_after_missed=config.cadence_warn_after_missed,
-        fail_after_missed=config.cadence_fail_after_missed,
+    sensor_cadence = check_observation_cadence(
+        stats.sensor_observations, config.reference_time
     )
     runtime_counters = check_runtime_counters(stats.dev_metrics_records)
     serial_silence = check_serial_silence(
@@ -469,7 +460,16 @@ def evaluate_rules(
         connectivity_upload=config.connectivity_upload,
         datalog_upload=config.datalog_upload,
     )
-    subsystem_health = check_subsystem_health(stats.subsystem_event_records)
+    subsystem_health = check_subsystem_health(
+        stats.subsystem_event_records,
+        observation_reasons=frozenset(
+            reason
+            for sensor in stats.sensor_observations.get("acceptance", {}).get(
+                "sensors", []
+            )
+            for reason in sensor["failure_reasons"]
+        ),
+    )
     upload_health = check_upload_health(
         stats.upload_stats,
         connectivity=config.connectivity_upload,
@@ -525,9 +525,6 @@ def evaluate_rules(
                 for finding in observation_findings(
                     stats.sensor_observations,
                     reference_time=config.reference_time,
-                    interval=config.cadence_expected_interval_seconds,
-                    warn_after=config.cadence_warn_after_missed,
-                    fail_after=config.cadence_fail_after_missed,
                 )
             ),
             *_collect_runtime_findings(runtime_counters),

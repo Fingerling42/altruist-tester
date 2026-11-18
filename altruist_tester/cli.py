@@ -1522,11 +1522,6 @@ def _rule_engine_config(
         flatline_window_seconds=tester_config.flatline_window_seconds,
         flatline_fail_after_seconds=tester_config.flatline_fail_after_seconds,
         flatline_min_distinct_values=tester_config.flatline_min_distinct_values,
-        cadence_expected_interval_seconds=(
-            tester_config.cadence_expected_interval_seconds
-        ),
-        cadence_warn_after_missed=tester_config.cadence_warn_after_missed,
-        cadence_fail_after_missed=tester_config.cadence_fail_after_missed,
         silence_warn_after_seconds=tester_config.silence_warn_after_seconds,
         silence_fail_after_seconds=tester_config.silence_fail_after_seconds,
         connectivity_upload=tester_config.connectivity_upload,
@@ -1535,7 +1530,6 @@ def _rule_engine_config(
             tester_config.log_contract_startup_window_seconds
         ),
         reference_time=finished_at,
-        max_tail_window_seconds=duration_seconds,
         duration_seconds=duration_seconds,
     )
 

@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, Protocol
 
 from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
@@ -651,7 +652,9 @@ def capture_raw_serial(
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
     observation_tracker = SensorObservationTracker(
-        expected_settings=observation_settings, profile_rules=observation_rules or {}
+        capture_started_at=datetime.fromisoformat(capture_started_at),
+        expected_settings=observation_settings,
+        profile_rules=observation_rules or {},
     )
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []

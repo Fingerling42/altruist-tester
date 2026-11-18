@@ -78,9 +78,7 @@ def test_error_with_cache_does_not_refresh_measurement():
     )
     assert tracker.feed(json.dumps(data), NOW)[1] == []
     assert tracker.latest[("BME280", "temperature")]["measured_ms"] == 1000
-    findings = observation_findings(
-        tracker.as_dict(), reference_time=NOW, interval=300, warn_after=2, fail_after=4
-    )
+    findings = observation_findings(tracker.as_dict(), reference_time=NOW)
     assert any(f["severity"] == "fail" for f in findings)
 
 
@@ -91,10 +89,9 @@ def test_repeated_old_value_is_stale_even_at_late_attach():
         samples[0].observation["measured_ts"]
         == (NOW - timedelta(seconds=1300)).isoformat()
     )
-    findings = observation_findings(
-        tracker.as_dict(), reference_time=NOW, interval=300, warn_after=2, fail_after=4
-    )
-    assert any(f["severity"] == "fail" for f in findings)
+    from altruist_tester.sensor_acceptance import check_observation_cadence
+
+    assert check_observation_cadence(tracker.as_dict(), NOW).status == "fail"
 
 
 def test_reboot_changes_measurement_identity_and_is_reported():
@@ -176,14 +173,14 @@ def test_physical_sources_do_not_merge():
 def test_freshness_uses_host_tail_since_last_snapshot():
     tracker = SensorObservationTracker()
     feed(tracker)
-    findings = observation_findings(
-        tracker.as_dict(),
-        reference_time=NOW + timedelta(seconds=1200),
-        interval=300,
-        warn_after=2,
-        fail_after=4,
+    from altruist_tester.sensor_acceptance import check_observation_cadence
+
+    assert (
+        check_observation_cadence(
+            tracker.as_dict(), NOW + timedelta(seconds=1200)
+        ).status
+        == "fail"
     )
-    assert any(f["severity"] == "fail" for f in findings)
 
 
 def test_unknown_extensions_do_not_change_schema():

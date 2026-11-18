@@ -513,8 +513,11 @@ versioned UART stream is required throughout capture; inspect
 `summary.sensor_observations.source` for `serial_observation_v2` and require no
 contract issues. Presence must come from each expected physical sensor. Compare
 duplicate counts with accepted samples: cached observations must not
-increase measurement counts. Freshness follows `[cadence]` thresholds, not the
-publication interval. Error states fail; recovered cumulative failed cycles warn.
+increase measurement counts. For each slow sensor, use its explicit profile
+interval T: gap/freshness WARN >=T+60 seconds, FAIL >=2T+300; first wait WARN
+>=T+60, FAIL >=T+300. Global `[cadence]` settings are rejected. Require three
+distinct successful capture measurements per mandatory slow metric; one or two
+are coverage WARN, and missing/failed measurements retain their severity.
 See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations).
 
 Choose a capture window that covers the configured sensor intervals with a
@@ -534,3 +537,31 @@ exit 2. Inspect `sensor_observations.profile_error`, expected settings, declared
 settings and BUILD in summary/report, correct the environment/profile, and start
 a new capture. This outcome is a setup problem, not a sensor defect. Missing
 required fields and contradictory counters/history remain FAIL/exit 1.
+
+
+### Interpret UART v2 acceptance evidence
+
+Inspect `sensor_observations.acceptance` in the summary/report for capture
+baselines, measurement counts, retained gaps and per-channel failed cycles.
+A recovered first failed external cycle gives WARN; a second in a rolling
+24-hour device-time window fails for the rest of capture. Unrecovered errors
+fail at capture end. Confirmed historical failures warn without spending the
+capture budget; active old failures still fail. Uncertain attribution and
+missing bounded-history timestamps require coverage WARN unless a budget
+breach is already proven. BME680 gas and environmental budgets are separate.
+
+For microphone frequency, require complete 300-second active-time windows
+starting after its accepted baseline. <2 Hz warns; <1 Hz fails. Partial,
+historical or missing windows cannot establish a frequency PASS. Audio gaps
+warn at 60 seconds and fail at 300 seconds even if average frequency is good
+or HEALTH is still arriving. Only confirmed SDS time up to the profile's
+warmup+collection budget (20 seconds per cycle) is excluded. Overruns and
+network/worker work remain active delays. A still-active SDS flag cannot
+extend the allowance indefinitely.
+
+Choose a capture duration sufficient for the required evidence rather than
+extending it automatically. At T=300 seconds, roughly 20 minutes is a useful
+short-check allowance, but it cannot guarantee three successful measurements
+or replace a separately scheduled burn-in. Short programming checks may
+legitimately retain coverage WARN. Review the selected debug firmware's v2
+and driver-success telemetry before using hardware results for acceptance.

@@ -1,10 +1,12 @@
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from altruist_tester.samples import SensorSampleSeries
+from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.serial_logger import SerialLogStats
-from tests.helpers import sample_record
+from tests.helpers import sample_record, uart_snapshot
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -192,3 +194,24 @@ def patch_batch_worker_processes(
                 started.append(self)
 
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
+
+
+def uart_cadence_report(*offsets: int) -> dict:
+    """Build actual v2 timing evidence for CLI tests that bypass serial capture."""
+    start = datetime.now(UTC) - timedelta(seconds=offsets[-1])
+    tracker = SensorObservationTracker(capture_started_at=start)
+    for index, offset in enumerate(offsets, 1):
+        data = uart_snapshot(
+            "BME280", {"temperature": 24, "humidity": 45, "pressure": 1013}
+        )
+        now = 1000 + offset * 1000
+        meta = data["_observations"]
+        meta.update(time_ms=now, snapshot_seq=index, cycle_seq=index)
+        meta["channels"]["main"].update(
+            cycles_total=index, ok_total=index, last_ok_ms=now
+        )
+        for item in data["BME280"].values():
+            item["observation"].update(seq=index, measured_ms=now)
+        event, _ = tracker.feed(json.dumps(data), start + timedelta(seconds=offset))
+        assert "invalid_reason" not in event
+    return tracker.as_dict()
