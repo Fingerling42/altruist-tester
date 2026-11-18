@@ -359,3 +359,38 @@ def test_payload_report_supports_new_and_older_summary_fields(tmp_path):
         report = artifacts.report_txt.read_text()
         assert "- observations: 3" in report
         assert f"- malformed observations: {malformed_count or 0}" in report
+
+
+def test_report_and_summary_separate_health_probes_from_uploads(tmp_path):
+    from altruist_tester.parsers.upload_events import parse_upload_event
+    from altruist_tester.rules.uploads import UploadChannelConfig, check_upload_health
+    from altruist_tester.uploads import UploadStats
+
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="5m",
+        duration_seconds=300,
+    )
+    stats = UploadStats()
+    for tail in [
+        "failed channel=sensors-connectivity seq=1 reason=health_get_failed",
+        "attempt channel=sensors-connectivity seq=1",
+        "success channel=sensors-connectivity seq=1",
+    ]:
+        event = parse_upload_event(f"[CONNECTIVITY] {tail}")
+        assert event is not None
+        stats.append(event)
+    report = check_upload_health(
+        stats, connectivity=UploadChannelConfig(mode="required")
+    )
+    details = {"upload_health": report.as_dict()}
+    artifacts.write_summary("completed", extra=details)
+    artifacts.write_report("completed", details=details)
+    summary = json.loads(artifacts.summary_json.read_text())
+    channel = summary["upload_health"]["channels"]["connectivity"]
+    assert channel["health_checks"] == channel["successes"] == 1
+    assert channel["failures"] == 0
+    assert channel["success_rate"] == 1.0
+    assert "success_rate=100.0%, health_checks=1" in artifacts.report_txt.read_text()

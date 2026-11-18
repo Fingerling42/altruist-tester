@@ -307,7 +307,8 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                     f"attempts={channel.get('attempts')}, "
                     f"successes={channel.get('successes')}, "
                     f"failures={channel.get('failures')}, "
-                    f"success_rate={success_rate_text})"
+                    f"success_rate={success_rate_text}, "
+                    f"health_checks={channel.get('health_checks', 0)})"
                 )
 
 

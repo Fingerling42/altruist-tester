@@ -35,6 +35,19 @@ class UploadEvent:
     reason: str | None = None
     raw_fields: dict[str, str] | None = None
 
+    @property
+    def is_health_check(self) -> bool:
+        """Identify server selection, including firmware logs without a stage."""
+
+        fields = self.raw_fields or {}
+        return self.channel == "connectivity" and (
+            fields.get("stage") == "health"
+            or (
+                self.status == "failure"
+                and fields.get("reason") in {"health_get_failed", "health_begin_failed"}
+            )
+        )
+
     def as_event_payload(self) -> dict[str, object]:
         """Return upload observation as an event payload."""
 

@@ -244,3 +244,20 @@ serialized example at 1 KiB. Fields that exceed the total budget are omitted.
 Samples, transport bodies, signatures and unknown fields are not copied into
 examples. Further malformed records only increment counters. The complete raw
 UART is preserved unchanged in `serial.log`; old artifacts are not rewritten.
+
+## Map server selection and upload outcomes
+
+Map server health GET probes are server-selection diagnostics, not data uploads.
+`[CONNECTIVITY] ... stage=health` and legacy failures with the exact
+`reason=health_get_failed` or `reason=health_begin_failed` are retained in
+`events.jsonl` (including `raw_fields`) and counted separately as `health_checks`
+and `health_check_reasons` in upload summaries/reports. They do not affect upload
+attempts, success rate, failure streaks, or delivery targets. A failed health GET
+followed by a successful POST is one successful upload (100%). Health probes
+alone cannot satisfy an enabled upload check. Real POST/local failures and
+unknown reasons retain the configured required/optional/disabled behavior;
+results sharing a sequence number are not merged across transport attempts.
+
+`health_checks` counts parsed structured health events. Current firmware emits
+these events only for failed probes; successful GETs remain in verbose Map logs.
+A zero counter therefore does not mean that no health GET was performed.

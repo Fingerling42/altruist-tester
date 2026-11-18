@@ -152,6 +152,11 @@ uv run altruist-tester run \
   --output-dir ~/altruist-runs
 ```
 
+Map health GET probes select a server and do not count as upload attempts or
+failures. `health_checks` and `health_check_reasons` preserve them separately
+in summaries/reports; real POST/local failures retain their configured severity.
+See the [current and legacy log classification](sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
+
 If upload access was configured before the burn-in run, edit the profile or use
 a copied profile with:
 

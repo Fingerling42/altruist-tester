@@ -18,6 +18,8 @@ class UploadChannelStats:
     successes: int = 0
     failures: int = 0
     warnings: int = 0
+    health_checks: int = 0
+    health_check_reasons: dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 0
     last_status: str | None = None
     last_reason: str | None = None
@@ -50,6 +52,15 @@ class UploadChannelStats:
 
     def append(self, event: UploadEvent) -> None:
         """Add one upload event to the channel counters."""
+
+        # Selection probes must not clear a pending POST or its failure streak.
+        if event.is_health_check:
+            self.health_checks += 1
+            if event.reason:
+                self.health_check_reasons[event.reason] = (
+                    self.health_check_reasons.get(event.reason, 0) + 1
+                )
+            return
 
         self.last_status = event.status
         self.last_reason = event.reason
@@ -96,6 +107,8 @@ class UploadChannelStats:
             "successes": self.successes,
             "failures": self.failures,
             "warnings": self.warnings,
+            "health_checks": self.health_checks,
+            "health_check_reasons": dict(sorted(self.health_check_reasons.items())),
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,
             "last_status": self.last_status,

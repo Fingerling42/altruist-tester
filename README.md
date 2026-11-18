@@ -253,6 +253,11 @@ Keyword alerts:
   CPU lock-up, power glitch, eFuse error, assertion, stack, heap, and access
   fault patterns.
 
+Map health GET probes select a server and do not count as upload attempts or
+failures. `health_checks` and `health_check_reasons` preserve them separately
+in summaries/reports; real POST/local failures retain their configured severity.
+See the [current and legacy log classification](docs/sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
+
 Upload delivery:
 
 - parses stable `[CONNECTIVITY]` upload attempts, successes, failures, targets,

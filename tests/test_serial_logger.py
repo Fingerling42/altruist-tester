@@ -888,3 +888,34 @@ def test_malformed_payload_references_physical_uart_line_after_partial_read(tmp_
     stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 1, clock=clock)
     assert artifacts.serial_log.read_bytes() == b"".join(chunks)
     assert stats.payload_observations.malformed_examples[0]["line_number"] == 1
+
+
+def test_capture_preserves_health_evidence_without_delivery_failure(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
+    lines = [
+        (
+            b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
+            b"reason=health_get_failed host=probe code=-1\n"
+        ),
+        (
+            b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
+            b"stage=health reason=health_begin_failed host=probe code=0\n"
+        ),
+        b"[CONNECTIVITY] attempt channel=sensors-connectivity seq=7\n",
+        b"[CONNECTIVITY] success channel=sensors-connectivity seq=7 code=200\n",
+    ]
+    stats = capture_raw_serial(FakeSerial(lines, clock), artifacts, 2, clock=clock)
+    events = [
+        event
+        for event in _read_jsonl(artifacts.events_jsonl)
+        if event["type"] == "upload_event"
+    ]
+    assert len(events) == 4
+    assert events[1]["raw_fields"]["stage"] == "health"
+    assert events[0]["raw_fields"]["reason"] == "health_get_failed"
+    assert artifacts.serial_log.read_bytes() == b"".join(lines)
+    channel = stats.upload_stats.channel("connectivity")
+    assert channel.health_checks == 2
+    assert channel.failures == 0
+    assert channel.success_rate == 1.0
