@@ -2040,6 +2040,7 @@ def run(
                 progress_callback=show_progress,
                 observation_settings=dict(tester_config.observation_settings),
                 observation_rules=dict(tester_config.observation_rules),
+                observation_activity_only=tester_config.observation_activity_only,
                 **({"expected_device_id": expected_mac} if expected_mac else {}),
             )
     except SerialSettingsError as exc:

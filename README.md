@@ -880,3 +880,30 @@ summary/report. This does not declare a sensor defect. The device declaration
 never changes the expectation automatically. Unknown BUILD remains unknown.
 Malformed required fields or contradictory counters/history are contract
 FAIL/exit 1; v1 has no acceptance fallback.
+
+
+### Limited sensor activity acceptance
+
+Use `configs/urban-activity.example.toml` or
+`configs/insight-activity.example.toml` to explicitly request acquisition activity
+checks for `ICS43434.main` or `BME680.gas`. The ordinary profiles require full
+measurement acceptance. Select the profile before capture; the device cannot
+opt itself into reduced requirements.
+
+The activity profiles require new evidence after the first received baseline.
+A gas probe must report new transferred data with nonzero raw resistance. A
+microphone probe must report an error-free complete 8192-byte I²S block with a
+varying, nonconstant signal and some samples away from the digital rails.
+Controller initialization alone does not confirm a connected microphone.
+These checks demonstrate exchange and signal activity, not calibrated noise,
+valid gas/VOC, measurement frequency or failure-budget compliance.
+
+A successful limited check produces **WARN**, never `PASS_CANDIDATE`; CLI exit
+remains 0 when no other rule fails. Missing evidence, an unsuccessful latest
+acquisition, no activity after baseline, or stale evidence produces FAIL/exit 1.
+Noise activity becomes stale at 300 seconds, gas at `2*T+300` seconds; host time
+continues age after the last UART receipt. Identity, contract, environment,
+other sensors, HEALTH, runtime and upload checks retain their requirements.
+Probes do not create `samples.jsonl` measurements. Selected channels, baselines,
+latest acquisition details and limitations are saved in summary/report; raw UART
+remains the source of truth.

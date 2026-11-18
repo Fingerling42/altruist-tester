@@ -210,6 +210,8 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                             "coverage",
                             "acceptance",
                             "expected_settings",
+                            "activity_only",
+                            "probe_baselines",
                             "profile_rules",
                             "profile_error",
                             "sensors",

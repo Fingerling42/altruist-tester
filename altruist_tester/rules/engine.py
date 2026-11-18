@@ -24,7 +24,12 @@ from altruist_tester.rules.flatline import (
     check_sensor_flatlines,
 )
 from altruist_tester.rules.log_contract import LogContractReport, check_log_contract
-from altruist_tester.rules.presence import SensorPresenceReport, check_sensor_presence
+from altruist_tester.rules.presence import (
+    SensorPresenceReport,
+    canonical_metric_name,
+    canonical_sensor_name,
+    check_sensor_presence,
+)
 from altruist_tester.rules.runtime import RuntimeCounterReport, check_runtime_counters
 from altruist_tester.rules.silence import SerialSilenceReport, check_serial_silence
 from altruist_tester.rules.subsystems import (
@@ -42,6 +47,7 @@ from altruist_tester.rules.urban_pm import (
     check_urban_pm_nearly_zero,
 )
 from altruist_tester.sensor_acceptance import check_observation_cadence
+from altruist_tester.sensor_contract import METRICS, metric_channel
 from altruist_tester.sensor_observations import observation_findings
 from altruist_tester.serial_logger import SerialLogStats
 
@@ -420,10 +426,28 @@ def evaluate_rules(
     one process-level verdict.
     """
 
+    activity_only = set(stats.sensor_observations.get("activity_only", []))
+    excluded_metrics = {
+        canonical_metric_name(m)
+        for s, metrics in METRICS.items()
+        for m in metrics
+        if f"{s}.{metric_channel(s, m)}" in activity_only
+    }
+    expected_sensors = tuple(
+        s
+        for s in config.expected_sensors
+        if not (
+            canonical_sensor_name(s) == "ics43434" and "ICS43434.main" in activity_only
+        )
+    )
     sensor_presence = check_sensor_presence(
         stats.sensor_series,
-        expected_metrics=config.expected_metrics,
-        expected_sensors=config.expected_sensors,
+        expected_metrics=tuple(
+            m
+            for m in config.expected_metrics
+            if canonical_metric_name(m) not in excluded_metrics
+        ),
+        expected_sensors=expected_sensors,
     )
     sensor_ranges = check_sensor_sample_ranges(
         (

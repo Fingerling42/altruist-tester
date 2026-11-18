@@ -84,6 +84,7 @@ class TesterConfig:
 
     observation_settings: Mapping[str, dict] = field(default_factory=dict)
     observation_rules: Mapping[str, str] = field(default_factory=dict)
+    observation_activity_only: tuple[str, ...] = ()
 
     @classmethod
     def defaults(cls) -> TesterConfig:
@@ -563,6 +564,7 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     settings, rules = _observation_profile(data)
     return TesterConfig(
         observation_settings=settings,
+        observation_activity_only=_activity_only(data, settings),
         observation_rules=rules,
         expected_sensors=_string_tuple(expect.get("sensors"), "expect.sensors"),
         expected_metrics=_string_tuple(expect.get("metrics"), "expect.metrics"),
@@ -622,7 +624,12 @@ def load_tester_config(path: Path | None) -> TesterConfig:
 
 def _observation_profile(data: Mapping[str, Any]) -> tuple[dict, dict]:
     table = _optional_table(data, "observations")
-    unknown = set(table) - {"settings", "firmware_source", "settings_rule"}
+    unknown = set(table) - {
+        "settings",
+        "firmware_source",
+        "settings_rule",
+        "activity_only",
+    }
     if unknown:
         raise ConfigError(f"Unknown observations fields: {sorted(unknown)}")
     sensors = _require_mapping(table.get("settings", {}), "observations.settings")
@@ -646,3 +653,26 @@ def _observation_profile(data: Mapping[str, Any]) -> tuple[dict, dict]:
         except ValueError as exc:
             raise ConfigError(f"observations.settings.{sensor}: {exc}") from exc
     return settings, rules
+
+
+def _activity_only(data: Mapping[str, Any], settings: dict) -> tuple[str, ...]:
+    selected = _string_tuple(
+        _optional_table(data, "observations").get("activity_only"),
+        "observations.activity_only",
+    )
+    if len(selected) != len(set(selected)) or set(selected) - {
+        "BME680.gas",
+        "ICS43434.main",
+    }:
+        raise ConfigError(
+            "observations.activity_only accepts unique BME680.gas / ICS43434.main only"
+        )
+    for item in selected:
+        sensor = item.split(".")[0]
+        if sensor not in settings or (
+            sensor == "BME680" and not settings[sensor]["gas_enabled"]
+        ):
+            raise ConfigError(
+                f"observations.activity_only requires enabled settings for {item}"
+            )
+    return selected

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from altruist_tester.rules.cadence import SensorCadenceFinding, SensorCadenceReport
 from altruist_tester.rules.presence import canonical_metric_name
+from altruist_tester.sensor_contract import metric_channel
 
 DAY_MS = 86400000
 
@@ -29,6 +30,7 @@ def elapsed(reference: datetime | None, received: str) -> float:
 class SensorAcceptanceLedger:
     """Retain bounded evidence; recovery never clears a capture finding."""
 
+    activity_only: tuple[str, ...] = ()
     started_at: datetime | None = None
     sensors: dict = field(default_factory=dict)
     findings: dict = field(default_factory=dict)
@@ -77,6 +79,8 @@ class SensorAcceptanceLedger:
         # on/after that boundary are uncertain until a counter baseline exists.
         estimated_start = state["estimated_start_ms"]
         for name, channel in snapshot["channels"].items():
+            if f"{sensor}.{name}" in self.activity_only:
+                continue
             ledger = state["channels"].setdefault(
                 name,
                 dict(
@@ -183,9 +187,15 @@ class SensorAcceptanceLedger:
                     f"{prefix}: observed error ({channel['reason']})",
                 )
         if sensor == "ICS43434":
-            self._noise(snapshot, state, key, first)
+            if "ICS43434.main" not in self.activity_only:
+                self._noise(snapshot, state, key, first)
         else:
             for item in snapshot["metrics"]:
+                if (
+                    f"{sensor}.{metric_channel(sensor, item['metric'])}"
+                    in self.activity_only
+                ):
+                    continue
                 metric = state["metrics"].setdefault(
                     item["metric"],
                     dict(
@@ -288,7 +298,7 @@ def acceptance_findings(report: dict, reference_time: datetime | None) -> list[d
                         f"{sensor}.{name}: unrecovered error ({channel['reason']})",
                     )
                 )
-        if sensor != "ICS43434":
+        if sensor != "ICS43434" or "ICS43434.main" in report.get("activity_only", []):
             continue
         state = evidence.get((snapshot["boot_id"], sensor))
         if state is None:

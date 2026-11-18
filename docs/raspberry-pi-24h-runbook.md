@@ -565,3 +565,17 @@ short-check allowance, but it cannot guarantee three successful measurements
 or replace a separately scheduled burn-in. Short programming checks may
 legitimately retain coverage WARN. Review the selected debug firmware's v2
 and driver-success telemetry before using hardware results for acceptance.
+
+
+## Limited activity checks
+
+For an explicitly reduced sensor check select `configs/urban-activity.example.toml`
+or `configs/insight-activity.example.toml` before starting capture. Set their
+expected effective settings to the actual device configuration. These profiles
+check microphone or gas acquisition activity while preserving the other sensor
+and infrastructure checks. A fresh post-baseline transfer is required; allow at
+least the next scheduled acquisition and publication. A successful limited
+check returns WARN and does not establish measurement validity or full sensor
+acceptance. Use the ordinary profiles for full acceptance. Do not interpret
+exit 0 from an activity profile as a passed burn-in. Review the selected
+activity channels and probe evidence in summary/report.

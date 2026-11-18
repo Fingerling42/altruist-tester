@@ -413,3 +413,50 @@ errors retain FAIL. Sensor first-wait windows take precedence over the common
 sensor-sample startup deadline; independent HEALTH/BUILD/BOOT rules remain.
 The profile rejects global `[cadence]` settings; effective intervals are explicit
 per sensor. Delivery checks remain independent of local sensor measurements.
+
+
+### Acquisition probes and limited activity profiles
+
+The optional known `_observations.probes` object declares acquisition-only
+channels: exactly `gas` for BME680 or `main` for ICS43434. Other sensors cannot
+claim this mode. Each declared channel remains `waiting/driver_unverified` with
+zero measurement cycles/ok/failed and null, seq=0 measurement fields. This is
+separate from measurement success and independent of the device's computed
+API/uplink/SD values.
+
+Each probe contains `attempts_total`, `transfers_total`, `activity_total`,
+`last_attempt_ms`, `last_transfer_ms`, `last_activity_ms`, `result`, `error_code`,
+`bytes_read`, `expected_bytes`, `signal_min`, `signal_max`, `gas_status`,
+`gas_resistance`. Counters and clocks use the normal exact integer encoding;
+event times are null before the event. Counters satisfy activity <= transfers
+<= attempts and are cumulative across publications. Result is `never`,
+`init_failed`, `read_failed`, `short_read`, `no_new_data`, `no_activity` or
+`activity`. Details describe the latest attempt; cumulative times retain the
+latest corresponding event. Probe changes without a new attempt, regressions,
+inconsistent details and simultaneous measurement success in that channel fail
+atomic validation. Probe channel declarations cannot change during capture.
+
+Microphone evidence carries the raw I²S return code and byte count; a complete
+block is 8192 bytes. Signal extrema are signed 24-bit samples before FFT and are
+null on unsuccessful/incomplete transfers. Gas details are null without new
+transferred data; otherwise gas_status is the raw 8-bit status and resistance
+is the raw unsigned resistance. The heater-stable bit is 0x10 and gas-valid bit
+is 0x20. Flags are recorded even when the reading is only activity evidence;
+none of these probes advances gas/VOC/noise measurement identities.
+
+A profile may explicitly set `observations.activity_only = ["BME680.gas"]`
+or `["ICS43434.main"]`, or both when both channels are expected. Unique entries
+and explicit effective settings for each selected sensor are required. Defaults
+remain full acceptance. Device probes with no matching operator selection fail
+full acceptance; a selected channel with missing probe evidence also fails.
+No parser fallback or automatic downgrade is permitted.
+
+The first receipt establishes each probe's activity baseline. A later increased
+activity counter and successful latest attempt are required. Duplicate frames
+or old activity alone do not pass. Limited success is always WARN with the
+measurement-validity limitation. Latest failed/no-activity acquisition and stale
+activity fail; thresholds are 300 s for I²S activity and 2*T+300 s for gas,
+including host tail. The selected physical channels are excluded from
+measurement presence/cadence; their null values never enter ranges/flatline.
+Other channels, including BME680 environment, keep full acceptance rules.
+Expected settings mismatch/change still stops capture with CLI 2.

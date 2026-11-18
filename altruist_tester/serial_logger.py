@@ -609,6 +609,7 @@ def capture_raw_serial(
     expected_device_id: str | None = None,
     observation_settings: dict | None = None,
     observation_rules: dict | None = None,
+    observation_activity_only: tuple[str, ...] = (),
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses.
 
@@ -655,6 +656,7 @@ def capture_raw_serial(
         capture_started_at=datetime.fromisoformat(capture_started_at),
         expected_settings=observation_settings,
         profile_rules=observation_rules or {},
+        activity_only=observation_activity_only,
     )
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []

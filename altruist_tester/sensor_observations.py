@@ -10,6 +10,8 @@ from altruist_tester.samples import SensorSample
 from altruist_tester.sensor_acceptance import (
     SensorAcceptanceLedger,
     acceptance_findings,
+    elapsed,
+    finding,
 )
 from altruist_tester.sensor_contract import metric_channel, parse_contract
 
@@ -25,6 +27,8 @@ class SensorObservationTracker:
     acceptance: SensorAcceptanceLedger = field(default_factory=SensorAcceptanceLedger)
     expected_settings: dict | None = None
     profile_rules: dict = field(default_factory=dict)
+    activity_only: tuple[str, ...] = ()
+    _probe_baselines: dict[str, int] = field(default_factory=dict)
     profile_error: dict | None = None
     selected: bool = False
     snapshots: int = 0
@@ -178,6 +182,11 @@ class SensorObservationTracker:
                     )
         if self.acceptance.started_at is None:
             self.acceptance.started_at = self.capture_started_at
+        for name, probe in snapshot.get("probes", {}).items():
+            self._probe_baselines.setdefault(
+                f"{sensor}.{name}", probe["activity_total"]
+            )
+        self.acceptance.activity_only = self.activity_only
         self.acceptance.feed(snapshot, previous, received)
         self._snapshots[sensor] = snapshot
         samples = []
@@ -229,6 +238,8 @@ class SensorObservationTracker:
             "acceptance": self.acceptance.as_dict(),
             "expected_settings": self.expected_settings,
             "profile_rules": self.profile_rules,
+            "activity_only": list(self.activity_only),
+            "probe_baselines": dict(self._probe_baselines),
             "profile_error": self.profile_error,
             "selected": self.selected,
             "source": "serial_observation_v2",
@@ -284,6 +295,7 @@ def observation_findings(
             }
         )
     findings.extend(acceptance_findings(report, reference_time))
+    findings.extend(activity_findings(report, reference_time))
     return findings
 
 
@@ -362,6 +374,29 @@ def validate_transition(previous: dict, current: dict) -> None:
         require(delta > len(new_records) or failed == visible, "failure_delta_conflict")
         deltas.append(failed)
     require(max(deltas) <= delta <= sum(deltas), "failure_delta_conflict")
+    old_probes, new_probes = previous.get("probes", {}), current.get("probes", {})
+    require(old_probes.keys() == new_probes.keys(), "probe_channels_changed")
+    for name, prior in old_probes.items():
+        probe = new_probes[name]
+        deltas = [
+            probe[k] - prior[k]
+            for k in ("attempts_total", "transfers_total", "activity_total")
+        ]
+        require(0 <= deltas[2] <= deltas[1] <= deltas[0], "probe_counter_regression")
+        if deltas[0] == 0:
+            require(probe == prior, "probe_changed_without_attempt")
+        for stem, delta in zip(
+            ("attempt", "transfer", "activity"), deltas, strict=True
+        ):
+            old, new = prior[f"last_{stem}_ms"], probe[f"last_{stem}_ms"]
+            require(
+                new == old
+                if delta == 0
+                else new is not None
+                and new >= previous["time_ms"]
+                and (old is None or new > old),
+                "probe_time_regression",
+            )
     if "noise" not in current:
         return
     old, new = previous["noise"], current["noise"]
@@ -443,3 +478,86 @@ def validate_transition(previous: dict, current: dict) -> None:
                 and closed["successful_blocks"] >= a["successful_blocks"],
                 "noise_current_regression",
             )
+
+
+def activity_findings(report: dict, reference_time: datetime | None) -> list[dict]:
+    selected = set(report.get("activity_only", []))
+    snapshots = {s["sensor"]: s for s in report.get("sensors", [])}
+    findings = []
+    for sensor, snapshot in snapshots.items():
+        for name in snapshot.get("probes", {}):
+            pair = f"{sensor}.{name}"
+            if pair not in selected:
+                findings.append(
+                    finding(
+                        "fail",
+                        "SENSOR_ACTIVITY_ONLY_NOT_ENABLED",
+                        f"{pair}: firmware provides activity evidence only; "
+                        "full measurement acceptance unavailable",
+                    )
+                )
+    for pair in sorted(selected):
+        sensor, channel = pair.split(".")
+        findings.append(
+            finding(
+                "warn",
+                "SENSOR_ACTIVITY_ONLY",
+                f"{pair}: limited activity check selected; measurement validity, "
+                "ranges and measurement cadence are not verified",
+            )
+        )
+        snapshot = snapshots.get(sensor)
+        probe = snapshot.get("probes", {}).get(channel) if snapshot else None
+        if probe is None:
+            findings.append(
+                finding(
+                    "fail",
+                    "SENSOR_ACTIVITY_MISSING",
+                    f"{pair}: required acquisition evidence missing",
+                )
+            )
+            continue
+        baseline = report.get("probe_baselines", {}).get(pair, probe["activity_total"])
+        received = next(
+            (
+                s["received_ts"]
+                for s in report.get("acceptance", {}).get("sensors", [])
+                if s["sensor"] == sensor and s["boot_id"] == snapshot["boot_id"]
+            ),
+            None,
+        )
+        tail = elapsed(reference_time, received) if received else 0
+        age = (
+            (snapshot["time_ms"] - probe["last_activity_ms"]) / 1000 + tail
+            if probe["last_activity_ms"] is not None
+            else float("inf")
+        )
+        limit = (
+            300
+            if sensor == "ICS43434"
+            else 2 * snapshot["settings"]["measurement_interval_ms"] / 1000 + 300
+        )
+        if (
+            probe["activity_total"] <= baseline
+            or probe["result"] != "activity"
+            or age >= limit
+        ):
+            findings.append(
+                finding(
+                    "fail",
+                    "SENSOR_ACTIVITY_UNCONFIRMED",
+                    f"{pair}: no fresh activity after baseline, failed latest "
+                    "acquisition or stale evidence; "
+                    f"result={probe['result']}, age={age:g}s",
+                )
+            )
+        else:
+            findings.append(
+                finding(
+                    "warn",
+                    "SENSOR_ACTIVITY_OBSERVED",
+                    f"{pair}: limited check passed; fresh activity observed, "
+                    "measurement validity unverified",
+                )
+            )
+    return findings

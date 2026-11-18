@@ -317,6 +317,8 @@ def parse_contract(line: str) -> dict | None:
             )
         )
     result["metrics"] = samples
+    if "probes" in meta:
+        result["probes"] = _probes(meta["probes"], result)
     if sensor == "ICS43434":
         result["noise"] = _noise(meta.get("noise"), result)
     elif "noise" in meta:
@@ -531,3 +533,143 @@ def _noise(value: Any, snapshot: dict) -> dict:
         windows=parsed_windows,
         window_current=current,
     )
+
+
+def _probes(value: Any, snapshot: dict) -> dict:
+    value = obj(value, "invalid_probes")
+    sensor = snapshot["sensor"]
+    expected = (
+        {"gas"} if sensor == "BME680" else {"main"} if sensor == "ICS43434" else set()
+    )
+    require(bool(value) and set(value) == expected, "invalid_probe_channels")
+    parsed = {}
+    for name, raw in value.items():
+        raw = obj(raw, "invalid_probe")
+        channel = snapshot["channels"][name]
+        require(
+            channel["cycles_total"] == 0
+            and channel["state"] == "waiting"
+            and channel["reason"] == "driver_unverified",
+            "probe_measurement_conflict",
+        )
+        p = {
+            k: number(raw.get(k))
+            for k in ("attempts_total", "transfers_total", "activity_total")
+        }
+        require(
+            p["activity_total"] <= p["transfers_total"] <= p["attempts_total"],
+            "probe_counter_conflict",
+        )
+        for stem in ("attempt", "transfer", "activity"):
+            key = f"last_{stem}_ms"
+            require(key in raw, "missing_probe_time")
+            p[key] = clock(raw[key], snapshot["time_ms"], nullable=True)
+            count = p[
+                {
+                    "attempt": "attempts_total",
+                    "transfer": "transfers_total",
+                    "activity": "activity_total",
+                }[stem]
+            ]
+            require((count == 0) == (p[key] is None), "probe_time_conflict")
+        require(
+            (p["last_activity_ms"] or 0)
+            <= (p["last_transfer_ms"] or 0)
+            <= (p["last_attempt_ms"] or 0),
+            "probe_time_conflict",
+        )
+        p["result"] = raw.get("result")
+        require(
+            isinstance(p["result"], str)
+            and p["result"]
+            in {
+                "never",
+                "init_failed",
+                "read_failed",
+                "short_read",
+                "no_new_data",
+                "no_activity",
+                "activity",
+            },
+            "invalid_probe_result",
+        )
+        require(
+            (p["result"] == "never") == (p["attempts_total"] == 0),
+            "probe_result_conflict",
+        )
+        p["error_code"] = raw.get("error_code")
+        require(
+            type(p["error_code"]) is int and -(2**31) <= p["error_code"] < 2**31,
+            "invalid_probe_error",
+        )
+        for key in ("bytes_read", "expected_bytes"):
+            p[key] = number(raw.get(key), maximum=2**32 - 1)
+        for key in ("signal_min", "signal_max", "gas_status", "gas_resistance"):
+            require(key in raw, "missing_probe_detail")
+            v = raw[key]
+            if v is not None:
+                if key == "gas_resistance":
+                    v = number(v, maximum=2**32 - 1)
+                else:
+                    require(
+                        type(v) is int
+                        and (
+                            -8388608 <= v <= 8388607
+                            if key.startswith("signal")
+                            else 0 <= v <= 255
+                        ),
+                        "invalid_probe_detail",
+                    )
+            p[key] = v
+        if sensor == "ICS43434":
+            require(
+                p["gas_status"] is None and p["gas_resistance"] is None,
+                "invalid_probe_detail",
+            )
+            require(
+                p["expected_bytes"] in (0, 8192) and p["bytes_read"] <= 8192,
+                "invalid_probe_bytes",
+            )
+            has_signal = p["signal_min"] is not None and p["signal_max"] is not None
+            require(
+                (p["signal_min"] is None) == (p["signal_max"] is None),
+                "invalid_probe_signal",
+            )
+            if has_signal:
+                require(
+                    p["expected_bytes"] == p["bytes_read"] == 8192
+                    and p["error_code"] == 0
+                    and p["signal_min"] <= p["signal_max"],
+                    "invalid_probe_signal",
+                )
+            if p["result"] == "activity":
+                require(
+                    has_signal and p["signal_min"] < p["signal_max"],
+                    "invalid_probe_activity",
+                )
+        else:
+            require(
+                p["signal_min"] is None
+                and p["signal_max"] is None
+                and p["bytes_read"] == p["expected_bytes"] == 0,
+                "invalid_probe_detail",
+            )
+            require(
+                (p["gas_status"] is None) == (p["gas_resistance"] is None),
+                "invalid_probe_detail",
+            )
+            if p["result"] == "activity":
+                require(
+                    p["gas_status"] is not None
+                    and p["gas_resistance"] > 0
+                    and p["error_code"] == 0,
+                    "invalid_probe_activity",
+                )
+        if p["result"] == "activity":
+            require(
+                p["activity_total"] > 0
+                and p["last_activity_ms"] == p["last_attempt_ms"],
+                "probe_result_conflict",
+            )
+        parsed[name] = p
+    return parsed
