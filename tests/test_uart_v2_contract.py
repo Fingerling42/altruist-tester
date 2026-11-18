@@ -589,3 +589,47 @@ def test_init_error_recovers_without_inventing_failed_measurement_cycle():
     assert not event.get("invalid_reason") and len(samples) == 3
     assert event["channels"]["main"]["failed_total"] == 0
     assert event["failures"]["recent"] == []
+
+
+@pytest.mark.parametrize("sensor", ["SCD4x", "BME680", "BMP280"])
+@pytest.mark.parametrize("state", ["ok", "error"])
+def test_urban_additional_sensors_are_diagnostic_until_selected(sensor, state):
+    profile = load_tester_config(Path("configs/urban-activity.example.toml"))
+    tracker = SensorObservationTracker(expected_settings=profile.observation_settings)
+    data = fixture(sensor)
+    if state == "error":
+        meta = data["_observations"]
+        meta.update(state="error", reason="not_found", cycle_seq=0)
+        for channel in meta["channels"].values():
+            channel.update(
+                cycles_total=0,
+                ok_total=0,
+                last_ok_ms=None,
+                state="error",
+                reason="not_found",
+            )
+        for metric in data[sensor].values():
+            metric.update(
+                value=None, observation=dict(seq=0, measured_ms=None, state="error")
+            )
+    event, samples = feed(tracker, data)
+    assert event["sensor"] == sensor
+    assert tracker.profile_error is None
+    assert samples == []
+    assert tracker.latest == {}
+    assert tracker.as_dict()["sensors"] == []
+    assert tracker.as_dict()["acceptance"]["sensors"] == []
+    assert tracker.as_dict()["outside_profile"] == {sensor: 1}
+    assert tracker.expected_settings == profile.observation_settings
+
+    # Explicit selection restores full validation; UART cannot opt itself in.
+    selected = SensorObservationTracker(
+        expected_settings={sensor: uart_settings(sensor)}
+    )
+    assert "profile_error" not in feed(selected, data)[0]
+    assert selected.as_dict()["sensors"][0]["sensor"] == sensor
+    data["_observations"]["settings"]["fetch_wait_ms"] += 1
+    mismatch = SensorObservationTracker(
+        expected_settings={sensor: uart_settings(sensor)}
+    )
+    assert feed(mismatch, data)[0]["profile_error"]["reason"] == "settings_mismatch"

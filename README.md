@@ -873,12 +873,17 @@ Choose a capture window that covers the configured sensor intervals with a
 margin. Short checks do not establish long-term flatline behavior or VOC stability.
 
 
-UART v2 requires explicit expected settings for each observed physical sensor in
+UART v2 requires explicit expected settings for each selected physical sensor in
 `[observations.settings.SENSOR]`, using the canonical names in the example
 Urban/Insight profiles. `[observations]` also records `firmware_source` and
 `settings_rule`; these describe the operator-selected firmware/config contract.
 Review effective send/SDS intervals, gas enablement and noise pause settings
-before capture. TOML omits inapplicable null fields. A missing expectation,
+before capture. The settings tables select the sensors included in acceptance.
+Standard Urban selects BME280, SDS and ICS43434. Diagnostics and readings from
+additional sensors remain in raw UART/events but do not contribute samples or
+sensor acceptance unless their expected settings are added to the profile.
+The summary counts these snapshots by sensor in `outside_profile`.
+TOML omits inapplicable null fields. An empty settings profile,
 settings mismatch or settings change stops capture with exit 2, preserving raw
 UART, the expected/declared values, rule provenance and observed BUILD in the
 summary/report. This does not declare a sensor defect. The device declaration

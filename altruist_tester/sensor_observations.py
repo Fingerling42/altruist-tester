@@ -37,6 +37,7 @@ class SensorObservationTracker:
     unobserved_updates: int = 0
     issues: Counter = field(default_factory=Counter)
     coverage: Counter = field(default_factory=Counter)
+    outside_profile: Counter = field(default_factory=Counter)
     latest: dict[tuple[str, str], dict] = field(default_factory=dict)
     _snapshots: dict[str, dict] = field(default_factory=dict)
     _origins: dict[str, datetime] = field(default_factory=dict)
@@ -79,6 +80,12 @@ class SensorObservationTracker:
             boot, received - timedelta(milliseconds=snapshot["time_ms"])
         )
         sensor = snapshot["sensor"]
+        # Discovery diagnostics include absent and optional hardware. Only the
+        # operator-selected sensors contribute measurements and acceptance.
+        # An empty profile still fails rather than learning settings from UART.
+        if self.expected_settings and sensor not in self.expected_settings:
+            self.outside_profile[sensor] += 1
+            return snapshot, []
         previous = self._snapshots.get(sensor)
         if previous:
             if (
@@ -249,6 +256,7 @@ class SensorObservationTracker:
             "unobserved_updates": self.unobserved_updates,
             "issues": dict(self.issues),
             "coverage": dict(self.coverage),
+            "outside_profile": dict(self.outside_profile),
             "sensors": [
                 {k: v for k, v in snapshot.items() if k != "metrics"}
                 for snapshot in self._snapshots.values()

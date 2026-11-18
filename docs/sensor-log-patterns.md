@@ -329,7 +329,12 @@ in the selected TOML profile. Null fields are omitted in TOML, not in UART.
 Canonical sensor names are case-sensitive. Profiles also require nonempty
 `observations.firmware_source` and `observations.settings_rule`. Expectations
 are fixed before capture. Unknown profile setting names fail config validation.
-A missing expectation, valid-but-different settings or a settings change stops
+The settings tables select the acceptance sensors. Valid snapshots for other
+sensors, including unsuccessful discovery of absent hardware, remain diagnostic
+UART/events only; they do not produce samples or enter sensor acceptance.
+`outside_profile` counts these snapshots by sensor in the observation summary.
+Add explicit expected settings to include an optional sensor in acceptance.
+An empty settings profile, valid-but-different settings or a settings change stops
 capture with CLI 2. This records a setup problem without a device-defect verdict.
 Malformed declarations, missing required fields and counter contradictions are
 contract failures (CLI 1). Unknown BUILD is retained without inferring a local

@@ -535,7 +535,11 @@ sensor table in `observations.settings`. Adjust expected effective values before
 capture; do not copy observed settings into the profile during acceptance.
 The example profiles assume 30 s send and 300 s SDS settings. For noise without
 active SDS set both SDS timing expectations to zero. Inapplicable null fields
-are omitted from TOML. Settings mismatch/change stops capture immediately with
+are omitted from TOML. Standard Urban selects BME280, SDS and ICS43434.
+Other sensors remain diagnostic-only unless their expected settings are explicitly
+added to the profile; inspect `sensor_observations.outside_profile` and raw
+UART/events for those records. Settings mismatch/change for a selected sensor
+stops capture immediately with
 exit 2. Inspect `sensor_observations.profile_error`, expected settings, declared
 settings and BUILD in summary/report, correct the environment/profile, and start
 a new capture. This outcome is a setup problem, not a sensor defect. Missing
