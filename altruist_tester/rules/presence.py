@@ -80,6 +80,8 @@ class SensorPresenceReport:
     observed_metrics: tuple[str, ...]
     missing_metrics: tuple[str, ...]
     message: str
+    missing_sensor_metrics: tuple[tuple[str, str], ...] = ()
+    ambiguous_metrics: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -97,6 +99,11 @@ class SensorPresenceReport:
             "observed_metrics": list(self.observed_metrics),
             "missing_metrics": list(self.missing_metrics),
             "message": self.message,
+            "missing_sensor_metrics": [
+                {"sensor": sensor, "metric": metric}
+                for sensor, metric in self.missing_sensor_metrics
+            ],
+            "ambiguous_metrics": list(self.ambiguous_metrics),
         }
 
 
@@ -163,9 +170,9 @@ def check_sensor_presence(
 ) -> SensorPresenceReport:
     """Check that expected metrics were observed at least once.
 
-    ``expected_sensors`` expands known sensor presets into their required
-    metrics, then merges them with explicit ``expected_metrics``. Missing
-    configured metrics are failures; an empty expectation set is a warning.
+    Sensor presets require each metric from the named physical source.
+    Explicit metric expectations accept any source. Compact payload channels
+    preserve readings but cannot establish physical sensor identity.
     """
 
     observed_metrics = observed_metrics_from_series(series)
@@ -186,14 +193,49 @@ def check_sensor_presence(
 
     observed_set = set(observed_metrics)
     missing = tuple(metric for metric in expected if metric not in observed_set)
-    if missing:
+    observed_pairs = {
+        (canonical_sensor_name(sensor), canonical_metric_name(metric))
+        for (sensor, metric), records in series.by_key.items()
+        if records
+    }
+    missing_pairs = tuple(
+        (sensor, metric)
+        for sensor in expected_sensor_names
+        for metric in SENSOR_EXPECTED_METRICS[sensor]
+        if (sensor, metric) not in observed_pairs
+    )
+    compact_metrics = {
+        metric
+        for sensor, metric in observed_pairs
+        if sensor in {"datalog", "sensors-connectivity"}
+    }
+    ambiguous = tuple(
+        sorted(
+            {metric for _sensor, metric in missing_pairs if metric in compact_metrics}
+        )
+    )
+    if missing or missing_pairs:
+        reasons = []
+        if missing:
+            reasons.append("Missing expected sensor metrics: " + ", ".join(missing))
+        if missing_pairs:
+            reasons.append(
+                "Missing physical sensor metrics: "
+                + ", ".join(f"{sensor}.{metric}" for sensor, metric in missing_pairs)
+            )
+        if ambiguous:
+            reasons.append(
+                "Compact sample physical source is unknown for: " + ", ".join(ambiguous)
+            )
         return SensorPresenceReport(
             status=severity_for_missing_sensor_metrics(),
             expected_sensors=expected_sensor_names,
             expected_metrics=expected,
             observed_metrics=observed_metrics,
             missing_metrics=missing,
-            message="Missing expected sensor metrics: " + ", ".join(missing),
+            message="; ".join(reasons),
+            missing_sensor_metrics=missing_pairs,
+            ambiguous_metrics=ambiguous,
         )
 
     return SensorPresenceReport(

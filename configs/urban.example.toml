@@ -1,3 +1,5 @@
+# Sensor presets require metrics from each named physical JSON source.
+# Compact PAYLOAD alone cannot confirm sensors; use metrics-only for that scope.
 [expect]
 sensors = ["bme280", "sds", "ics-43434"]
 metrics = []

@@ -293,7 +293,9 @@ def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
         ),
     )
 
-    assert result.verdict == "WARN"
+    assert result.verdict == "FAIL"
+    assert result.reports.sensor_presence.status == "fail"
+    assert result.reports.sensor_presence.ambiguous_metrics == ("pm10", "pm25")
     assert result.reports.urban_pm.status == "warn"
     assert result.findings[-1].code == "URBAN_PM_NEARLY_ZERO_DATALOG_P2_WARN"
 

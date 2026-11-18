@@ -203,6 +203,8 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 f"- samples: {details.get('sensor_samples_count')}",
                 f"- observed metrics: {', '.join(observed) if observed else 'none'}",
                 f"- missing metrics: {', '.join(missing) if missing else 'none'}",
+                f"- presence: {sensor_presence.get('status')} "
+                f"— {sensor_presence.get('message')}",
             ]
         )
     if isinstance(sensor_ranges, dict):

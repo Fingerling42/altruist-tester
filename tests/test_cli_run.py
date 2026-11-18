@@ -435,14 +435,14 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
         monkeypatch,
         release_log_stats(
             sensor_samples_count=7,
-            sensor_series=series_with_metrics(
-                "temperature",
-                "humidity",
-                "pressure",
-                "P1",
-                "P2",
-                "noiseAvg",
-                "noiseMax",
+            sensor_series=sample_series(
+                sample_record("BME280", "temperature", 24.0, 0),
+                sample_record("BME280", "humidity", 45.0, 0),
+                sample_record("BME280", "pressure", 1013.25, 0),
+                sample_record("SDS", "P1", 10.0, 0),
+                sample_record("SDS", "P2", 5.0, 0),
+                sample_record("ICS43434", "noiseAvg", 45.0, 0),
+                sample_record("ICS43434", "noiseMax", 55.0, 0),
             ),
         ),
     )
@@ -495,14 +495,14 @@ sensors = ["bme280", "sds", "ics-43434"]
         monkeypatch,
         release_log_stats(
             sensor_samples_count=7,
-            sensor_series=series_with_metrics(
-                "temperature",
-                "humidity",
-                "pressure",
-                "P1",
-                "P2",
-                "noiseAvg",
-                "noiseMax",
+            sensor_series=sample_series(
+                sample_record("BME280", "temperature", 24.0, 0),
+                sample_record("BME280", "humidity", 45.0, 0),
+                sample_record("BME280", "pressure", 1013.25, 0),
+                sample_record("SDS", "P1", 10.0, 0),
+                sample_record("SDS", "P2", 5.0, 0),
+                sample_record("ICS43434", "noiseAvg", 45.0, 0),
+                sample_record("ICS43434", "noiseMax", 55.0, 0),
             ),
         ),
     )
@@ -932,3 +932,43 @@ def test_epd_and_runtime_alerts_flow_through_capture_summary_and_report(
         assert summary["rules"]["failed_checks"] == []
         assert summary["verdict"] == "WARN"  # No startup BUILD in this capture.
         assert "- verdict: WARN" in report
+
+
+def test_run_rejects_foreign_metrics_as_physical_bme680(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    patch_cli_capture(
+        monkeypatch,
+        release_log_stats(
+            sensor_samples_count=4,
+            sensor_series=sample_series(
+                sample_record("SCD4x", "temperature", 24.0, 0),
+                sample_record("SCD4x", "humidity", 45.0, 0),
+                sample_record("SCD4x", "co2", 600.0, 0),
+                sample_record("altruist_urban", "pressure", 1013.25, 0),
+            ),
+        ),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-sensor",
+            "bme680",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+    assert result.exit_code == 1
+    (run_dir,) = output_dir.iterdir()
+    summary = json.loads((run_dir / "summary.json").read_text())
+    presence = summary["sensor_presence"]
+    assert presence["status"] == "fail"
+    assert presence["missing_metrics"] == []
+    assert len(presence["missing_sensor_metrics"]) == 3
+    assert "bme680.pressure" in (run_dir / "report.txt").read_text()

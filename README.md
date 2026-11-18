@@ -165,6 +165,20 @@ The Insight profile expects:
 The firmware currently prints the SCD sensor as `SCD4x`; the tester accepts
 `scd41`, `scd40`, and `scd4x` as the same expected sensor preset.
 
+Physical sensor presence checks require every preset metric from that sensor's
+own JSON object (with sensor/metric aliases normalized). For example, SCD4x
+temperature/humidity and imported `altruist_urban` pressure cannot confirm BME680;
+imported or aggregated readings cannot confirm Urban BME280. Missing pairs fail
+acceptance and appear as `missing_sensor_metrics` in `sensor_presence` and in
+the report message. `missing_metrics` still lists globally absent metric names.
+Compact PAYLOAD readings have an unknown physical source: they remain available
+for metric/range/cadence checks, but cannot satisfy `expect.sensors`. Unresolved
+compact metric names appear in `ambiguous_metrics` with an explicit diagnostic.
+Use debug JSON for physical sensor checks. Explicit `expect.metrics` alone
+accepts readings from any source, including compact PAYLOAD; an empty expectation
+set still warns. Existing artifacts are not rewritten. This verifies observed
+source labels, not hardware initialization, freshness or deduplication.
+
 For ad-hoc checks, pass expectations directly:
 
 ```bash

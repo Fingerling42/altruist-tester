@@ -508,3 +508,9 @@ normal payload statistics and readings; this diagnostic alone adds no severity.
 Older summaries without these fields remain readable. See
 [the parser contract](sensor-log-patterns.md#malformed-payload-diagnostics)
 for the exact fields and bounds.
+
+Physical presence requires each preset's metrics from its named JSON sensor,
+with aliases normalized. Compact PAYLOAD and imported Urban readings cannot
+confirm a physical module; missing pairs fail and are listed in summary/report.
+Use `expect.metrics` alone for checks that intentionally accept any source.
+See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
