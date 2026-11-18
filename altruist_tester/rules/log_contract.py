@@ -164,6 +164,45 @@ def _late_signal_finding(
     )
 
 
+def firmware_profile_error(stats: SerialLogStats) -> str | None:
+    """Validate BUILD after capture, allowing historical telemetry-rich releases."""
+    builds = list(stats.build_event_records)
+    if stats.build_events.last_build is not None:
+        builds.append(stats.build_events.last_build)
+    for key in (
+        "profile",
+        "commit",
+        "model",
+        "target",
+        "version",
+        "channel",
+        "language",
+    ):
+        values = {str(build[key]) for build in builds if build.get(key)}
+        if len(values) > 1:
+            return (
+                f"Conflicting [BUILD] {key} metadata; USB acceptance was not "
+                "evaluated. Capture one firmware build per run."
+            )
+    profiles = {str(build["profile"]) for build in builds if build.get("profile")}
+    if profiles and not profiles <= {"debug", "release"}:
+        return (
+            "Unknown [BUILD] firmware profile; USB acceptance was not evaluated. "
+            "Use supported debug firmware. Stable/Testing is only a channel."
+        )
+    if profiles == {"release"} and not (
+        _has_health_telemetry(stats) and _has_sensor_samples(stats)
+    ):
+        return (
+            "Firmware profile release does not provide the observed HEALTH/sensor "
+            "contract required for USB acceptance. Sensor health was not evaluated; "
+            "this is not evidence of a sensor defect. Prepare debug firmware and "
+            "capture again. Operational LOG/status output cannot replace readings; "
+            "use diagnostics for release logging checks."
+        )
+    return None
+
+
 def check_log_contract(
     stats: SerialLogStats,
     *,
@@ -184,6 +223,17 @@ def check_log_contract(
     }
 
     findings: list[LogContractFinding] = []
+    builds = list(stats.build_event_records)
+    if stats.build_events.last_build is not None:
+        builds.append(stats.build_events.last_build)
+    if builds and not any(build.get("profile") for build in builds):
+        findings.append(
+            LogContractFinding(
+                status="warn",
+                code="LOG_CONTRACT_BUILD_PROFILE_MISSING",
+                message="[BUILD] profile is unknown; strict telemetry checks apply",
+            )
+        )
     if not signals["health_telemetry"]:
         findings.append(
             LogContractFinding(

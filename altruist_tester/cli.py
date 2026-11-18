@@ -53,6 +53,7 @@ from altruist_tester.rules.engine import (
     RuleEngineResult,
     evaluate_rules,
 )
+from altruist_tester.rules.log_contract import firmware_profile_error
 from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
     expected_metrics_for_sensors,
@@ -1296,6 +1297,8 @@ def _run_batch(config: BatchConfig) -> int:
         artifacts.batch_dir,
         slots=tuple(device.slot for device in artifacts.devices),
     )
+    if any(result["returncode"] not in (0, 1) for result in worker_results):
+        return 2
     return 1 if aggregate["verdict"] == "FAIL" else 0
 
 
@@ -2074,6 +2077,34 @@ def run(
         "device_identity_resolved",
         **final_device_identity,
     )
+    if profile_error := firmware_profile_error(stats):
+        artifacts.append_event(
+            "serial_capture_completed",
+            lines_read=stats.lines_read,
+            bytes_read=stats.bytes_read,
+        )
+        artifacts.append_event(
+            "run_failed", reason="firmware_profile", message=profile_error
+        )
+        details = {
+            "firmware_build": stats.build_events.as_dict(),
+            "build_event_records": list(stats.build_event_records),
+            "serial_lines_read": stats.lines_read,
+            "serial_bytes_read": stats.bytes_read,
+            "serial_capture_started_at": stats.capture_started_at,
+            "device_identity": final_device_identity,
+            "device_model": device_model,
+            "config": str(config) if config is not None else None,
+        }
+        artifacts.write_summary(
+            "failed", message=profile_error, finished_at=finished_at, extra=details
+        )
+        artifacts.write_report(
+            "failed", message=profile_error, finished_at=finished_at, details=details
+        )
+        write_worker_status(status_file, "ERROR", message=profile_error)
+        typer.secho(profile_error, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
     rule_result = evaluate_rules(
         stats,
         _rule_engine_config(

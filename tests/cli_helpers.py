@@ -185,7 +185,7 @@ def patch_batch_worker_processes(
                 returncode=returncode,
                 summary=summaries_by_port.get(port),
                 report_text=reports_by_port.get(port),
-                write_summary=returncode == 0,
+                write_summary=returncode == 0 or port in summaries_by_port,
             )
             if started is not None:
                 started.append(self)

@@ -12,6 +12,21 @@ or periodic HEALTH. Mode changes are live; Save and restart persists the current
 mode and reboots. There is no separate numeric input. Debug exposes only modes
 allowed by its forced minimum (normally Detailed and Most detailed).
 
+USB acceptance checks the firmware contract after the complete capture, before
+sensor rules. A consistent BUILD `profile=release` without both HEALTH and
+readings exits **2** (unsuitable configuration), with no sensor verdict.
+Historical release builds that actually provide both signals still undergo all
+normal checks. Debug with missing signals remains **FAIL / exit 1**. Missing
+BUILD does not imply release: normal strict rules and the existing missing-BUILD
+warning apply. Missing profile metadata also warns; unknown explicit profiles
+or conflicting BUILD identity fields exit 2. Stable/Testing never selects a
+profile. Late BUILD is used for this decision and retains the startup warning
+when normal rules run. Prepare debug firmware before a new acceptance capture;
+use the diagnostic procedures for release logging checks. Batch isolates workers,
+continues other slots, and exits 2 if any worker has a configuration/serial error
+(otherwise 1 for health FAIL, 0 without FAIL). A failed batch aggregate is an
+execution result; consult each slot's worker error before diagnosing hardware.
+
 Short checks of firmware `7d961c4` on Urban/Insight C6 EN Testing debug/release
 completed on 2026-11-13; see [verification scope and remaining checks](../README.md#firmware-profile-verification).
 They do not replace 24/48-hour burn-in or verify the full firmware matrix.

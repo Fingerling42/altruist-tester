@@ -27,6 +27,21 @@ Testing is a publication channel, not a debug profile. The existing
 satisfy its HEALTH/measurement requirements. PASS on debug does not validate
 release. See the firmware [profile policy](../altruist-firmware/DIAGNOSTICS.md).
 
+USB acceptance checks the firmware contract after the complete capture, before
+sensor rules. A consistent BUILD `profile=release` without both HEALTH and
+readings exits **2** (unsuitable configuration), with no sensor verdict.
+Historical release builds that actually provide both signals still undergo all
+normal checks. Debug with missing signals remains **FAIL / exit 1**. Missing
+BUILD does not imply release: normal strict rules and the existing missing-BUILD
+warning apply. Missing profile metadata also warns; unknown explicit profiles
+or conflicting BUILD identity fields exit 2. Stable/Testing never selects a
+profile. Late BUILD is used for this decision and retains the startup warning
+when normal rules run. Prepare debug firmware before a new acceptance capture;
+use the diagnostic procedures for release logging checks. Batch isolates workers,
+continues other slots, and exits 2 if any worker has a configuration/serial error
+(otherwise 1 for health FAIL, 0 without FAIL). A failed batch aggregate is an
+execution result; consult each slot's worker error before diagnosing hardware.
+
 Debug firmware builds with health telemetry emit a compact snapshot once per minute:
 
 ```text
@@ -292,9 +307,10 @@ current C6 Map defaults prefer protobuf using a built-in endpoint when the
 custom URL is empty. A successful protobuf POST skips legacy JSON formatting
 and its `[PAYLOAD] sample=` output, even with both Map toggles enabled.
 Readable datalog samples depend on configuration/encryption, and full local
-sensor JSON is debug-only in the reviewed drivers. A release run without
-readable measurements still fails sensor/log-contract checks. `[PROTO]` is
-envelope-construction metadata and cannot substitute for readings.
+sensor JSON is debug-only in the reviewed drivers. A release run with BUILD but
+without readable measurements exits 2 as an unsuitable USB acceptance
+configuration. `[PROTO]` is envelope-construction metadata and cannot substitute
+for readings.
 
 Current CONNECTIVITY statistics combine legacy JSON and protobuf HTTP results.
 They cannot prove which route succeeded, CPS finalization, or frontend
@@ -678,8 +694,9 @@ runs/batch_<timestamp>/
 Each slot directory is reserved as the output directory for its single-device
 worker. The worker will then create the usual `serial.log`, `events.jsonl`,
 `samples.jsonl`, `summary.json`, and `report.txt` inside that slot-specific
-area. If any worker exits with a non-zero code, the batch command exits with
-code `1` after every worker has finished.
+area. After every worker has finished, batch exits `2` for configuration/serial or
+worker-start errors, otherwise `1` for health-check failures, or `0` without
+failures.
 
 In an interactive TTY (including SSH/tmux), batch uses an updating terminal
 screen with total elapsed time, worker counts and a compact table of slots.

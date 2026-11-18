@@ -1012,7 +1012,7 @@ def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_pa
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "slot-01 finished with exit code 2." in result.output
     assert "slot-02 finished with exit code 0." in result.output
     assert "Batch completed: 1/2 workers succeeded." in result.output
@@ -1062,7 +1062,7 @@ def test_batch_records_worker_start_failure_and_continues(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "slot-01 could not start: cannot exec worker" in result.output
     assert "slot-02 finished with exit code 0." in result.output
     batch_dir = next(output_dir.iterdir())
@@ -1101,3 +1101,52 @@ def test_batch_dry_run_rejects_invalid_config(tmp_path):
 
     assert result.exit_code == 2
     assert "devices[0].config is required" in plain_output(result)
+
+
+def test_batch_unsuitable_firmware_isolated_from_debug_slot(monkeypatch, tmp_path):
+    output_dir = tmp_path / "runs"
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    config = tmp_path / "batch.toml"
+    _write_batch_config(
+        config,
+        batch={"duration": "5s", "output_dir": output_dir},
+        devices=[
+            {
+                "slot": "release",
+                "model": "urban",
+                "port": "/dev/release",
+                "config": profile,
+            },
+            {
+                "slot": "debug",
+                "model": "insight",
+                "port": "/dev/debug",
+                "config": profile,
+            },
+        ],
+    )
+    started = []
+    patch_batch_worker_processes(
+        monkeypatch,
+        started=started,
+        returncodes_by_port={"/dev/release": 2},
+        summaries_by_port={
+            "/dev/release": {
+                "status": "failed",
+                "message": "Firmware profile release: sensor health was not evaluated",
+            },
+        },
+    )
+    result = CliRunner().invoke(app, ["batch", "--config", str(config)])
+    assert result.exit_code == 2
+    assert len(started) == 2
+    summary = json.loads(
+        (next(output_dir.iterdir()) / "batch_summary.json").read_text()
+    )
+    release, debug = summary["devices"]
+    assert release["worker_returncode"] == 2
+    assert release["verdict"] is None
+    assert "not evaluated" in release["worker_error"]
+    assert debug["worker_returncode"] == 0
+    assert debug["verdict"] == "PASS_CANDIDATE"

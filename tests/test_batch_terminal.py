@@ -243,7 +243,7 @@ def test_batch_report_preserves_infrastructure_reason(monkeypatch, tmp_path, sou
 
     monkeypatch.setattr(cli, "_start_batch_worker", start_worker)
     result = CliRunner().invoke(app, ["batch", "--config", str(config)])
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == 2, result.output
     assert "\x1b" not in result.output
     batch_dir = next((tmp_path / "runs").iterdir())
     report = (batch_dir / "batch_report.txt").read_text()
@@ -317,7 +317,7 @@ def test_real_pty_batch_restores_terminal(tmp_path, interrupt):
     assert "\x1b[?1049h\x1b[?25l" in text
     assert "WAIT_PORT" in text
     assert "\x1b[?25h\x1b[?1049l" in text
-    assert process.returncode == (130 if interrupt else 1), text
+    assert process.returncode == (130 if interrupt else 2), text
     final = text.split("\x1b[?1049l")[-1]
     assert "RESULT" in final
     assert "Report:" in final
