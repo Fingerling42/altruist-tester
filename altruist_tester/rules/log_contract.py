@@ -245,7 +245,7 @@ def check_log_contract(
             LogContractFinding(
                 status=severity_for_missing_sensor_metrics(),
                 code="LOG_CONTRACT_SENSOR_SAMPLES_MISSING",
-                message="Sensor payload samples were not observed",
+                message="Sensor measurements from debug UART were not observed",
             )
         )
     if not signals["boot_or_reset_context"]:

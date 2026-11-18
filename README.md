@@ -22,9 +22,9 @@ without a duplicate numeric input. Live changes do not reboot. Save and restart
 persists the current mode and deliberately reboots. Status snapshot preserves
 the mode and is available explicitly even with automatic logs off.
 
-Testing is a publication channel, not a debug profile. Operational support logs do not satisfy the HEALTH/measurement requirements
-of the `log_contract` rule. PASS on debug does not validate
-release. See the firmware [profile policy](../altruist-firmware/DIAGNOSTICS.md).
+Testing is a publication channel, not a debug profile. Operational support logs
+do not satisfy the HEALTH/measurement requirements of the `log_contract` rule.
+PASS on debug does not validate release. See the firmware [profile policy](../altruist-firmware/DIAGNOSTICS.md).
 
 USB acceptance checks the firmware contract after the complete capture, before
 sensor rules. A BUILD `profile=release` exits **2** (unsuitable configuration), with no sensor verdict.
@@ -39,7 +39,7 @@ continues other slots, and exits 2 if any worker has a configuration/serial erro
 (otherwise 1 for health FAIL, 0 without FAIL). A failed batch aggregate is an
 execution result; consult each slot's worker error before diagnosing hardware.
 
-Debug firmware builds with health telemetry emit a compact snapshot once per minute:
+Debug firmware emits a `[HEALTH]` runtime/link snapshot once per minute:
 
 ```text
 [HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 reset_reason=power_on_reset reset_code=1 crash_valid=0 prev_uptime=0 prev_heap=0 last_section_id=0 last_section=Idle/MainLoop
@@ -340,11 +340,12 @@ This applies to observed JSON samples. The release driver does not
 print those snapshots; the policy does not add a release measurement source
 or make VOC fields mandatory in the Insight presence preset.
 
-UART log contract:
+Debug UART log contract (`log_contract`):
 
 - verifies that firmware logs contain enough stable, machine-readable telemetry
   for acceptance testing;
-- fails when `[HEALTH]` telemetry or readable sensor samples are missing;
+- fails when `[HEALTH]` runtime/link telemetry or sensor measurements from
+  `_observations` v2 are missing;
 - warns when boot/reset context is missing from `[BOOT]` or `[HEALTH]`;
 - warns when `[BUILD]` firmware identity is missing;
 - records firmware `channel` and `profile` as context, without treating
@@ -389,13 +390,16 @@ is useful for graphs, cadence analysis, flatline debugging, and parser checks.
 
 - `events.jsonl` contains chronological tester milestones, parsed health
 observations, build metadata, payload observations, keyword alerts, upload
-observations, and identity observations. HEALTH fields follow the
+observations, and identity observations. The event type `dev_metrics` and summary
+keys `dev_metrics_*` / `last_dev_metrics` refer to parsed `[HEALTH]` records.
+HEALTH fields follow the
 [health contract](docs/sensor-log-patterns.md#health-contract); device model
 belongs to build/identity observations.
 
 While a run is active, the CLI prints live progress with elapsed time, serial
-line and byte counters, current serial silence, parsed health records, parsed
-sensor samples, and keyword alert count.
+line and byte counters, current serial silence, parsed `[HEALTH]` record count
+(`health`), parsed sensor samples, and keyword alert count. HEALTH reports
+runtime/link observations; it does not establish sensor validity or IP readiness.
 
 ## Config Files
 
@@ -407,7 +411,7 @@ sensor samples, and keyword alert count.
 - `[flatline]` for stuck-value thresholds;
 - `[observations.settings.SENSOR]` for effective per-sensor firmware intervals;
 - `[serial]` for serial silence thresholds;
-- `[log_contract]` for release-log sufficiency checks;
+- `[log_contract]` for debug UART acceptance signal checks;
 - `[uploads]` for sensors-connectivity and Robonomics Datalog delivery checks.
 
 Durations in config files use the same format as CLI durations: `30s`, `10m`,
@@ -774,7 +778,8 @@ infrastructure failures as described above.
 - The default baud rate is `115200`.
 - Configure Wi-Fi before using a run as a burn-in signal.
 - If a device stays in the Wi-Fi config portal/AP flow, the tester may report
-  missing release-log telemetry instead of useful sensor health.
+  missing debug UART HEALTH/measurement signals. Missing signals fail acceptance;
+  they do not establish AP mode or identify a sensor fault.
 - Connectivity or datalog HTTP failures can appear in `serial.log`. Stable
   `[CONNECTIVITY]` and `[DATALOG]` lines are parsed as upload observations and
   checked according to the `[uploads]` config, but they are not treated as

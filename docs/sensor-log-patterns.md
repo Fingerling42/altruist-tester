@@ -1,9 +1,9 @@
 # Sensor Log Patterns
 
 Full sensor JSON and detailed acceptance/protocol tags require debug. Release
-has operational BUILD/LOG records for support, without sensor values, PAYLOAD
-samples or periodic HEALTH. LOG operational events/status are not a measurement
-source. Runtime/forced verbosity and Testing cannot enable detailed diagnostics
+has operational BUILD/LOG records for support, without sensor values, detailed
+PAYLOAD metadata or periodic HEALTH. LOG operational events/status are not a
+measurement source. Runtime/forced verbosity and Testing cannot enable detailed diagnostics
 in release. BME680/SCD4x snapshots end with a newline.
 
 BME680 and SCD4x have a minimum 300-second fetch interval. Choose a capture
@@ -140,10 +140,13 @@ Parser guidance:
 - Let the UART log contract warn separately when reset context is absent
   from both `[BOOT]` and `[HEALTH]`.
 
-HEALTH events and `last_dev_metrics` contain runtime/link counters and optional
+The `dev_metrics` event type and summary keys `dev_metrics_*` / `last_dev_metrics`
+refer to parsed `[HEALTH]` records containing runtime/link counters and optional
 reset/crash context. HEALTH has no model, last-transmission age, or ESP
 temperature field; these are not emitted as empty event fields or summary
 temperature extrema. Device model comes from BUILD and identity observations.
+A HEALTH record does not confirm sensor validity, IP readiness or sustained
+Wi-Fi stability.
 
 ## Build Contract
 
@@ -159,8 +162,10 @@ Parser guidance:
   `profile` in run summary/report.
 - Treat `channel` as firmware provenance (`stable` or `testing`), not as a
   verbosity switch.
-- Treat `profile` as build-mode context (`release` or `debug`), not as a
-  requirement for acceptance tests.
+- Treat `profile` as the build profile (`release` or `debug`). USB sensor
+  acceptance requires debug: explicit release, unknown profiles and conflicting
+  BUILD identity fields exit 2 before sensor rules. Missing BUILD/profile
+  metadata warns and retains strict debug UART checks; it does not imply release.
 
 ## Payload Contract
 

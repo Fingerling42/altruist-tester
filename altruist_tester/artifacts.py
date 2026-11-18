@@ -142,7 +142,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 "Boot/reset:",
                 f"- boot events seen: {boot_reset.get('boot_events_count', 0)}",
                 f"- last boot event: {_format_boot_context(last_boot_context)}",
-                "- last health reset context: "
+                "- last HEALTH reset context: "
                 f"{_format_boot_context(health_boot_context)}",
             ]
         )
@@ -175,12 +175,12 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             "",
             "Health:",
             f"- config: {details.get('config') or 'built-in defaults'}",
-            f"- dev metrics seen: {details.get('metrics_seen')}",
+            f"- HEALTH records seen: {details.get('metrics_seen')}",
             f"- samples seen: {details.get('samples_seen')}",
             f"- serial lines: {details.get('serial_lines_read')}",
             f"- serial bytes: {details.get('serial_bytes_read')}",
             f"- max serial silence: {details.get('max_serial_silence_seconds')}s",
-            f"- last dev metrics: {last_metrics_text}",
+            f"- last HEALTH: {last_metrics_text}",
         ]
     )
 

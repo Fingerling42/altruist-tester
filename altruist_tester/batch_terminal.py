@@ -33,7 +33,7 @@ class BatchSlotStatus:
             if key == "wifi_age":
                 continue
             if key == "wifi" and "wifi_age" in self.fields:
-                value += f" (health age={self.fields['wifi_age']})"
+                value += f" (HEALTH age={self.fields['wifi_age']})"
             details.append(
                 value
                 if key in {"message", "progress", "wait_limit"}

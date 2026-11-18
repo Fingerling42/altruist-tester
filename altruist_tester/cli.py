@@ -1320,7 +1320,7 @@ def _format_run_progress(progress: SerialLogProgress) -> str:
         f"| lines={progress.lines_read} "
         f"bytes={progress.bytes_read} "
         f"quiet={_format_elapsed(progress.current_silence_seconds)} "
-        f"metrics={progress.dev_metrics_count} "
+        f"health={progress.dev_metrics_count} "
         f"samples={progress.sensor_samples_count} "
         f"alerts={progress.keyword_alerts_count}"
     )

@@ -187,12 +187,13 @@ was added to it.
 C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
 built-in endpoint. Success skips legacy JSON and its `[PAYLOAD]` metadata;
 both Map toggles mean JSON fallback, not unconditional dual-send. Confirm
-debug sensor JSON and HEALTH during a preflight run before starting 24 hours,
-including Insight VOC/gas when applicable. BME680 and
+debug sensor snapshots with `_observations` v2 and `[HEALTH]` during a preflight
+run before starting 24 hours, including Insight VOC/gas when applicable. BME680 and
 SCD4x have a minimum 300-second fetch interval; cover the configured interval
 with a margin; for example, allow at least 330 seconds for a 300-second interval.
-Datalog samples depend on configuration/encryption. Release intentionally lacks
-this diagnostic contract. Missing readings still fail acceptance, regardless
+Datalog upload observations depend on configuration/encryption. Release
+intentionally lacks this debug UART contract and exits 2 when identified by
+BUILD. Debug with missing measurements fails acceptance (exit 1), regardless
 of upload success.
 
 The tester combines legacy/protobuf CONNECTIVITY results. Treat a successful
@@ -355,6 +356,8 @@ second and printed when observed.
 and remaining time or `unlimited`; `OPENING` identifies an attempted open;
 `CAPTURE open=yes` shows an open port, capture duration/percentage, received
 bytes/first-byte receipt, UART silence, parsed telemetry and HEALTH/sample counts.
+The single-device progress counter `health` also counts parsed `[HEALTH]` records;
+these counts do not establish sensor validity.
 The last Wi-Fi HEALTH state includes its age; `unknown` means no observation,
 and `OK` does not prove IP readiness or sustained stability. HEALTH contains
 runtime/link counters and optional reset context, as described in the

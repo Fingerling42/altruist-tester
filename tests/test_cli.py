@@ -38,7 +38,7 @@ def test_format_run_progress_includes_elapsed_time_and_live_counters():
 
     assert _format_run_progress(progress) == (
         "Progress  10.9% (01:05/10:00) | lines=123 bytes=4567 quiet=00:12 "
-        "metrics=4 samples=28 alerts=1"
+        "health=4 samples=28 alerts=1"
     )
 
 

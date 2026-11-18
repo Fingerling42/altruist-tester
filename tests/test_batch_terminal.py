@@ -181,7 +181,7 @@ def test_tty_monitor_tracks_independent_slots_and_errors(monkeypatch, tmp_path):
         "telemetry=seen",
         "health=1",
         "samples=1",
-        "wifi=OK (health age=00:00)",
+        "wifi=OK (HEALTH age=00:00)",
         "two STATUS_ERROR",
         "exit=2",
         "Expected USB MAC AA, observed BB",

@@ -286,7 +286,8 @@ def test_write_report_includes_final_pass_details(tmp_path):
     assert "Verdict:" in report
     assert "- verdict: PASS_CANDIDATE" in report
     assert "Findings:\n- none" in report
-    assert "- last dev metrics: status=ALIVE, uptime=300s" in report
+    assert "- HEALTH records seen: True" in report
+    assert "- last HEALTH: status=ALIVE, uptime=300s" in report
     assert "- observed metrics: humidity, temperature" in report
     assert "- urban pm: warn (2 series, 1 warnings)" in report
 
@@ -339,7 +340,8 @@ def test_write_report_includes_final_fail_details(tmp_path):
     report = artifacts.report_txt.read_text(encoding="utf-8")
     assert "- verdict: FAIL" in report
     assert "[FAIL] NO_SERIAL_OUTPUT: No serial output was received" in report
-    assert "- dev metrics seen: False" in report
+    assert "- HEALTH records seen: False" in report
+    assert "- last HEALTH: none" in report
     assert "- missing metrics: temperature" in report
 
 
