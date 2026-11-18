@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from altruist_tester.cli import app
@@ -849,3 +850,85 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     assert "serial_silence" in summary["rules"]["failed_checks"]
     # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "serial_silence_checked" not in (run_dir / "events.jsonl").read_text()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "[Watchdog] Main loop stall; rebooting",
+        "Interrupt wdt timeout on CPU0",
+        "[BOOT] reset_reason=interrupt_watchdog_timeout reset_code=5",
+        "[LOG] uptime=60 level=error subsystem=system event=watchdog_restart code=4",
+        "rst:0x10 (RTCWDT_RTC_RESET)",
+        "assert failed: multi_heap_free",
+        "Guru Meditation Error: Core 0 panic'ed",
+        "Brownout detector was triggered",
+    ],
+)
+def test_epd_and_runtime_alerts_flow_through_capture_summary_and_report(
+    monkeypatch, tmp_path, failure
+):
+    from altruist_tester.serial_logger import capture_raw_serial
+    from tests.test_serial_logger import FakeClock, FakeSerial
+
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    clock = FakeClock()
+    lines = [
+        b"[DEBUG] [EPD] FULL refresh (watchdog/wake/main) pushed to panel\r\n",
+        b"[DEBUG] [EPD] Periodic watchdog: recovering display "
+        b"and scheduling FULL refresh\n",
+        b"[HEALTH] uptime=60 boot=1 heap=200000 rssi=-50 tx=1 errors=0 "
+        b"wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+        b"reset_reason=power_on_reset\n",
+        b'{"BME280":{"temperature":{"value":24,"units":"C"}}}\n',
+    ]
+    if failure:
+        lines.append(f"{failure}\n".encode())
+    fake_serial = FakeSerial(lines, clock)
+
+    def capture(_serial, artifacts, duration_seconds, **kwargs):
+        return capture_raw_serial(fake_serial, artifacts, duration_seconds, clock=clock)
+
+    patch_cli_capture(monkeypatch, SerialLogStats(lines_read=0, bytes_read=0))
+    monkeypatch.setattr("altruist_tester.cli.capture_raw_serial", capture)
+    output_dir = tmp_path / "runs"
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-metric",
+            "temperature",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    report = (run_dir / "report.txt").read_text()
+    events = [
+        json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()
+    ]
+    alerts = [event for event in events if event["type"] == "keyword_alert"]
+    assert (run_dir / "serial.log").read_bytes() == b"".join(lines)
+    assert summary["keyword_alerts_count"] == len(alerts)
+    assert result.exit_code == (1 if failure else 0), plain_output(result)
+    if failure:
+        assert summary["verdict"] == "FAIL"
+        assert summary["rules"]["failed_checks"] == ["keyword_alerts"]
+        assert alerts
+        assert all(alert["line"] == failure for alert in alerts)
+        assert "- verdict: FAIL" in report
+        assert all(alert["code"] in report for alert in alerts)
+        assert "Serial runtime failure detected:" in report
+    else:
+        assert summary["keyword_alerts"] == []
+        assert not alerts
+        assert summary["rules"]["failed_checks"] == []
+        assert summary["verdict"] == "WARN"  # No startup BUILD in this capture.
+        assert "- verdict: WARN" in report

@@ -510,6 +510,15 @@ def evaluate_rules(
                 prefix="SENSOR_CADENCE",
                 raw_findings=sensor_cadence.findings,
             ),
+            *(
+                RuleFinding(
+                    severity=alert["severity"],
+                    code=alert["code"],
+                    message=f"Serial runtime failure detected: {alert['keyword']}",
+                    rule="keyword_alerts",
+                )
+                for alert in stats.keyword_alerts
+            ),
             *_collect_runtime_findings(runtime_counters),
             *_collect_serial_silence_findings(serial_silence),
             *_collect_log_contract_findings(log_contract),

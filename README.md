@@ -251,7 +251,11 @@ Keyword alerts:
 
 - watches raw serial lines for panic, watchdog, brownout, unexpected restart,
   CPU lock-up, power glitch, eFuse error, assertion, stack, heap, and access
-  fault patterns.
+  fault patterns;
+- excludes only the two exact EPD maintenance messages documented in the
+  [keyword contract](docs/sensor-log-patterns.md#runtime-keyword-alerts);
+- includes real runtime keyword failures in summary/report findings and the
+  final FAIL verdict (CLI exit 1), while preserving raw UART.
 
 Map health GET probes select a server and do not count as upload attempts or
 failures. `health_checks` and `health_check_reasons` preserve them separately

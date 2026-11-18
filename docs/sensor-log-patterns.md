@@ -261,3 +261,23 @@ results sharing a sequence number are not merged across transport attempts.
 `health_checks` counts parsed structured health events. Current firmware emits
 these events only for failed probes; successful GETs remain in verbose Map logs.
 A zero counter therefore does not mean that no health GET was performed.
+
+
+## Runtime keyword alerts
+
+Only these complete EPD maintenance lines are exempt from WATCHDOG matching
+(case-insensitive, with surrounding whitespace ignored and an optional exact
+`[DEBUG] ` prefix emitted by the firmware logger):
+
+```text
+[EPD] FULL refresh (watchdog/wake/main) pushed to panel
+[EPD] Periodic watchdog: recovering display and scheduling FULL refresh
+```
+
+Changed messages or appended failure text retain normal detection. This is not
+an exemption for EPD logs in general. Task/interrupt watchdog failures, ESP WDT
+boot reset reasons and project watchdog restarts remain severity=fail, as do
+other crash/reset keywords. Alerts appear in events.jsonl and summary.json;
+the rule engine includes them as `keyword_alerts` findings in summary/report
+and the final FAIL verdict (CLI exit 1). Previously their severity was recorded
+but omitted from the final verdict. Raw serial.log bytes are unchanged.

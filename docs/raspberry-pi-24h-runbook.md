@@ -33,6 +33,11 @@ extraction instead of printing matching configuration lines.
   counters, serial silence, and crash/error keywords.
 - Preserve artifacts that are easy to inspect over SSH after the run.
 
+Exact EPD maintenance messages do not trigger WATCHDOG alerts. Real watchdog
+and other runtime keyword failures produce FAIL/exit 1 in summary/report;
+see the [keyword contract](sensor-log-patterns.md#runtime-keyword-alerts).
+Keep serial.log for the original evidence.
+
 ## Hardware Setup
 
 Use:
