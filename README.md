@@ -294,19 +294,22 @@ Route-specific acceptance and a debug reading contract covering freshness and
 deduplication remain planned. C3 remains legacy-only; the reviewed repository Stable
 publication is still firmware `d1623eb`.
 
-Insight BME680 JSON includes VOC index, level, daily spike count, and gas
-resistance/baseline. Numeric values are preserved, while text `voc_phrase` is
-ignored. VOC is a qualitative device-relative indicator, not calibrated
-concentration in ppm. The policy follows firmware `344f123`:
+Insight BME680 JSON includes `voc_ppb`, VOC index, level, daily spike count,
+and gas resistance/baseline. Numeric values are preserved, while text
+`voc_phrase` is ignored. VOC is a qualitative device-relative indicator, not calibrated
+laboratory TVOC. Current firmware `6360060` uses a relative MOS/ABC scale:
+`voc_ppb` is an integer 0–10000 with JSON unit `ppb`; index/level are derived
+from that scale. Older firmware without `voc_ppb` remains supported.
 
-- `voc_index`: integer 0–100; `voc_level`: integer 0–3; `voc_spikes_today`:
-  integer 0–65535. Out-of-range or fractional values fail range checks with
+- `voc_ppb`: integer 0–10000; `voc_index`: integer 0–100; `voc_level`: integer
+  0–3; `voc_spikes_today`: integer 0–65535. Out-of-range or fractional values fail range checks with
   the default profile. Range bounds can be overridden through `sensor_ranges`.
-- Constant zero or nonzero values in these three BME680 series pass flatline
+- Constant zero or nonzero values in these four BME680 series pass flatline
   checks once enough samples are present. Pollution events are not required.
-- The first four valid gas readings initialize the baseline with level/index
-  zero. These zeros are valid; UART snapshots cannot establish warmup completion
-  because capture may start late or miss readings.
+- Zero values are valid. UART snapshots cannot establish ABC baseline readiness
+  or warmup completion because capture may start late or miss readings. The
+  earlier `344f123` algorithm initialized level/index to zero for four readings;
+  that timing is not a contract for the current ABC algorithm.
 - `voc_level=-1` means unavailable VOC due to an invalid gas reading, rather
   than warmup. It produces a range WARN, even if later readings recover.
 - The daily counter can remain unchanged, saturate, increase, or decrease.

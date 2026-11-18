@@ -17,6 +17,7 @@ from tests.helpers import sample_record, sample_series
 @pytest.mark.parametrize(
     ("metric", "values"),
     [
+        ("voc_ppb", [0, 1, 2000, 10000]),
         ("voc_index", [0, 1, 50, 75, 100]),
         ("voc_level", [0, 1, 2, 3]),
         ("voc_spikes_today", [0, 1, 65535]),
@@ -30,6 +31,13 @@ def test_voc_range_boundaries(metric, values):
 @pytest.mark.parametrize(
     ("metric", "value"),
     [
+        ("voc_ppb", -1),
+        ("voc_ppb", 10001),
+        ("voc_ppb", 0.5),
+        ("voc_ppb", "invalid"),
+        ("voc_ppb", float("nan")),
+        ("voc_ppb", float("inf")),
+        ("voc_ppb", True),
         ("voc_index", -1),
         ("voc_index", 101),
         ("voc_index", 0.5),
@@ -57,6 +65,9 @@ def test_voc_unavailable_is_diagnostic_even_for_one_sample():
 @pytest.mark.parametrize(
     ("metric", "value"),
     [
+        ("voc_ppb", 0),
+        ("voc_ppb", 1234),
+        ("voc_ppb", 10000),
         ("voc_index", 0),
         ("voc_index", 100),
         ("voc_level", 0),
@@ -86,6 +97,8 @@ def test_constant_voc_indicators_do_not_require_pollution_or_variation(
         ("BME680", "temperature", 25),
         ("SCD4x", "co2", 600),
         ("other", "voc_index", 0),
+        ("other", "voc_ppb", 0),
+        ("other", "voc_ppb", 1234),
     ],
 )
 def test_voc_exception_does_not_relax_other_series(sensor, metric, value):
@@ -190,6 +203,7 @@ def test_invalid_constant_index_fails_ranges_despite_flatline_exception():
 
 def test_json_preserves_voc_and_gas_evidence_including_unavailable_level():
     metrics = dict(
+        voc_ppb=0,
         voc_index=0,
         voc_level=-1,
         voc_spikes_today=7,
@@ -200,7 +214,13 @@ def test_json_preserves_voc_and_gas_evidence_including_unavailable_level():
         "BME680": {
             metric: {
                 "value": value,
-                "units": "Ohm" if metric.startswith("gas_") else "",
+                "units": (
+                    "Ohm"
+                    if metric.startswith("gas_")
+                    else "ppb"
+                    if metric == "voc_ppb"
+                    else ""
+                ),
             }
             for metric, value in metrics.items()
         }
@@ -210,6 +230,9 @@ def test_json_preserves_voc_and_gas_evidence_including_unavailable_level():
     assert {sample.metric: sample.value for sample in samples} == metrics
     assert all(
         sample.unit == "Ohm" for sample in samples if sample.metric.startswith("gas_")
+    )
+    assert (
+        next(sample for sample in samples if sample.metric == "voc_ppb").unit == "ppb"
     )
     assert all(sample.source == "serial" for sample in samples)
 
@@ -295,3 +318,109 @@ def test_single_voc_value_does_not_establish_a_sufficient_series():
     )
     assert finding.status == "warn"
     assert "not enough samples" in finding.message
+
+
+@pytest.mark.parametrize("value", [0, 1234, 10000])
+def test_hour_of_constant_ppb_passes_rules_engine(value):
+    result = _evaluate_voc(
+        [dict(voc_ppb=value, voc_index=0, voc_level=0, voc_spikes_today=0)] * 13
+    )
+    assert result.verdict == "PASS_CANDIDATE"
+    assert result.reports.sensor_flatlines.status == "ok"
+    assert result.reports.sensor_ranges.status == "ok"
+
+
+@pytest.mark.parametrize("value", [-1, 10001])
+def test_hour_of_invalid_constant_ppb_fails_ranges(value):
+    result = _evaluate_voc(
+        [dict(voc_ppb=value, voc_index=0, voc_level=0, voc_spikes_today=0)] * 13
+    )
+    assert result.failed_checks == ("sensor_ranges",)
+    assert result.reports.sensor_ranges.failure_count == 13
+
+
+def test_ppb_constants_still_fail_when_updates_are_missing():
+    result = _evaluate_voc(
+        [
+            dict(voc_ppb=0, voc_index=0, voc_level=0, voc_spikes_today=0),
+            *([dict(voc_index=0, voc_level=0, voc_spikes_today=0)] * 11),
+            dict(voc_ppb=0, voc_index=0, voc_level=0, voc_spikes_today=0),
+        ]
+    )
+    assert result.failed_checks == ("sensor_cadence",)
+
+
+def test_single_ppb_value_is_insufficient():
+    finding = check_series_flatline(
+        "BME680", "voc_ppb", [sample_record("BME680", "voc_ppb", 0, 0)]
+    )
+    assert finding.status == "warn"
+
+
+def test_ppb_range_uses_existing_override_mechanism(tmp_path):
+    from altruist_tester.config import load_tester_config
+
+    path = tmp_path / "profile.toml"
+    path.write_text("[sensor_ranges.voc_ppb]\nminimum = 0\nmaximum = 12000\n")
+    config = load_tester_config(path)
+    assert (
+        check_sensor_value_range("voc_ppb", 11000, ranges=config.sensor_ranges).status
+        == "ok"
+    )
+    assert (
+        check_sensor_value_range("voc_ppb", 12001, ranges=config.sensor_ranges).status
+        == "fail"
+    )
+
+
+@pytest.mark.parametrize("value", ["invalid", None, True, "NaN", "Infinity"])
+def test_parser_does_not_emit_nonnumeric_ppb(value):
+    payload = {"BME680": {"voc_ppb": {"value": value, "units": "ppb"}}}
+    assert parse_sensor_values(json.dumps(payload)) == []
+
+
+@pytest.mark.parametrize("ppb, exit_code", [(0, 0), (1234, 0), (-1, 1), (10001, 1)])
+def test_cli_hour_of_ppb_is_preserved_in_report(monkeypatch, tmp_path, ppb, exit_code):
+    from typer.testing import CliRunner
+
+    from altruist_tester.cli import app
+    from tests.cli_helpers import patch_cli_capture, release_log_stats
+
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    series = sample_series(
+        *[
+            sample_record("BME680", "voc_ppb", ppb, offset)
+            for offset in range(0, 3601, 300)
+        ]
+    )
+    stats = replace(
+        release_log_stats(sensor_series=series),
+        first_line_elapsed_seconds=0,
+        last_line_elapsed_seconds=3600,
+        max_interline_gap_seconds=60,
+    )
+    patch_cli_capture(monkeypatch, stats)
+    finished_at = datetime.fromisoformat(series.by_key[("BME680", "voc_ppb")][-1].ts)
+    monkeypatch.setattr("altruist_tester.cli.utc_now", lambda: finished_at)
+    output_dir = tmp_path / "runs"
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "1h",
+            "--expect-metric",
+            "voc_ppb",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+    assert result.exit_code == exit_code, result.output
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["sensor_flatlines"]["status"] == "ok"
+    assert summary["sensor_ranges"]["status"] == ("ok" if exit_code == 0 else "fail")
+    assert "voc_ppb" in (run_dir / "report.txt").read_text()

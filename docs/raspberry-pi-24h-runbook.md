@@ -185,13 +185,18 @@ Kafka ingress acceptance. CPS endpoint authorization and NodeId/anchor
 provisioning differ from legacy `setDevices`. Route-specific acceptance is
 pending. C3 remains legacy-only; reviewed repository Stable is `d1623eb`.
 
-For observed Insight BME680 JSON, constant `voc_index`, `voc_level`, and
-`voc_spikes_today` are allowed; do not provoke pollution to make them change.
-Default ranges require integer index 0–100, level 0–3, and daily count 0–65535.
+For observed Insight BME680 JSON, constant `voc_ppb`, `voc_index`, `voc_level`,
+and `voc_spikes_today` are allowed; do not provoke pollution to make them change.
+Default ranges require integer `voc_ppb` 0–10000, index 0–100, level 0–3, and
+daily count 0–65535. Bounds use the existing `sensor_ranges` configuration.
+`voc_ppb` (JSON unit `ppb`) is a relative MOS/ABC scale, not laboratory TVOC.
+Older firmware without the field remains supported by ordinary acceptance;
+current diagnostic procedures require it.
 Level -1 gives WARN for unavailable VOC (invalid gas reading), including a
 transient occurrence; inspect raw evidence and gas resistance/baseline.
-Warmup produces level/index zero during the first four valid gas readings;
-late UART capture cannot prove warmup completion. The daily count may reset
+The earlier `344f123` algorithm emitted four initial zero level/index readings;
+current ABC firmware has different baseline initialization. Late UART capture
+cannot prove warmup completion or ABC readiness. The daily count may reset
 at the device's local midnight/time synchronization or survive a reboot;
 no monotonicity is required. Runtime reboot failures and gas diagnostic
 flatline/cadence checks still apply. These rules do not add readable release

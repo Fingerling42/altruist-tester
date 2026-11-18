@@ -109,6 +109,7 @@ DEFAULT_SENSOR_RANGES: dict[str, SensorRange] = {
     "no2": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
     "fast_aqi": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
     "epa_aqi": SensorRange("gas_metrics", minimum=0.0, non_negative=True),
+    "voc_ppb": SensorRange("voc_ppb", minimum=0.0, maximum=10000.0),
     "voc_index": SensorRange("voc_index_au", minimum=0.0, maximum=100.0),
     "voc_level": SensorRange("voc_level", minimum=0.0, maximum=3.0),
     "voc_spikes_today": SensorRange("voc_daily_count", minimum=0.0, maximum=65535.0),
@@ -177,7 +178,7 @@ def check_sensor_value_range(
         )
 
     rule = ranges.get(metric)
-    if metric in {"voc_index", "voc_level", "voc_spikes_today"}:
+    if metric in {"voc_ppb", "voc_index", "voc_level", "voc_spikes_today"}:
         if not numeric_value.is_integer():
             return SensorRangeCheck(
                 status="fail",

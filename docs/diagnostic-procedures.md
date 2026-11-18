@@ -175,8 +175,10 @@ Off requires zero bytes. Errors/Events require structurally valid LOG/BUILD and
 no detailed tags/sensor JSON; Errors forbids non-error automatic events. An
 empty Errors/Events window is NOT_CHECKED, not a vacuous successful test of event
 filtering. Debug requires HEALTH and recognized full sensor JSON; Insight also
-requires all five BME680 VOC/gas fields. These checks do not run the normal
-flatline, upload, freshness or full sensor acceptance rules.
+requires all six BME680 VOC/gas fields, including `voc_ppb` (current firmware).
+Older firmware without `voc_ppb` remains supported by ordinary acceptance, but
+does not satisfy this current diagnostic predicate. These checks do not run
+the normal flatline, upload, freshness or full sensor acceptance rules.
 
 ## Exit codes and software validation
 

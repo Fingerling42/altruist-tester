@@ -797,6 +797,7 @@ def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path)
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)
     values = {
+        "voc_ppb": 0,
         "voc_index": 0,
         "voc_level": -1,
         "voc_spikes_today": 7,
@@ -811,7 +812,7 @@ def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path)
     stats = capture_raw_serial(FakeSerial([raw_line], clock), artifacts, 1, clock=clock)
     samples = _read_jsonl(artifacts.samples_jsonl)
     assert {sample["metric"]: sample["value"] for sample in samples} == values
-    assert stats.sensor_series.count() == 5
+    assert stats.sensor_series.count() == 6
     assert artifacts.serial_log.read_bytes() == raw_line
 
 

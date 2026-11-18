@@ -161,9 +161,10 @@ def check_series_flatline(
             message=f"{sensor}/{metric} has not enough samples for flatline check",
         )
 
-    # Derived status and daily counts need not vary, even in polluted air.
+    # Relative VOC scale, derived status and daily counts need not vary.
     # Invalid values and the unavailable sentinel are diagnosed by range checks.
     if canonical_sensor_name(sensor) == "bme680" and canonical_metric in {
+        "voc_ppb",
         "voc_index",
         "voc_level",
         "voc_spikes_today",

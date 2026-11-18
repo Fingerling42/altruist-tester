@@ -102,20 +102,23 @@ Parser guidance:
   finite numeric `value`.
 - Keep sensor and metric names as printed by firmware at this step.
 
-Current Insight BME680 JSON also carries numeric `voc_index`, `voc_level`,
-`voc_spikes_today`, `gas_resistance`, and `gas_baseline`, plus text `voc_phrase`.
-The numeric parser preserves the first five and ignores the phrase, including
-preserving `voc_level=-1` and zero gas values for diagnosis. Resistance/baseline
+Current Insight BME680 JSON also carries numeric `voc_ppb`, `voc_index`,
+`voc_level`, `voc_spikes_today`, `gas_resistance`, and `gas_baseline`, plus text
+`voc_phrase`. The numeric parser preserves all six and ignores the phrase,
+including preserving `voc_level=-1` and zero gas values for diagnosis. Resistance/baseline
 use Ohm; the qualitative VOC index is not concentration in ppm.
 
-Acceptance follows firmware `344f123` (`sensors/bmx680i2c_sensor.cpp`): index
-0–100, level 0–3, and daily counter 0–65535 are integer values. Default range
-checks fail values outside these bounds and fractional values. Level -1 is
+Current firmware `6360060` (`sensors/bmx680i2c_sensor.cpp`) adds integer
+`voc_ppb` 0–10000 with unit `ppb`: a relative MOS/ABC scale, not laboratory
+TVOC. Index 0–100 and level 0–3 derive from that scale; daily counter 0–65535
+is also integer. Older snapshots without `voc_ppb` remain supported; it is
+not mandatory in the Insight presence preset. Default range checks fail values outside these bounds and fractional values. Level -1 is
 an unavailable-reading sentinel and produces WARN; it is not warmup. The
-first four valid gas readings initialize the baseline and emit level/index
-zero. No elapsed-time warmup inference is possible from partial UART capture.
+earlier `344f123` algorithm initialized level/index to zero for four readings;
+this does not describe ABC readiness in current firmware. No elapsed-time
+warmup inference is possible from partial UART capture.
 
-The three BME680 VOC indicator/counter series need not vary. Constant zero or
+The four BME680 VOC scale/indicator/counter series need not vary. Constant zero or
 nonzero values pass flatline checks with enough samples; gas resistance and
 baseline retain existing diagnostic checks. Cadence checks still apply to all
 observed series. The daily counter saturates at 65535, resets by the device's

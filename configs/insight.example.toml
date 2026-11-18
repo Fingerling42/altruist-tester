@@ -26,9 +26,16 @@ name = "co2_ppm"
 minimum = 350.0
 maximum = 10000.0
 
-# BME680 VOC indicator/counter constants are allowed; cadence still applies.
-# Default ranges: integer index 0..100, level 0..3 (unavailable -1 warns),
-# daily count 0..65535. VOC is qualitative, not ppm; fields are not mandatory.
+# BME680 VOC scale/indicator/counter constants are allowed; cadence still applies.
+# Default integer ranges: voc_ppb 0..10000, index 0..100, level 0..3
+# (unavailable -1 warns), daily count 0..65535. voc_ppb is relative MOS/ABC,
+# not laboratory TVOC; older firmware may omit it. Fields are not mandatory.
+# Override these bounds through the existing sensor_ranges mechanism.
+[sensor_ranges.voc_ppb]
+name = "voc_ppb"
+minimum = 0.0
+maximum = 10000.0
+
 [flatline]
 window = "30m"
 fail_after = "1h"

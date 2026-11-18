@@ -24,6 +24,7 @@ SERIES = {
             "temperature",
             "humidity",
             "pressure",
+            "voc_ppb",
             "voc_index",
             "voc_level",
             "voc_spikes_today",
@@ -37,7 +38,14 @@ SERIES = {
     "SDS": frozenset({"P1", "P2"}),
 }
 VOC = frozenset(
-    {"voc_index", "voc_level", "voc_spikes_today", "gas_resistance", "gas_baseline"}
+    {
+        "voc_ppb",
+        "voc_index",
+        "voc_level",
+        "voc_spikes_today",
+        "gas_resistance",
+        "gas_baseline",
+    }
 )
 TAGS = (
     "BUILD",

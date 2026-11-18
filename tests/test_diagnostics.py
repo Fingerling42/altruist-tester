@@ -30,7 +30,14 @@ BUILD = (
     "[BUILD] version=R-INS_test-testing+abc1234 channel=testing "
     "commit=abc1234 model=insight target=esp32c6 language=en profile=debug"
 )
-VOC = {"voc_index", "voc_level", "voc_spikes_today", "gas_resistance", "gas_baseline"}
+VOC = {
+    "voc_ppb",
+    "voc_index",
+    "voc_level",
+    "voc_spikes_today",
+    "gas_resistance",
+    "gas_baseline",
+}
 SENSOR = json.dumps({"BME680": {key: {"value": 1, "units": ""} for key in VOC}})
 HEALTH = (
     "[HEALTH] uptime=100 boot=1 heap=100 rssi=-50 tx=1 errors=0 "
@@ -114,7 +121,7 @@ def test_uart_json_uses_sensor_parser_not_api_shape():
     for index in range(0, len(data), 7):
         summary.feed(data[index : index + 7])
     value = summary.finish()
-    assert value["sensor_json_records"] == 5
+    assert value["sensor_json_records"] == 6
     assert uart_check(value, "debug", "insight", None)["status"] == "PASS"
     assert value["fields"]["boot"] == 1
 
@@ -480,7 +487,7 @@ def test_synthetic_extraction_has_no_credential_output(tmp_path, capsys):
         json.loads(path.read_text()) for path in output.glob("*/extracted.json")
     ]
     assert summaries[0]["fields"]["device_id"] == ID
-    assert summaries[0]["sensor_json_records"] == 5
+    assert summaries[0]["sensor_json_records"] == 6
     assert SECRET not in "".join(path.read_text() for path in output.rglob("*.json"))
 
 
@@ -552,7 +559,7 @@ def test_capture_saves_startup_and_bounded_window_without_live_device(tmp_path):
         Stream(), 0.5, 2, attempt, clock=clock.now, sleep=clock.sleep
     )
     assert startup["fields"]["commit"] == COMMIT
-    assert window["sensor_json_records"] == 5
+    assert window["sensor_json_records"] == 6
     assert SECRET not in json.dumps(window)
     assert SECRET.encode() in (attempt.path / "serial.log").read_bytes()
     assert (attempt.path / "serial.log").stat().st_mode & 0o777 == 0o600
@@ -1036,3 +1043,12 @@ def test_missing_stable_build_is_unverified_not_wrong_firmware(tmp_path):
         "status": "NOT_CHECKED",
         "reason": "build_witness_unavailable",
     }
+
+
+def test_current_insight_diagnostics_require_ppb():
+    payload = json.loads(SENSOR)
+    del payload["BME680"]["voc_ppb"]
+    summary = UartSummary()
+    summary.feed((HEALTH + "\n" + json.dumps(payload) + "\n").encode())
+    finding = uart_check(summary.finish(), "debug", "insight", None)
+    assert finding["status"] == "FAIL"
