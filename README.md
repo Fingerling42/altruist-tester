@@ -52,29 +52,8 @@ The tester parses the base runtime fields even if reset context is absent, but
 the release log contract warns when neither `[BOOT]` nor `[HEALTH]` exposes
 reset context.
 
-## Firmware Profile Verification
-
-On 2026-11-13, firmware `7d961c4` was built and flashed on four ESP32-C6 EN
-Testing devices: Urban and Insight, each with debug and release profiles.
-Short UART checks confirmed debug HEALTH and sensor JSON, including all five
-Insight VOC/gas fields. Both release devices were silent for 20 seconds in Off;
-the checked Errors/Events windows contained no detailed tags or sensor JSON.
-HTTP checks covered allowed log modes, status snapshot, Save and restart
-persistence, and loss of unsaved live changes after reboot. Original log settings
-were restored. Full logs and binaries are retained locally under
-`runs/l2a-20261113T112800Z/` (ignored by Git).
-
-This verifies the selected C6 EN Testing builds only. The full target/language/
-channel matrix, maximum compile-time logging flags, browser rendering and
-JavaScript execution, authenticated `/serial`, encrypted/successful-protobuf
-paths, SD/Improv/LoRa/recovery scenarios and long-duration acceptance remain
-open. Local flashing did not publish firmware artifacts. Those historical checks did
-not establish freshness or deduplication; the new L3 contract is described below.
-
-For the maintained safe extraction, bounded UART capture and separate HTTP/reboot
-checks, see [diagnostic procedures](docs/diagnostic-procedures.md). The replacement
-procedures have synthetic software coverage; their hardware confirmation is still
-pending. Historical hardware results above remain evidence for their original scripts.
+For safe extraction, bounded UART capture and separate HTTP/reboot checks, see
+[diagnostic procedures](docs/diagnostic-procedures.md).
 
 ## Quick Start
 
@@ -126,7 +105,7 @@ Use `--output-dir` to write artifacts somewhere other than `runs/`:
 uv run altruist-tester run --auto --duration 24h --output-dir /data/altruist-runs
 ```
 
-For the first real 24-hour Raspberry Pi burn-in run, use the operational
+For a 24-hour Raspberry Pi burn-in run, use the operational
 checklist in [docs/raspberry-pi-24h-runbook.md](docs/raspberry-pi-24h-runbook.md).
 It covers serial-port selection, `tmux`, live checks, and post-run inspection.
 
@@ -313,17 +292,17 @@ Payload observations:
   accepts `channel=datalog` until the first connectivity sample, then suppresses
   datalog samples for the rest of the run;
 - also accepts full nested sensor JSON snapshots, including after UART text
-  prefixes. Without an L3 marker these retain legacy payload-source selection
-  behavior, including no automatic fallback after connectivity stops. Versioned
-  L3 selects its own source and deduplicates successful measurement identities;
-  see [freshness and deduplication](#measurement-freshness-and-deduplication-l3).
+  prefixes. Without an `_observations` marker these retain legacy payload-source
+  selection behavior, including no automatic fallback after connectivity stops.
+  Versioned UART telemetry selects its own source and deduplicates successful
+  measurement identities;
+  see [freshness and deduplication](#measurement-freshness-and-deduplication).
 
-Firmware compatibility checked on 2026-10-22 (`344f123`, tester `f0fa39d`):
-current C6 Map defaults prefer protobuf using a built-in endpoint when the
+C6 Map defaults prefer protobuf using a built-in endpoint when the
 custom URL is empty. A successful protobuf POST skips legacy JSON formatting
 and its `[PAYLOAD] sample=` output, even with both Map toggles enabled.
 Readable datalog samples depend on configuration/encryption, and full local
-sensor JSON is debug-only in the reviewed drivers. A release run with BUILD but
+sensor JSON is debug-only in the firmware drivers. A release run with BUILD but
 without readable measurements exits 2 as an unsuitable USB acceptance
 configuration. `[PROTO]` is envelope-construction metadata and cannot substitute
 for readings.
@@ -331,15 +310,12 @@ for readings.
 Current CONNECTIVITY statistics combine legacy JSON and protobuf HTTP results.
 They cannot prove which route succeeded, CPS finalization, or frontend
 visibility. Cloud HTTP `202` confirms ingress after Kafka acknowledgment.
-Route-specific acceptance remains planned. Versioned debug UART observations
-now provide the L3 freshness/deduplication contract described below. C3 remains
-legacy-only for uplink; the reviewed repository Stable
-publication is still firmware `d1623eb`.
+Route-specific acceptance is not supported. C3 uses legacy uplink only.
 
 Insight BME680 JSON includes `voc_ppb`, VOC index, level, daily spike count,
 and gas resistance/baseline. Numeric values are preserved, while text
 `voc_phrase` is ignored. VOC is a qualitative device-relative indicator, not calibrated
-laboratory TVOC. Current firmware `6360060` uses a relative MOS/ABC scale:
+laboratory TVOC. The firmware uses a relative MOS/ABC scale:
 `voc_ppb` is an integer 0–10000 with JSON unit `ppb`; index/level are derived
 from that scale. Older firmware without `voc_ppb` remains supported.
 
@@ -349,9 +325,7 @@ from that scale. Older firmware without `voc_ppb` remains supported.
 - Constant zero or nonzero values in these four BME680 series pass flatline
   checks once enough samples are present. Pollution events are not required.
 - Zero values are valid. UART snapshots cannot establish ABC baseline readiness
-  or warmup completion because capture may start late or miss readings. The
-  earlier `344f123` algorithm initialized level/index to zero for four readings;
-  that timing is not a contract for the current ABC algorithm.
+  or warmup completion because capture may start late or miss readings.
 - `voc_level=-1` means unavailable VOC due to an invalid gas reading, rather
   than warmup. It produces a range WARN, even if later readings recover.
 - The daily counter can remain unchanged, saturate, increase, or decrease.
@@ -362,7 +336,7 @@ from that scale. Older firmware without `voc_ppb` remains supported.
   existing range/flatline/cadence rules; they do not prove calibrated VOC
   concentration. Other measurements and cadence rules are unchanged.
 
-This applies to observed JSON samples. The reviewed release driver does not
+This applies to observed JSON samples. The release driver does not
 print those snapshots; the policy does not add a release measurement source
 or make VOC fields mandatory in the Insight presence preset.
 
@@ -824,7 +798,6 @@ uv run altruist-tester run --help
 uv run pytest
 ```
 
-
 ## Malformed PAYLOAD diagnostics
 
 Missing, unknown or truncated PAYLOAD channels are counted separately from valid
@@ -834,15 +807,15 @@ UART line numbers. Raw serial bytes and existing verdict/exit-code policies are
 unchanged. See [the parser contract](docs/sensor-log-patterns.md#malformed-payload-diagnostics)
 for fields, limits and compatibility.
 
+## Measurement freshness and deduplication
 
-### Measurement freshness and deduplication (L3)
-
-New debug firmware supplies versioned UART sensor snapshots with successful
-measurement sequence/time and boot identity. Repeated cached values no longer
+Debug firmware supplies versioned UART sensor snapshots with successful
+measurement sequence/time and boot identity. Repeated cached values do not
 count as new measurements; new measurements with equal values still count.
-The first L3 record selects the independent source for the capture, and malformed
-L3 cannot silently fall back to PAYLOAD or old JSON. Historical firmware remains
-supported by its existing parser, without an L3 freshness guarantee.
+The first versioned observation selects the independent source for the capture.
+Malformed versioned observations cannot silently fall back to PAYLOAD or old
+JSON. Firmware without versioned observations remains supported by the legacy
+parser, without a freshness guarantee.
 
 Freshness uses the configured cadence interval and missed-count thresholds;
 current read failures or an invalid contract produce FAIL/exit 1. Cadence and
@@ -850,11 +823,7 @@ flatline use projected measurement time, while artifacts retain host receipt
 time and provenance. `summary.sensor_observations` shows the selected source,
 repeat/loss counters, sensor states and last successful ages. Previously captured
 legacy sample lines remain diagnostic artifacts after selection. See the
-[versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations-l3).
+[versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations).
 
-For a bounded smoke check, capture Urban/Insight simultaneously for 9 minutes
-with their existing profiles and expected MACs. With a 300-second fetch interval,
-this gives a chance to observe repeated successful updates; a short run does not
-prove long-term flatline behavior, the full transport matrix, or hour-long VOC
-acceptance. Keep complete run directories and the exact source diff alongside
-firmware binaries when builds contain uncommitted changes.
+Choose a capture window that covers the configured sensor intervals with a
+margin. Short checks do not establish long-term flatline behavior or VOC stability.

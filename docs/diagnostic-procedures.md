@@ -1,14 +1,9 @@
 # Firmware diagnostic procedures
 
-Maintained replacements for the one-off L2a helpers live in
-`altruist_tester/diagnostics.py` and `diagnostic_checks.py`. Historical archives
-and captured attempts are unchanged. These procedures supplement normal tester
-acceptance; their PASS does not imply acceptance of a device, delivery route or
-all firmware targets.
-
-The procedures have software tests with synthetic UART/HTTP and fake transports.
-They still require a separately approved hardware run. The earlier hardware
-PASS on firmware `7d961c4` does not validate this replacement implementation.
+Firmware diagnostic commands are implemented in
+`altruist_tester/diagnostics.py` and `diagnostic_checks.py`. They supplement normal
+tester acceptance; their PASS applies only to the requested checks and does not
+imply acceptance of a device, delivery route or all firmware targets.
 
 ## Safe extraction without devices
 

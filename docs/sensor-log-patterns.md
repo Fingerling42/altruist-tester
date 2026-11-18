@@ -4,35 +4,18 @@ Full sensor JSON and detailed acceptance/protocol tags require debug. Release
 has operational BUILD/LOG records for support, without sensor values, PAYLOAD
 samples or periodic HEALTH. LOG operational events/status are not a measurement
 source. Runtime/forced verbosity and Testing cannot enable detailed diagnostics
-in release. BME680/SCD4x snapshots end with a newline; parser behavior is unchanged.
+in release. BME680/SCD4x snapshots end with a newline.
 
-Short debug/release checks completed on 2026-11-13 for firmware `7d961c4`,
-Urban/Insight C6 EN Testing only. See [verification scope and remaining checks](../README.md#firmware-profile-verification).
-Those historical checks did not verify freshness or deduplication. At that revision, BME680 and SCD4x
-have a minimum 300-second fetch interval; a 150-second capture can miss the next
-sensor JSON. A 330-second capture of the tested 300-second configuration
-confirmed both snapshots and all five VOC/gas fields. Use the actual configured
-interval when choosing a capture window.
-
-The historical examples below are not evidence for the modified firmware.
+BME680 and SCD4x have a minimum 300-second fetch interval. Choose a capture
+window that covers the actual configured interval with a margin.
 
 Use [safe diagnostic extraction](diagnostic-procedures.md#safe-extraction-without-devices)
 for model-facing summaries. It reuses the UART parser but emits only fixed metric
 names/counts and validated identity/status fields; unknown keys, raw_fields,
 credentials and entire matching lines are never summary fields.
 
-Source run: `runs/2026-06-11T12-27-51Z_ttyACM0`
-
-Run summary:
-
-- duration: `10m`
-- serial lines: `2392`
-- keyword alerts: `0`
-- observed full sensor JSON snapshots: `17`
-
-The captured JSON examples are stored in
-`tests/fixtures/sensor_json_snapshots.log`. Historical `Datalog data` lines
-are not current compact-reading inputs.
+JSON examples are available in `tests/fixtures/sensor_json_snapshots.log`.
+Legacy `Datalog data` lines are not compact-reading inputs.
 
 ## Full Sensor JSON Snapshot
 
@@ -53,9 +36,8 @@ Firmware source:
 - `sensors/tiny_gps_sensor.cpp`
 - `sensors/http_altruist_sensor.cpp`
 
-Those sensor fetchers update the shared `sensors_data` document. In the local
-drivers reviewed at firmware `344f123` (2026-10-22), full UART JSON serialization
-is guarded by `ALTRUIST_BUILD_DEBUG`; it is not a release reading contract.
+Those sensor fetchers update the shared `sensors_data` document. Full UART
+JSON serialization is guarded by `ALTRUIST_BUILD_DEBUG`; it is not a release reading contract.
 The common measurement shape is:
 
 ```json
@@ -70,7 +52,7 @@ The common measurement shape is:
 }
 ```
 
-Observed sensors and metrics in the 10-minute Urban run:
+Urban JSON sensor fields include:
 
 - `BME280.humidity`, unit `%`
 - `BME280.temperature`, unit `°C`
@@ -108,14 +90,12 @@ Current Insight BME680 JSON also carries numeric `voc_ppb`, `voc_index`,
 including preserving `voc_level=-1` and zero gas values for diagnosis. Resistance/baseline
 use Ohm; the qualitative VOC index is not concentration in ppm.
 
-Current firmware `6360060` (`sensors/bmx680i2c_sensor.cpp`) adds integer
+BME680 firmware (`sensors/bmx680i2c_sensor.cpp`) emits integer
 `voc_ppb` 0–10000 with unit `ppb`: a relative MOS/ABC scale, not laboratory
 TVOC. Index 0–100 and level 0–3 derive from that scale; daily counter 0–65535
 is also integer. Older snapshots without `voc_ppb` remain supported; it is
 not mandatory in the Insight presence preset. Default range checks fail values outside these bounds and fractional values. Level -1 is
-an unavailable-reading sentinel and produces WARN; it is not warmup. The
-earlier `344f123` algorithm initialized level/index to zero for four readings;
-this does not describe ABC readiness in current firmware. No elapsed-time
+an unavailable-reading sentinel and produces WARN; it is not warmup. No elapsed-time
 warmup inference is possible from partial UART capture.
 
 The four BME680 VOC scale/indicator/counter series need not vary. Constant zero or
@@ -196,7 +176,7 @@ The payload contract is built from the same `sensors_data` document. It applies
 share/encryption flags and may choose one temperature/humidity source when both
 `BME680` and `SCD4x` are present.
 
-Observed aliases in the 10-minute Urban run:
+Compact Urban measurement aliases:
 
 - `h`: humidity
 - `t`: temperature
@@ -222,8 +202,8 @@ Parser guidance:
   `channel=sensors-connectivity` or `channel=datalog`.
 - Capture accepts datalog samples until the first connectivity sample, then
   suppresses datalog samples for the rest of the run. Full JSON snapshots
-  bypass this legacy selection. Versioned L3 snapshots select a single independent
-  acceptance source instead, as described below.
+  bypass this legacy selection. Versioned UART snapshots select a single
+  independent acceptance source instead, as described below.
 - Treat `custom-http` payloads as observations, not sensor-series input.
 - For plain unencrypted samples with parseable `payload_len`, require an exact
   length match before creating readings. Missing/unparseable lengths currently
@@ -232,13 +212,11 @@ Parser guidance:
   metrics.
 - Treat `channel`, `encoding`, `encrypted`, `payload_len`, and
   `sample_available` as payload metadata.
-- Full JSON snapshots preserve physical sensor names and units. Historical release
-  runs needed readable samples: encrypted payloads may intentionally omit them, and
-  current C6 protobuf success skips legacy payload formatting/logging. Use debug
-  local sensor JSON; versioned L3 provides freshness/deduplication metadata.
-  `[PROTO]` cannot
-  replace sensor readings.
-
+- Full JSON snapshots preserve physical sensor names and units. Encrypted
+  payloads may omit readable samples, and C6 protobuf success skips legacy
+  payload formatting/logging. Use debug local sensor JSON; versioned UART
+  telemetry provides freshness/deduplication metadata. `[PROTO]` cannot replace
+  sensor readings.
 
 ## Malformed PAYLOAD diagnostics
 
@@ -280,7 +258,6 @@ results sharing a sequence number are not merged across transport attempts.
 these events only for failed probes; successful GETs remain in verbose Map logs.
 A zero counter therefore does not mean that no health GET was performed.
 
-
 ## Runtime keyword alerts
 
 Only these complete EPD maintenance lines are exempt from WATCHDOG matching
@@ -297,19 +274,17 @@ an exemption for EPD logs in general. Task/interrupt watchdog failures, ESP WDT
 boot reset reasons and project watchdog restarts remain severity=fail, as do
 other crash/reset keywords. Alerts appear in events.jsonl and summary.json;
 the rule engine includes them as `keyword_alerts` findings in summary/report
-and the final FAIL verdict (CLI exit 1). Previously their severity was recorded
-but omitted from the final verdict. Raw serial.log bytes are unchanged.
+and the final FAIL verdict (CLI exit 1). Raw serial.log bytes are unchanged.
 
+## Versioned debug UART observations
 
-## Versioned debug UART observations (L3)
-
-The L3 firmware extends the existing sensor/metric/value/units JSON shape with
+Debug firmware extends the existing sensor/metric/value/units JSON shape with
 `_observations` at the root and `observation` per numeric metric. Each line is
 one snapshot of **one physical sensor**, not a promise to deliver every reading.
 Only debug emits this schema, independently of encryption, connectivity and
 protobuf success. Metadata is assembled in a separate UART document; API,
 uplink and SD data retain their existing shape. BME280/BMP280, BME680, SCD4x,
-SDS and ICS43434 are supported; experimental radiation is outside L3.
+SDS and ICS43434 are supported; experimental radiation does not emit this schema.
 
 ```json
 {"BME280":{"temperature":{"value":24,"units":"°C","observation":{"seq":"7","measured_ms":"300010","state":"ok"}}},"_observations":{"version":1,"device_id":"1051DB010C70","boot_id":"1a2b-3c4d","model":"urban","sensor":"BME280","snapshot_seq":"12","time_ms":"330000","state":"ok","errors":0,"reason":"none"}}
@@ -330,13 +305,13 @@ JSON integers. It validates clocks through 2^42−1 ms and sequences through
 2^53−1; booleans and negative counters are invalid. Device clocks use
 `esp_timer_get_time`, so they do not wrap with 32-bit `millis()`. Numeric values
 must be finite (integer values within ±(2^53−1)); original units are preserved,
-including historical BME280 pressure labeling and current SDS µg/m³.
+including legacy BME280 pressure labeling and current SDS µg/m³.
 
 Each numeric metric carries its successful update sequence, successful update
 milliseconds, and state. New equal values increment the sequence. Reprinting
 or a failed read preserves successful identity/time. Errors mark cached metrics
 as failed and increment the sensor error count; partial invalid numeric values
-can mark one metric failed. `voc_level=-1` retains the existing M2 unavailable
+can mark one metric failed. `voc_level=-1` retains the unavailable-reading
 WARN, and VOC indicator/counter flatline exceptions remain unchanged. The schema
 accepts `never`, `warming`, `waiting`, `ok`, `error` sensor states and all except
 `never` for metrics with a successful identity. Current drivers emit `never`
@@ -356,7 +331,7 @@ active supported sensor, also at first observation and after a reported error.
 Blocking existing sensor/network work may delay it; this is not a hard realtime
 guarantee. At most 16 metric fields per sensor and 8192 UTF-8 bytes per line are
 accepted. Firmware builds an 8192-byte temporary JSON document, then writes the
-serialized line in one call. Overflow emits an invalid L3 diagnostic marker and
+serialized line in one call. Overflow emits an invalid observation marker and
 fails acceptance instead of producing a partial PASS. Snapshot sequence gaps
 and skipped metric updates are counted separately; snapshots cannot establish
 absence of intermediate errors or capture every physical sample. Sensors that
@@ -367,15 +342,15 @@ The first claimed `_observations` record, including an invalid record, selects
 `serial_observation_v1` for acceptance for the remainder of the capture.
 Previously captured legacy readings remain in samples.jsonl for diagnosis but
 are excluded from acceptance series. Later old JSON/PAYLOAD remains raw evidence
-and cannot fill gaps or refresh L3 data. Old firmware without this marker retains
-the existing full-JSON/compact behavior, without a freshness guarantee.
+and cannot fill gaps or refresh versioned observations. Firmware without this
+marker retains the legacy full-JSON/compact behavior, without a freshness guarantee.
 
 Deduplication uses device/boot/sensor/metric/measurement sequence. A repeated
 measurement is not appended even in a later snapshot; a new equal value is.
 Regressed/inconsistent sequence/time/value, dropped metric fields, conflicting
 identity, unknown version/state, malformed/oversized records or reboot produce
 FAIL findings. Unknown extension fields are ignored and cannot override validated
-fields. No nested legacy values are salvaged from malformed L3 records.
+fields. No nested legacy values are salvaged from malformed versioned records.
 
 `events.jsonl` stores sanitized sensor_observation events, including error/cache
 states, and source selection. `samples.jsonl` adds an optional `observation`

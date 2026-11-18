@@ -1,6 +1,6 @@
 # Raspberry Pi 24-hour Runbook
 
-This runbook describes the first real 24-hour Altruist burn-in test on a
+This runbook describes a 24-hour Altruist burn-in test on a
 Raspberry Pi or another Linux host.
 
 Use `_debug` firmware for USB sensor acceptance and diagnostic burn-in.
@@ -27,17 +27,12 @@ continues other slots, and exits 2 if any worker has a configuration/serial erro
 (otherwise 1 for health FAIL, 0 without FAIL). A failed batch aggregate is an
 execution result; consult each slot's worker error before diagnosing hardware.
 
-Short checks of firmware `7d961c4` on Urban/Insight C6 EN Testing debug/release
-completed on 2026-11-13; see [verification scope and remaining checks](../README.md#firmware-profile-verification).
-They do not replace 24/48-hour burn-in or verify the full firmware matrix.
-Local flashing did not publish artifacts. Keep the exact commit, target,
-language, channel and profile with each capture. A successful debug run does not
-validate release firmware.
+Keep the exact commit, target, language, channel and profile with each capture.
+A successful debug run does not validate release firmware.
 
 The [maintained diagnostic procedures](diagnostic-procedures.md) provide safe
 summaries, explicit startup/cadence windows, bounded HTTP checks and durable
-per-attempt checkpoints. Their software tests do not replace a new approved
-hardware confirmation. Raw startup logs may contain credentials; use safe
+per-attempt checkpoints. Raw startup logs may contain credentials; use safe
 extraction instead of printing matching configuration lines.
 
 ## Goals
@@ -191,14 +186,13 @@ address was added through Robonomics `setDevices`. Use `datalog = "required"`
 only when there is an active Robonomics subscription and the device address
 was added to it.
 
-Compatibility check dated 2026-10-22 (firmware `344f123`, tester `f0fa39d`):
-current C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
+C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
 built-in endpoint. Success skips legacy JSON and its `[PAYLOAD] sample=`;
 both Map toggles mean JSON fallback, not unconditional dual-send. Confirm
 debug sensor JSON and HEALTH during a preflight run before starting 24 hours,
-including Insight VOC/gas when applicable. At firmware `7d961c4`, BME680 and
+including Insight VOC/gas when applicable. BME680 and
 SCD4x have a minimum 300-second fetch interval; cover the configured interval
-with a margin (the verified 300-second setup used a 330-second capture).
+with a margin; for example, allow at least 330 seconds for a 300-second interval.
 Datalog samples depend on configuration/encryption. Release intentionally lacks
 this diagnostic contract. Missing readings still fail acceptance, regardless
 of upload success.
@@ -208,7 +202,7 @@ required connectivity check as aggregate firmware HTTP evidence. It does not
 prove legacy delivery, CPS finalization, or map visibility; cloud `202` is
 Kafka ingress acceptance. CPS endpoint authorization and NodeId/anchor
 provisioning differ from legacy `setDevices`. Route-specific acceptance is
-pending. C3 remains legacy-only; reviewed repository Stable is `d1623eb`.
+not supported. C3 uses legacy uplink only.
 
 For observed Insight BME680 JSON, constant `voc_ppb`, `voc_index`, `voc_level`,
 and `voc_spikes_today` are allowed; do not provoke pollution to make them change.
@@ -219,9 +213,7 @@ Older firmware without the field remains supported by ordinary acceptance;
 current diagnostic procedures require it.
 Level -1 gives WARN for unavailable VOC (invalid gas reading), including a
 transient occurrence; inspect raw evidence and gas resistance/baseline.
-The earlier `344f123` algorithm emitted four initial zero level/index readings;
-current ABC firmware has different baseline initialization. Late UART capture
-cannot prove warmup completion or ABC readiness. The daily count may reset
+Late UART capture cannot prove warmup completion or ABC readiness. The daily count may reset
 at the device's local midnight/time synchronization or survive a reboot;
 no monotonicity is required. Runtime reboot failures and gas diagnostic
 flatline/cadence checks still apply. These rules do not add readable release
@@ -496,7 +488,6 @@ report.txt
 If sending a compact result to chat or an issue, start with `report.txt` and add
 the relevant `summary.json` section.
 
-
 ## Inspect malformed PAYLOAD diagnostics
 
 Check the report's malformed observation count, then
@@ -515,20 +506,19 @@ confirm a physical module; missing pairs fail and are listed in summary/report.
 Use `expect.metrics` alone for checks that intentionally accept any source.
 See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
 
-
-## L3 short debug verification
+## Check measurement freshness and deduplication
 
 Use the existing Urban/Insight profiles and expected-MAC guard. The first
-versioned UART observation selects L3 automatically; inspect
+versioned UART observation automatically selects the independent measurement
+source; inspect
 `summary.sensor_observations.source` for `serial_observation_v1` and require no
 contract issues. Presence must come from each expected physical sensor. Compare
 duplicate counts with accepted samples: heartbeat cache repeats should not
 increase measurement counts. Freshness follows `[cadence]` thresholds, not the
 30-second UART heartbeat. Error states fail; recovered cumulative errors warn.
-See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations-l3).
+See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations).
 
-Capture both devices concurrently for at most 10 minutes when using this smoke
-procedure (9 minutes is suitable for an existing 300-second sensor interval).
-Do not shorten measurement intervals or change network/encryption settings just
-to manufacture more observations. Missing long-term/transport coverage remains
-explicit; this procedure does not replace the full burn-in or M2 VOC test.
+Choose a capture window that covers the configured sensor intervals with a
+margin. Keep measurement intervals and network/encryption settings consistent
+with the intended operating conditions. Short checks do not replace full burn-in
+or long-duration VOC observation.
