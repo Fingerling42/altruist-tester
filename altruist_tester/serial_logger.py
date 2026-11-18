@@ -12,7 +12,7 @@ from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
 from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
 from altruist_tester.parsers.build_events import BuildEvent, parse_build_event
-from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
+from altruist_tester.parsers.dev_metrics import DevMetrics, parse_health_line
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.payload_events import (
     PayloadObservation,
@@ -65,8 +65,6 @@ class DevMetricsSummary:
     max_uptime_sec: int | None = None
     min_rssi: int | None = None
     max_rssi: int | None = None
-    min_esp_temp_c: float | None = None
-    max_esp_temp_c: float | None = None
     max_errors: dict[str, int | None] = field(
         default_factory=lambda: {"wifi": None, "sensor": None, "sd": None}
     )
@@ -91,8 +89,6 @@ class DevMetricsSummary:
             "max_uptime_sec": self.max_uptime_sec,
             "min_rssi": self.min_rssi,
             "max_rssi": self.max_rssi,
-            "min_esp_temp_c": self.min_esp_temp_c,
-            "max_esp_temp_c": self.max_esp_temp_c,
             "max_errors": self.max_errors,
         }
 
@@ -334,8 +330,6 @@ def _update_dev_metrics_summary(
         max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
         min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
         max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
-        min_esp_temp_c=_min_optional(summary.min_esp_temp_c, metrics.esp_temp_c),
-        max_esp_temp_c=_max_optional(summary.max_esp_temp_c, metrics.esp_temp_c),
         max_errors=_max_error_counters(summary.max_errors, metrics),
     )
 
@@ -630,7 +624,6 @@ def capture_raw_serial(
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
-    metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
     metrics_records: list[dict[str, object]] = []
     boot_events_summary = BootEventsSummary()
@@ -789,7 +782,7 @@ def capture_raw_serial(
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
 
-            metrics = metrics_parser.feed(decoded_line)
+            metrics = parse_health_line(decoded_line)
             if metrics is not None:
                 wifi_observed_elapsed_seconds = line_elapsed_seconds
                 metrics_summary = _append_dev_metrics(

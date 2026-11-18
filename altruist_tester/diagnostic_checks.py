@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 
 from altruist_tester.parsers.build_events import parse_build_event
-from altruist_tester.parsers.dev_metrics import parse_dev_metrics_block
+from altruist_tester.parsers.dev_metrics import parse_health_line
 from altruist_tester.parsers.sensor_values import parse_sensor_values
 
 MAX_BODY = 65536
@@ -121,7 +121,7 @@ def safe_fields(text: str) -> dict:
         if commit:
             fields["commit"] = commit
     try:
-        health = parse_dev_metrics_block([text])
+        health = parse_health_line(text)
     except (ValueError, OverflowError, RecursionError):
         health = None
     if health:

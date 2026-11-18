@@ -385,7 +385,9 @@ is useful for graphs, cadence analysis, flatline debugging, and parser checks.
 
 - `events.jsonl` contains chronological tester milestones, parsed health
 observations, build metadata, payload observations, keyword alerts, upload
-observations, and identity observations.
+observations, and identity observations. HEALTH fields follow the
+[health contract](docs/sensor-log-patterns.md#health-contract); device model
+belongs to build/identity observations.
 
 While a run is active, the CLI prints live progress with elapsed time, serial
 line and byte counters, current serial silence, parsed health records, parsed

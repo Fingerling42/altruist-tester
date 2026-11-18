@@ -356,7 +356,9 @@ and remaining time or `unlimited`; `OPENING` identifies an attempted open;
 `CAPTURE open=yes` shows an open port, capture duration/percentage, received
 bytes/first-byte receipt, UART silence, parsed telemetry and HEALTH/sample counts.
 The last Wi-Fi HEALTH state includes its age; `unknown` means no observation,
-and `OK` does not prove IP readiness or sustained stability. A silent open port
+and `OK` does not prove IP readiness or sustained stability. HEALTH contains
+runtime/link counters and optional reset context, as described in the
+[health contract](sensor-log-patterns.md#health-contract). A silent open port
 does not establish AP mode or a Wi-Fi failure. Worker failures include the exit
 code and diagnostics on this console. Snapshots have `status_age` so stale status
 is visible. Total batch time has no percentage because capture starts differ.

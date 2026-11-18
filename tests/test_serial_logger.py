@@ -637,20 +637,17 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     assert stats.dev_metrics.max_uptime_sec == 124
     assert stats.dev_metrics.min_rssi == -81
     assert stats.dev_metrics.max_rssi == -79
-    assert stats.dev_metrics.min_esp_temp_c is None
-    assert stats.dev_metrics.max_esp_temp_c is None
     assert stats.dev_metrics.max_errors == {"wifi": 3, "sensor": 1, "sd": 2}
+    assert "min_esp_temp_c" not in stats.dev_metrics.as_dict()
+    assert "max_esp_temp_c" not in stats.dev_metrics.as_dict()
     assert stats.dev_metrics.last_metrics == {
-        "model": None,
         "status": "ERROR",
         "uptime_sec": 124,
         "boot": 7,
         "wifi_state": "OK",
         "rssi": -79,
         "tx": 2,
-        "last_tx_age_sec": None,
         "errors": {"wifi": 3, "sensor": 0, "sd": 1},
-        "esp_temp_c": None,
         "free_heap": 219584,
         "error_count": 4,
         "reset_reason": "power_on_reset",

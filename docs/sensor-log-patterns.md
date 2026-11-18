@@ -133,11 +133,17 @@ Parser guidance:
 
 - Require the base runtime fields: `uptime`, `boot`, `heap`, `rssi`, `tx`,
   `errors`, `wifi`, `wifi_errors`, `sensor_errors`, and `sd_errors`.
-- Parse reset-context fields when present.
+- Parse reset-context fields when present. Missing or invalid optional numeric
+  and boolean values remain `null`; zero and `false` are retained.
 - Do not drop the whole health snapshot only because reset-context fields are
   missing.
 - Let the UART log contract warn separately when reset context is absent
   from both `[BOOT]` and `[HEALTH]`.
+
+HEALTH events and `last_dev_metrics` contain runtime/link counters and optional
+reset/crash context. HEALTH has no model, last-transmission age, or ESP
+temperature field; these are not emitted as empty event fields or summary
+temperature extrema. Device model comes from BUILD and identity observations.
 
 ## Build Contract
 
