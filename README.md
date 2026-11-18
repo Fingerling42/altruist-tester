@@ -68,8 +68,8 @@ This verifies the selected C6 EN Testing builds only. The full target/language/
 channel matrix, maximum compile-time logging flags, browser rendering and
 JavaScript execution, authenticated `/serial`, encrypted/successful-protobuf
 paths, SD/Improv/LoRa/recovery scenarios and long-duration acceptance remain
-open. Local flashing did not publish firmware artifacts. Freshness and
-deduplication remain planned.
+open. Local flashing did not publish firmware artifacts. Those historical checks did
+not establish freshness or deduplication; the new L3 contract is described below.
 
 For the maintained safe extraction, bounded UART capture and separate HTTP/reboot
 checks, see [diagnostic procedures](docs/diagnostic-procedures.md). The replacement
@@ -313,8 +313,10 @@ Payload observations:
   accepts `channel=datalog` until the first connectivity sample, then suppresses
   datalog samples for the rest of the run;
 - also accepts full nested sensor JSON snapshots, including after UART text
-  prefixes. These bypass payload-source selection; cross-source deduplication
-  and automatic fallback after connectivity stops are not implemented.
+  prefixes. Without an L3 marker these retain legacy payload-source selection
+  behavior, including no automatic fallback after connectivity stops. Versioned
+  L3 selects its own source and deduplicates successful measurement identities;
+  see [freshness and deduplication](#measurement-freshness-and-deduplication-l3).
 
 Firmware compatibility checked on 2026-10-22 (`344f123`, tester `f0fa39d`):
 current C6 Map defaults prefer protobuf using a built-in endpoint when the
@@ -329,8 +331,9 @@ for readings.
 Current CONNECTIVITY statistics combine legacy JSON and protobuf HTTP results.
 They cannot prove which route succeeded, CPS finalization, or frontend
 visibility. Cloud HTTP `202` confirms ingress after Kafka acknowledgment.
-Route-specific acceptance and a debug reading contract covering freshness and
-deduplication remain planned. C3 remains legacy-only; the reviewed repository Stable
+Route-specific acceptance remains planned. Versioned debug UART observations
+now provide the L3 freshness/deduplication contract described below. C3 remains
+legacy-only for uplink; the reviewed repository Stable
 publication is still firmware `d1623eb`.
 
 Insight BME680 JSON includes `voc_ppb`, VOC index, level, daily spike count,
@@ -830,3 +833,28 @@ count; summary and events retain up to five bounded, sanitized examples with
 UART line numbers. Raw serial bytes and existing verdict/exit-code policies are
 unchanged. See [the parser contract](docs/sensor-log-patterns.md#malformed-payload-diagnostics)
 for fields, limits and compatibility.
+
+
+### Measurement freshness and deduplication (L3)
+
+New debug firmware supplies versioned UART sensor snapshots with successful
+measurement sequence/time and boot identity. Repeated cached values no longer
+count as new measurements; new measurements with equal values still count.
+The first L3 record selects the independent source for the capture, and malformed
+L3 cannot silently fall back to PAYLOAD or old JSON. Historical firmware remains
+supported by its existing parser, without an L3 freshness guarantee.
+
+Freshness uses the configured cadence interval and missed-count thresholds;
+current read failures or an invalid contract produce FAIL/exit 1. Cadence and
+flatline use projected measurement time, while artifacts retain host receipt
+time and provenance. `summary.sensor_observations` shows the selected source,
+repeat/loss counters, sensor states and last successful ages. Previously captured
+legacy sample lines remain diagnostic artifacts after selection. See the
+[versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations-l3).
+
+For a bounded smoke check, capture Urban/Insight simultaneously for 9 minutes
+with their existing profiles and expected MACs. With a 300-second fetch interval,
+this gives a chance to observe repeated successful updates; a short run does not
+prove long-term flatline behavior, the full transport matrix, or hour-long VOC
+acceptance. Keep complete run directories and the exact source diff alongside
+firmware binaries when builds contain uncommitted changes.

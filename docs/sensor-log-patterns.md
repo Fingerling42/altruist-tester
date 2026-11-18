@@ -8,7 +8,7 @@ in release. BME680/SCD4x snapshots end with a newline; parser behavior is unchan
 
 Short debug/release checks completed on 2026-11-13 for firmware `7d961c4`,
 Urban/Insight C6 EN Testing only. See [verification scope and remaining checks](../README.md#firmware-profile-verification).
-Freshness and deduplication remain planned. At this revision, BME680 and SCD4x
+Those historical checks did not verify freshness or deduplication. At that revision, BME680 and SCD4x
 have a minimum 300-second fetch interval; a 150-second capture can miss the next
 sensor JSON. A 330-second capture of the tested 300-second configuration
 confirmed both snapshots and all five VOC/gas fields. Use the actual configured
@@ -222,7 +222,8 @@ Parser guidance:
   `channel=sensors-connectivity` or `channel=datalog`.
 - Capture accepts datalog samples until the first connectivity sample, then
   suppresses datalog samples for the rest of the run. Full JSON snapshots
-  bypass this selection; there is no full cross-source deduplication.
+  bypass this legacy selection. Versioned L3 snapshots select a single independent
+  acceptance source instead, as described below.
 - Treat `custom-http` payloads as observations, not sensor-series input.
 - For plain unencrypted samples with parseable `payload_len`, require an exact
   length match before creating readings. Missing/unparseable lengths currently
@@ -234,7 +235,8 @@ Parser guidance:
 - Full JSON snapshots preserve physical sensor names and units. Historical release
   runs needed readable samples: encrypted payloads may intentionally omit them, and
   current C6 protobuf success skips legacy payload formatting/logging. Use debug
-  local sensor JSON; freshness/deduplication remain planned. `[PROTO]` cannot
+  local sensor JSON; versioned L3 provides freshness/deduplication metadata.
+  `[PROTO]` cannot
   replace sensor readings.
 
 
@@ -297,3 +299,98 @@ other crash/reset keywords. Alerts appear in events.jsonl and summary.json;
 the rule engine includes them as `keyword_alerts` findings in summary/report
 and the final FAIL verdict (CLI exit 1). Previously their severity was recorded
 but omitted from the final verdict. Raw serial.log bytes are unchanged.
+
+
+## Versioned debug UART observations (L3)
+
+The L3 firmware extends the existing sensor/metric/value/units JSON shape with
+`_observations` at the root and `observation` per numeric metric. Each line is
+one snapshot of **one physical sensor**, not a promise to deliver every reading.
+Only debug emits this schema, independently of encryption, connectivity and
+protobuf success. Metadata is assembled in a separate UART document; API,
+uplink and SD data retain their existing shape. BME280/BMP280, BME680, SCD4x,
+SDS and ICS43434 are supported; experimental radiation is outside L3.
+
+```json
+{"BME280":{"temperature":{"value":24,"units":"°C","observation":{"seq":"7","measured_ms":"300010","state":"ok"}}},"_observations":{"version":1,"device_id":"1051DB010C70","boot_id":"1a2b-3c4d","model":"urban","sensor":"BME280","snapshot_seq":"12","time_ms":"330000","state":"ok","errors":0,"reason":"none"}}
+```
+
+Required root metadata: version 1; twelve hexadecimal device-id digits; a
+per-boot random token of two 1–8 digit hexadecimal components separated by `-`;
+model `urban`/`insight`; physical sensor; increasing per-sensor snapshot sequence;
+monotonic milliseconds since boot; state; cumulative per-sensor error count and
+stable error reason. Context repeats in every snapshot for late attachment.
+The random token changes on reboot; a context change during capture fails the
+contract check even if HEALTH/BOOT was missed. The token is observational identity,
+not authentication. Device identity must still match expected USB/UART identity.
+
+Clock and sequence fields are emitted as decimal strings to preserve 64-bit
+precision without changing ArduinoJson globally. The parser also accepts exact
+JSON integers. It validates clocks through 2^42−1 ms and sequences through
+2^53−1; booleans and negative counters are invalid. Device clocks use
+`esp_timer_get_time`, so they do not wrap with 32-bit `millis()`. Numeric values
+must be finite (integer values within ±(2^53−1)); original units are preserved,
+including historical BME280 pressure labeling and current SDS µg/m³.
+
+Each numeric metric carries its successful update sequence, successful update
+milliseconds, and state. New equal values increment the sequence. Reprinting
+or a failed read preserves successful identity/time. Errors mark cached metrics
+as failed and increment the sensor error count; partial invalid numeric values
+can mark one metric failed. `voc_level=-1` retains the existing M2 unavailable
+WARN, and VOC indicator/counter flatline exceptions remain unchanged. The schema
+accepts `never`, `warming`, `waiting`, `ok`, `error` sensor states and all except
+`never` for metrics with a successful identity. Current drivers emit `never`
+before a first result, `ok` after updates and `error` on instrumented failures;
+ordinary SDS sleep/noise pause does not create an error. This does not infer VOC
+algorithm readiness from elapsed time.
+
+SDS updates represent completed measurement windows (with existing trimmed-mean
+processing). Noise values are running aggregates of the current sending window:
+sequence/time advance on each successful aggregate update, not merely on UART
+publication, and reset of the aggregate does not reset sequence. Noise snapshots
+can therefore represent partial windows. BME680 gas and VOC values are derived
+from the same successful fetch. Individual metric times remain separate.
+
+A heartbeat is checked by the sensor worker: nominally every 30 seconds per
+active supported sensor, also at first observation and after a reported error.
+Blocking existing sensor/network work may delay it; this is not a hard realtime
+guarantee. At most 16 metric fields per sensor and 8192 UTF-8 bytes per line are
+accepted. Firmware builds an 8192-byte temporary JSON document, then writes the
+serialized line in one call. Overflow emits an invalid L3 diagnostic marker and
+fails acceptance instead of producing a partial PASS. Snapshot sequence gaps
+and skipped metric updates are counted separately; snapshots cannot establish
+absence of intermediate errors or capture every physical sample. Sensors that
+fail initialization may be absent entirely; expected physical presence remains
+the tester profile's responsibility.
+
+The first claimed `_observations` record, including an invalid record, selects
+`serial_observation_v1` for acceptance for the remainder of the capture.
+Previously captured legacy readings remain in samples.jsonl for diagnosis but
+are excluded from acceptance series. Later old JSON/PAYLOAD remains raw evidence
+and cannot fill gaps or refresh L3 data. Old firmware without this marker retains
+the existing full-JSON/compact behavior, without a freshness guarantee.
+
+Deduplication uses device/boot/sensor/metric/measurement sequence. A repeated
+measurement is not appended even in a later snapshot; a new equal value is.
+Regressed/inconsistent sequence/time/value, dropped metric fields, conflicting
+identity, unknown version/state, malformed/oversized records or reboot produce
+FAIL findings. Unknown extension fields are ignored and cannot override validated
+fields. No nested legacy values are salvaged from malformed L3 records.
+
+`events.jsonl` stores sanitized sensor_observation events, including error/cache
+states, and source selection. `samples.jsonl` adds an optional `observation`
+object with device/boot identity, sequence, device snapshot/measurement times,
+state and projected `measured_ts`; its `ts` remains host receipt time. A fixed
+per-boot mapping, established on first observation, projects device milliseconds
+onto host UTC for cadence/flatline; it is not a synchronized device UTC clock.
+Legacy sample records remain readable. `summary.sensor_observations` records
+source, snapshot/duplicate/loss counters, issues, latest sensor states and metric
+ages. `sensor_samples_count` counts acceptance records, so can differ from the
+number of diagnostic lines in samples.jsonl when source selection happened late.
+
+Freshness uses device age at the latest snapshot plus host time since receipt.
+Warn/fail thresholds reuse the tester's configured cadence expected interval and
+missed-count multipliers, rather than the 30-second publication interval. Current
+read errors fail; cumulative recovered/pre-capture errors warn without asserting
+when they occurred. These findings participate in the usual report and CLI 1.
+Delivery rules remain independent: local readings never confirm remote delivery.

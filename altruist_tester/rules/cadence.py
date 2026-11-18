@@ -92,7 +92,7 @@ def _record_timestamps(records: list[SensorSampleRecord]) -> tuple[datetime, ...
         sorted(
             parsed
             for record in records
-            if (parsed := _parse_timestamp(record.ts)) is not None
+            if (parsed := _parse_timestamp(record.measurement_timestamp)) is not None
         )
     )
 

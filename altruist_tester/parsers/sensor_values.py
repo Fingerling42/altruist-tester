@@ -9,6 +9,7 @@ from typing import Any
 
 from altruist_tester.parsers.payload_events import parse_payload_metadata
 from altruist_tester.samples import SensorSample
+from altruist_tester.sensor_observations import parse_sensor_observation
 
 _DATALOG_ITEM_RE = re.compile(
     r"(?P<alias>[A-Za-z][A-Za-z0-9_]*):(?P<value>[+-]?\d+(?:\.\d+)?)"
@@ -168,6 +169,24 @@ def parse_sensor_values(line: str) -> list[SensorSample]:
     metric names so new firmware values can still be inspected in artifacts.
     """
 
+    if '"_observations"' in line:
+        try:
+            snapshot = parse_sensor_observation(line)
+        except ValueError:
+            return []
+        assert snapshot is not None
+        return [
+            SensorSample(
+                sensor=snapshot["sensor"],
+                metric=item["metric"],
+                value=item["value"],
+                unit=item["unit"],
+                source="serial_observation_v1",
+                observation={k: item[k] for k in ("seq", "measured_ms", "state")},
+            )
+            for item in snapshot["metrics"]
+            if snapshot["state"] == "ok" and item["state"] == "ok"
+        ]
     json_samples = _parse_json_sensor_snapshots(line)
     if json_samples:
         return json_samples

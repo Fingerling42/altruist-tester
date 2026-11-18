@@ -2177,6 +2177,7 @@ def run(
         "keyword_alerts_count": stats.keyword_alerts_count,
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,
+        "sensor_observations": stats.sensor_observations,
         "rules": rule_result.as_dict(),
         "sensor_presence": sensor_presence.as_dict(),
         "sensor_ranges": sensor_ranges.as_dict(),

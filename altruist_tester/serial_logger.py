@@ -29,6 +29,7 @@ from altruist_tester.parsers.upload_events import (
     parse_upload_event,
 )
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
+from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.uploads import UploadStats
 
 Number = int | float
@@ -258,6 +259,7 @@ class SerialLogStats:
     sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
     upload_stats: UploadStats = field(default_factory=UploadStats)
     serial_device_ids: tuple[str, ...] = ()
+    sensor_observations: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -674,6 +676,7 @@ def capture_raw_serial(
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
     primary_payload_samples_seen = False
+    observation_tracker = SensorObservationTracker()
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
     structured_events_count = 0
@@ -807,6 +810,34 @@ def capture_raw_serial(
                     primary_payload_samples_seen=primary_payload_samples_seen,
                 )
             )
+            was_selected = observation_tracker.selected
+            observation, independent_samples = observation_tracker.feed(
+                decoded_line, utc_now()
+            )
+            if observation_tracker.selected:
+                if not was_selected:
+                    # Prior legacy samples remain diagnostic artifacts, but do
+                    # not contribute to independent-source acceptance.
+                    sensor_series.by_key.clear()
+                    artifacts.append_event(
+                        "sensor_source_selected", source="serial_observation_v1"
+                    )
+                sensor_samples = independent_samples
+                if observation is not None:
+                    artifacts.append_event("sensor_observation", **observation)
+                    observed_id = observation.get("device_id")
+                    if observed_id is not None:
+                        observed_id = str(observed_id).upper()
+                        if (
+                            expected_device_id is not None
+                            and observed_id != expected_device_id
+                        ):
+                            raise SerialIdentityError(
+                                f"Expected MAC {expected_device_id}, "
+                                f"UART reports {observed_id}"
+                            )
+                        if observed_id not in serial_device_ids:
+                            serial_device_ids.append(observed_id)
             _append_sensor_samples(artifacts, sensor_samples, sensor_series)
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
@@ -863,4 +894,5 @@ def capture_raw_serial(
         sensor_series=sensor_series,
         upload_stats=upload_stats,
         serial_device_ids=tuple(serial_device_ids),
+        sensor_observations=observation_tracker.as_dict(),
     )

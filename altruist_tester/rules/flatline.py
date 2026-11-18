@@ -105,7 +105,7 @@ def _elapsed_seconds(records: list[SensorSampleRecord]) -> float:
     timestamps = [
         parsed
         for record in records
-        if (parsed := _parse_timestamp(record.ts)) is not None
+        if (parsed := _parse_timestamp(record.measurement_timestamp)) is not None
     ]
     if len(timestamps) < 2:
         return 0.0

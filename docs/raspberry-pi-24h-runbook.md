@@ -514,3 +514,21 @@ with aliases normalized. Compact PAYLOAD and imported Urban readings cannot
 confirm a physical module; missing pairs fail and are listed in summary/report.
 Use `expect.metrics` alone for checks that intentionally accept any source.
 See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
+
+
+## L3 short debug verification
+
+Use the existing Urban/Insight profiles and expected-MAC guard. The first
+versioned UART observation selects L3 automatically; inspect
+`summary.sensor_observations.source` for `serial_observation_v1` and require no
+contract issues. Presence must come from each expected physical sensor. Compare
+duplicate counts with accepted samples: heartbeat cache repeats should not
+increase measurement counts. Freshness follows `[cadence]` thresholds, not the
+30-second UART heartbeat. Error states fail; recovered cumulative errors warn.
+See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations-l3).
+
+Capture both devices concurrently for at most 10 minutes when using this smoke
+procedure (9 minutes is suitable for an existing 300-second sensor interval).
+Do not shorten measurement intervals or change network/encryption settings just
+to manufacture more observations. Missing long-term/transport coverage remains
+explicit; this procedure does not replace the full burn-in or M2 VOC test.

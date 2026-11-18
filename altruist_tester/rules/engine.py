@@ -42,6 +42,7 @@ from altruist_tester.rules.urban_pm import (
     UrbanPmReport,
     check_urban_pm_nearly_zero,
 )
+from altruist_tester.sensor_observations import observation_findings
 from altruist_tester.serial_logger import SerialLogStats
 
 RuleStatus = Literal["ok", "warn", "fail"]
@@ -518,6 +519,16 @@ def evaluate_rules(
                     rule="keyword_alerts",
                 )
                 for alert in stats.keyword_alerts
+            ),
+            *(
+                RuleFinding(**finding)
+                for finding in observation_findings(
+                    stats.sensor_observations,
+                    reference_time=config.reference_time,
+                    interval=config.cadence_expected_interval_seconds,
+                    warn_after=config.cadence_warn_after_missed,
+                    fail_after=config.cadence_fail_after_missed,
+                )
             ),
             *_collect_runtime_findings(runtime_counters),
             *_collect_serial_silence_findings(serial_silence),

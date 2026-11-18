@@ -21,6 +21,7 @@ class SensorSample:
     value: float
     unit: str | None
     source: str = "serial"
+    observation: dict[str, Any] | None = None
 
     @property
     def key(self) -> SampleKey:
@@ -37,6 +38,11 @@ class SensorSample:
             "value": self.value,
             "unit": self.unit,
             "source": self.source,
+            **(
+                {"observation": self.observation}
+                if self.observation is not None
+                else {}
+            ),
         }
 
 
@@ -50,12 +56,21 @@ class SensorSampleRecord:
     value: float
     unit: str | None
     source: str
+    observation: dict[str, Any] | None = None
 
     @property
     def key(self) -> SampleKey:
         """Return the time-series key for this sample."""
 
         return (self.sensor, self.metric)
+
+    @property
+    def measurement_timestamp(self) -> str:
+        return (
+            self.ts
+            if self.observation is None
+            else self.observation.get("measured_ts", self.ts)
+        )
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> SensorSampleRecord:
@@ -68,6 +83,7 @@ class SensorSampleRecord:
             value=float(value["value"]),
             unit=None if value.get("unit") is None else str(value["unit"]),
             source=str(value["source"]),
+            observation=value.get("observation"),
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -80,6 +96,11 @@ class SensorSampleRecord:
             "value": self.value,
             "unit": self.unit,
             "source": self.source,
+            **(
+                {"observation": self.observation}
+                if self.observation is not None
+                else {}
+            ),
         }
 
 

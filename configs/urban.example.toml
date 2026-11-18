@@ -1,3 +1,4 @@
+# L3 uses these cadence thresholds for measurement freshness; heartbeat repeats do not count.
 # Sensor presets require metrics from each named physical JSON source.
 # Compact PAYLOAD alone cannot confirm sensors; use metrics-only for that scope.
 [expect]
