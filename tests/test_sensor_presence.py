@@ -212,7 +212,7 @@ def test_each_physical_sensor_must_supply_each_required_metric():
 
 
 @pytest.mark.parametrize("channel", ["datalog", "sensors-connectivity"])
-def test_compact_only_preserves_metric_checks_but_cannot_confirm_sensor(channel):
+def test_payload_cannot_satisfy_sensor_or_metric_expectations(channel):
     series = SensorSampleSeries()
     compact = "h:50,t:20,p:100000"
     line = (
@@ -223,21 +223,21 @@ def test_compact_only_preserves_metric_checks_but_cannot_confirm_sensor(channel)
         series.append(
             SensorSampleRecord(ts="2026-11-18T12:00:00Z", **sample.as_payload())
         )
-    assert series.count() == 3
+    assert series.count() == 0
     report = check_sensor_presence(series, expected_sensors=("bme680",))
     assert report.status == "fail"
-    assert report.missing_metrics == ()
-    assert report.ambiguous_metrics == ("humidity", "pressure", "temperature")
-    assert "physical source is unknown" in report.message
+    assert report.missing_metrics == ("humidity", "pressure", "temperature")
+    assert report.ambiguous_metrics == ()
+    assert len(report.missing_sensor_metrics) == 3
     assert (
         check_sensor_presence(
             series, expected_metrics=("temperature", "humidity", "pressure")
         ).status
-        == "ok"
+        == "fail"
     )
 
 
-def test_physical_json_resolves_compact_source_ambiguity():
+def test_named_sensor_metrics_do_not_cover_an_unobserved_metric():
     series = _snapshot_series(
         {
             "datalog": ("temperature", "humidity", "pressure"),

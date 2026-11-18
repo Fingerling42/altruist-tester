@@ -4,40 +4,12 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from typing import Any
 
-from altruist_tester.parsers.payload_events import parse_payload_metadata
 from altruist_tester.samples import SensorSample
 from altruist_tester.sensor_observations import parse_sensor_observation
 
-_DATALOG_ITEM_RE = re.compile(
-    r"(?P<alias>[A-Za-z][A-Za-z0-9_]*):(?P<value>[+-]?\d+(?:\.\d+)?)"
-)
-
 _SKIP_JSON_KEYS = frozenset({"service_data"})
-_SENSOR_SAMPLE_PAYLOAD_SOURCES = {
-    "datalog": "serial_payload_datalog",
-    "sensors-connectivity": "serial_payload_connectivity",
-}
-_SKIP_COMPACT_ALIASES = frozenset({"time"})
-
-_DATALOG_ALIASES = {
-    "h": ("humidity", "%"),
-    "t": ("temperature", "°C"),
-    "p": ("pressure", "Pa"),
-    "nm": ("noiseMax", "dB"),
-    "na": ("noiseAvg", "dB"),
-    "p1": ("P1", "ppm"),
-    "p2": ("P2", "ppm"),
-    "gc": ("radiation", "µR/h"),
-    "co2": ("co2", "ppm"),
-    "co": ("co", "ppm"),
-    "o3": ("o3", "ppm"),
-    "no2": ("no2", "ppm"),
-    "fa": ("fast_aqi", None),
-    "ea": ("epa_aqi", None),
-}
 
 _JSON_DECODER = json.JSONDecoder()
 
@@ -102,72 +74,8 @@ def _parse_json_sensor_snapshots(line: str) -> list[SensorSample]:
     return samples
 
 
-def _samples_from_compact_payload(
-    payload: str,
-    *,
-    sensor: str,
-    source: str,
-) -> list[SensorSample]:
-    samples = []
-    for item_match in _DATALOG_ITEM_RE.finditer(payload):
-        alias = item_match.group("alias").lower()
-        if alias in _SKIP_COMPACT_ALIASES:
-            continue
-        metric, unit = _DATALOG_ALIASES.get(alias, (alias, None))
-        value = _finite_float(item_match.group("value"))
-        if value is None:
-            continue
-
-        samples.append(
-            SensorSample(
-                sensor=sensor,
-                metric=metric,
-                value=value,
-                unit=unit,
-                source=source,
-            )
-        )
-
-    return samples
-
-
-def _plain_payload_sample_is_complete(fields: dict[str, str], sample: str) -> bool:
-    if fields.get("encoding") != "plain" or fields.get("encrypted") != "0":
-        return True
-
-    try:
-        payload_len = int(fields.get("payload_len", ""))
-    except ValueError:
-        return True
-    return len(sample) == payload_len
-
-
-def _parse_payload_line(line: str) -> list[SensorSample]:
-    fields = parse_payload_metadata(line)
-    if fields is None:
-        return []
-
-    channel = fields.get("channel")
-    source = _SENSOR_SAMPLE_PAYLOAD_SOURCES.get(str(channel))
-    if source is None:
-        return []
-
-    sample = fields.get("sample")
-    if not sample or fields.get("sample_available") == "0":
-        return []
-    if not _plain_payload_sample_is_complete(fields, sample):
-        return []
-
-    return _samples_from_compact_payload(sample, sensor=str(channel), source=source)
-
-
 def parse_sensor_values(line: str) -> list[SensorSample]:
-    """Parse zero or more sensor samples from one serial line.
-
-    Supports JSON sensor snapshots and the stable firmware ``[PAYLOAD]``
-    contract. Unknown compact aliases inside ``sample=`` are preserved as
-    metric names so new firmware values can still be inspected in artifacts.
-    """
+    """Extract full JSON sensor values for diagnostics, without acceptance policy."""
 
     if '"_observations"' in line:
         try:
@@ -187,10 +95,4 @@ def parse_sensor_values(line: str) -> list[SensorSample]:
             for item in snapshot["metrics"]
             if snapshot["state"] == "ok" and item["state"] == "ok"
         ]
-    json_samples = _parse_json_sensor_snapshots(line)
-    if json_samples:
-        return json_samples
-    payload_samples = _parse_payload_line(line)
-    if payload_samples:
-        return payload_samples
-    return []
+    return _parse_json_sensor_snapshots(line)

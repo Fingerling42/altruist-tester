@@ -25,3 +25,28 @@ def sample_series(*records: SensorSampleRecord) -> SensorSampleSeries:
     for record in records:
         series.append(record)
     return series
+
+
+def uart_snapshot(sensor, values):
+    """A current sensor UART snapshot with successful per-metric observations."""
+    return {
+        "_observations": {
+            "version": 1,
+            "device_id": "1051DB010C70",
+            "boot_id": "a-b",
+            "model": "urban",
+            "sensor": sensor,
+            "snapshot_seq": "1",
+            "time_ms": "1000",
+            "state": "ok",
+            "errors": 0,
+            "reason": "none",
+        },
+        sensor: {
+            metric: {
+                "value": value,
+                "observation": {"seq": "1", "measured_ms": "1000", "state": "ok"},
+            }
+            for metric, value in values.items()
+        },
+    }

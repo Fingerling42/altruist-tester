@@ -22,9 +22,8 @@ def _integer(value: Any, *, minimum: int = 0) -> bool:
 
 
 def parse_sensor_observation(line: str) -> dict[str, Any] | None:
-    """Return a validated snapshot; raise on a claimed but invalid L3 record.
+    """Return a validated snapshot; raise on a claimed but invalid observation.
 
-    This marker is reserved. Invalid L3 never falls back to legacy JSON parsing.
     Unknown fields are ignored, while all known fields are checked atomically.
     """
     if MARKER not in line:
@@ -286,7 +285,7 @@ class SensorObservationTracker:
     def as_dict(self) -> dict:
         return {
             "selected": self.selected,
-            "source": "serial_observation_v1" if self.selected else "legacy",
+            "source": "serial_observation_v1",
             "snapshots": self.snapshots,
             "duplicates": self.duplicates,
             "missed_snapshots": self.missed_snapshots,
@@ -314,7 +313,14 @@ def observation_findings(
     """Apply tester freshness thresholds, never firmware-reported PASS labels."""
     findings = []
     if not report.get("selected"):
-        return findings
+        return [
+            {
+                "severity": "fail",
+                "code": "SENSOR_OBSERVATION_MISSING",
+                "message": "Required _observations UART telemetry was not observed",
+                "rule": "sensor_observations",
+            }
+        ]
     for reason, count in report.get("issues", {}).items():
         findings.append(
             {

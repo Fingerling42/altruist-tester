@@ -82,8 +82,8 @@ and the advanced page. Snapshot requests emit support records but do not save
 configuration. HTTP redirects are not followed; hosts must be literal IPs.
 Auth-required responses are NOT_CHECKED, with no attempt to bypass or change auth.
 
-To change only the live log mode, explicitly add `--set-level 3` (0–5 accepted).
-Release clamps high values and maps legacy 2 to Errors; the standard debug
+To change only the live log mode, explicitly add `--set-level 3` (0, 1, 3, 4 or 5).
+Release clamps high values to Events; the standard debug
 force=4 build ignores lower requests. The result records the prior runtime level.
 This operation does not claim persistence or restoration. Keep its before/after
 results when bracketing a passive UART window; do not run mode changes during
@@ -171,8 +171,8 @@ no detailed tags/sensor JSON; Errors forbids non-error automatic events. An
 empty Errors/Events window is NOT_CHECKED, not a vacuous successful test of event
 filtering. Debug requires HEALTH and recognized full sensor JSON; Insight also
 requires all six BME680 VOC/gas fields, including `voc_ppb` (current firmware).
-Older firmware without `voc_ppb` remains supported by ordinary acceptance, but
-does not satisfy this current diagnostic predicate. These checks do not run
+The ordinary Insight presence preset requires temperature, humidity and pressure;
+this diagnostic predicate requires the complete VOC/gas field set. These checks do not run
 the normal flatline, upload, freshness or full sensor acceptance rules.
 
 ## Exit codes and software validation

@@ -13,10 +13,8 @@ mode and reboots. There is no separate numeric input. Debug exposes only modes
 allowed by its forced minimum (normally Detailed and Most detailed).
 
 USB acceptance checks the firmware contract after the complete capture, before
-sensor rules. A consistent BUILD `profile=release` without both HEALTH and
-readings exits **2** (unsuitable configuration), with no sensor verdict.
-Historical release builds that actually provide both signals still undergo all
-normal checks. Debug with missing signals remains **FAIL / exit 1**. Missing
+sensor rules. A BUILD `profile=release` exits **2** (unsuitable configuration), with no sensor verdict.
+Debug with missing signals remains **FAIL / exit 1**. Missing
 BUILD does not imply release: normal strict rules and the existing missing-BUILD
 warning apply. Missing profile metadata also warns; unknown explicit profiles
 or conflicting BUILD identity fields exit 2. Stable/Testing never selects a
@@ -170,7 +168,7 @@ uv run altruist-tester run \
 Map health GET probes select a server and do not count as upload attempts or
 failures. `health_checks` and `health_check_reasons` preserve them separately
 in summaries/reports; real POST/local failures retain their configured severity.
-See the [current and legacy log classification](sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
+See the [health-probe and upload classification](sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
 
 If upload access was configured before the burn-in run, edit the profile or use
 a copied profile with:
@@ -209,8 +207,8 @@ and `voc_spikes_today` are allowed; do not provoke pollution to make them change
 Default ranges require integer `voc_ppb` 0–10000, index 0–100, level 0–3, and
 daily count 0–65535. Bounds use the existing `sensor_ranges` configuration.
 `voc_ppb` (JSON unit `ppb`) is a relative MOS/ABC scale, not laboratory TVOC.
-Older firmware without the field remains supported by ordinary acceptance;
-current diagnostic procedures require it.
+Diagnostic procedures require all six VOC/gas fields, including `voc_ppb`.
+The ordinary Insight presence preset requires temperature, humidity and pressure.
 Level -1 gives WARN for unavailable VOC (invalid gas reading), including a
 transient occurrence; inspect raw evidence and gas resistance/baseline.
 Late UART capture cannot prove warmup completion or ABC readiness. The daily count may reset
@@ -496,12 +494,12 @@ bounded examples. Use each example's one-based `line_number` to locate the
 original bytes in `serial.log`; do not edit run artifacts. Further malformed
 records still increment counters. Missing/unknown channels are excluded from
 normal payload statistics and readings; this diagnostic alone adds no severity.
-Older summaries without these fields remain readable. See
+See
 [the parser contract](sensor-log-patterns.md#malformed-payload-diagnostics)
 for the exact fields and bounds.
 
 Physical presence requires each preset's metrics from its named JSON sensor,
-with aliases normalized. Compact PAYLOAD and imported Urban readings cannot
+with aliases normalized. PAYLOAD samples are excluded from measurements. Imported Urban readings cannot
 confirm a physical module; missing pairs fail and are listed in summary/report.
 Use `expect.metrics` alone for checks that intentionally accept any source.
 See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
@@ -509,8 +507,7 @@ See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
 ## Check measurement freshness and deduplication
 
 Use the existing Urban/Insight profiles and expected-MAC guard. The first
-versioned UART observation automatically selects the independent measurement
-source; inspect
+versioned UART stream is required throughout capture; inspect
 `summary.sensor_observations.source` for `serial_observation_v1` and require no
 contract issues. Presence must come from each expected physical sensor. Compare
 duplicate counts with accepted samples: heartbeat cache repeats should not

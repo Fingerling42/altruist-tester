@@ -4,6 +4,7 @@ from pathlib import Path
 
 from altruist_tester.artifacts import create_run_artifacts
 from altruist_tester.serial_logger import capture_raw_serial
+from tests.helpers import uart_snapshot
 
 # Fixed artifact timestamps keep JSON/report assertions stable.
 STARTED_AT = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
@@ -359,16 +360,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
     ]
     assert "sample" not in payload_events[0]["raw_fields"]
 
-    samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["metric"], sample["value"], sample["source"]) for sample in samples
-    ] == [
-        ("humidity", 65.15, "serial_payload_datalog"),
-        ("temperature", 25.84, "serial_payload_datalog"),
-        ("co2", 723.0, "serial_payload_datalog"),
-        ("humidity", 65.15, "serial_payload_connectivity"),
-        ("temperature", 25.84, "serial_payload_connectivity"),
-    ]
+    assert _read_jsonl(artifacts.samples_jsonl) == []
 
     assert [event["status"] for event in upload_events] == [
         "attempt",
@@ -392,7 +384,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
     assert stats.boot_events.count == 1
     assert stats.dev_metrics.count == 1
     assert stats.payload_observations.count == 3
-    assert stats.sensor_samples_count == 5
+    assert stats.sensor_samples_count == 0
     assert stats.upload_stats.channel("datalog").attempts == 2
     assert stats.upload_stats.channel("datalog").failure_reasons == {
         "encryption_failed": 1
@@ -465,45 +457,30 @@ def test_capture_raw_serial_records_device_identity(tmp_path):
     assert stats.serial_device_ids == ("1051DB010C70",)
 
 
-def test_capture_raw_serial_writes_sensor_samples(tmp_path):
+def test_capture_raw_serial_writes_only_versioned_sensor_samples(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)
-    serial = FakeSerial(
-        [
-            (
-                b'{"service_data":{"signal_strength":-38},'
-                b'"BME280":{"temperature":{"value":25.5,"units":"C"}},'
-                b'"SDS":{"P1":{"value":16.3,"units":"ppm"}}}\n'
-            ),
-            (
-                b"[123] [INFO] [PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=24 sample_available=1 "
-                b"sample=h:65.99,t:25.51,p1:16.33\n"
-            ),
-        ],
-        clock,
-    )
-
-    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
-
+    lines = [
+        json.dumps({"BME280": {"temperature": {"value": 99}}}),
+        "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
+        "payload_len=4 sample_available=1 sample=t:77",
+        json.dumps(uart_snapshot("BME280", {"temperature": 25.5})),
+        json.dumps(uart_snapshot("SDS", {"P1": 16.3})),
+    ]
+    raw = [(line + "\n").encode() for line in lines]
+    stats = capture_raw_serial(FakeSerial(raw, clock), artifacts, 2, clock=clock)
     samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["sensor"], sample["metric"], sample["value"]) for sample in samples
-    ] == [
+    assert [(s["sensor"], s["metric"], s["value"]) for s in samples] == [
         ("BME280", "temperature", 25.5),
         ("SDS", "P1", 16.3),
-        ("sensors-connectivity", "humidity", 65.99),
-        ("sensors-connectivity", "temperature", 25.51),
-        ("sensors-connectivity", "P1", 16.33),
     ]
-    assert stats.sensor_samples_count == 5
-    assert stats.sensor_series.latest(("BME280", "temperature")).value == 25.5
-    assert (
-        stats.sensor_series.latest(("sensors-connectivity", "humidity")).value == 65.99
-    )
+    assert {s["source"] for s in samples} == {"serial_observation_v1"}
+    assert stats.sensor_samples_count == 2
+    assert stats.payload_observations.count == 1
+    assert artifacts.serial_log.read_bytes() == b"".join(raw)
 
 
-def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel(
+def test_capture_records_payload_metadata_without_measurements(
     tmp_path,
 ):
     clock = FakeClock()
@@ -526,14 +503,8 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
 
     stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
 
-    samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["metric"], sample["value"], sample["source"]) for sample in samples
-    ] == [
-        ("humidity", 65.99, "serial_payload_connectivity"),
-        ("temperature", 25.51, "serial_payload_connectivity"),
-    ]
-    assert stats.sensor_samples_count == 2
+    assert _read_jsonl(artifacts.samples_jsonl) == []
+    assert stats.sensor_samples_count == 0
     assert stats.payload_observations.count == 2
     assert stats.payload_observations.by_channel == {
         "datalog": 1,
@@ -593,7 +564,9 @@ def test_capture_raw_serial_reports_progress(tmp_path):
     )
     serial = FakeSerial(
         [
-            b'{"BME280":{"temperature":{"value":25.5,"units":"C"}}}\n',
+            (
+                json.dumps(uart_snapshot("BME280", {"temperature": 25.5})) + "\n"
+            ).encode(),
             b"Guru Meditation Error: Core 0 panic'ed\n",
             b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
             b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
@@ -804,9 +777,7 @@ def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path)
         "gas_resistance": 0,
         "gas_baseline": 120000,
     }
-    snapshot = {
-        "BME680": {metric: {"value": value} for metric, value in values.items()}
-    }
+    snapshot = uart_snapshot("BME680", values)
     snapshot["BME680"]["voc_phrase"] = {"value": "No VOC detected"}
     raw_line = (json.dumps(snapshot) + "\n").encode()
     stats = capture_raw_serial(FakeSerial([raw_line], clock), artifacts, 1, clock=clock)
@@ -896,7 +867,7 @@ def test_capture_preserves_health_evidence_without_delivery_failure(tmp_path):
     lines = [
         (
             b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
-            b"reason=health_get_failed host=probe code=-1\n"
+            b"stage=health reason=health_get_failed host=probe code=-1\n"
         ),
         (
             b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "

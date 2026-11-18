@@ -49,6 +49,7 @@ def release_log_stats(
             {"boot": 1, "uptime_sec": 10, "reset_reason": "power_on_reset"},
         ),
         sensor_samples_count=sensor_samples_count or series.count(),
+        sensor_observations={"selected": True},
         sensor_series=series,
     )
 

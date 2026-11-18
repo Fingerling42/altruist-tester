@@ -16,22 +16,19 @@ console: BUILD identity, LOG status and curated errors/events, without sensor
 values, payloads, response bodies or credentials.
 
 The release log UI offers named Off / Errors only / Events modes; higher
-compatibility values cannot enable debug output. Debug also has Detailed / Most
+runtime log levels cannot enable debug output. Debug also has Detailed / Most
 detailed and hides modes below its forced minimum. The active mode is highlighted,
 without a duplicate numeric input. Live changes do not reboot. Save and restart
 persists the current mode and deliberately reboots. Status snapshot preserves
 the mode and is available explicitly even with automatic logs off.
 
-Testing is a publication channel, not a debug profile. The existing
-`release_log_contract` rule name remains for compatibility: support logs do not
-satisfy its HEALTH/measurement requirements. PASS on debug does not validate
+Testing is a publication channel, not a debug profile. Operational support logs do not satisfy the HEALTH/measurement requirements
+of the `log_contract` rule. PASS on debug does not validate
 release. See the firmware [profile policy](../altruist-firmware/DIAGNOSTICS.md).
 
 USB acceptance checks the firmware contract after the complete capture, before
-sensor rules. A consistent BUILD `profile=release` without both HEALTH and
-readings exits **2** (unsuitable configuration), with no sensor verdict.
-Historical release builds that actually provide both signals still undergo all
-normal checks. Debug with missing signals remains **FAIL / exit 1**. Missing
+sensor rules. A BUILD `profile=release` exits **2** (unsuitable configuration), with no sensor verdict.
+Debug with missing signals remains **FAIL / exit 1**. Missing
 BUILD does not imply release: normal strict rules and the existing missing-BUILD
 warning apply. Missing profile metadata also warns; unknown explicit profiles
 or conflicting BUILD identity fields exit 2. Stable/Testing never selects a
@@ -49,7 +46,7 @@ Debug firmware builds with health telemetry emit a compact snapshot once per min
 ```
 
 The tester parses the base runtime fields even if reset context is absent, but
-the release log contract warns when neither `[BOOT]` nor `[HEALTH]` exposes
+the UART log contract warns when neither `[BOOT]` nor `[HEALTH]` exposes
 reset context.
 
 For safe extraction, bounded UART capture and separate HTTP/reboot checks, see
@@ -150,13 +147,10 @@ temperature/humidity and imported `altruist_urban` pressure cannot confirm BME68
 imported or aggregated readings cannot confirm Urban BME280. Missing pairs fail
 acceptance and appear as `missing_sensor_metrics` in `sensor_presence` and in
 the report message. `missing_metrics` still lists globally absent metric names.
-Compact PAYLOAD readings have an unknown physical source: they remain available
-for metric/range/cadence checks, but cannot satisfy `expect.sensors`. Unresolved
-compact metric names appear in `ambiguous_metrics` with an explicit diagnostic.
-Use debug JSON for physical sensor checks. Explicit `expect.metrics` alone
-accepts readings from any source, including compact PAYLOAD; an empty expectation
-set still warns. Existing artifacts are not rewritten. This verifies observed
-source labels, not hardware initialization, freshness or deduplication.
+Versioned `_observations` records are the only acceptance measurement source.
+Explicit `expect.metrics` alone accepts measurements from any physical sensor;
+an empty expectation set warns. Source labels do not prove hardware initialization.
+Freshness and deduplication are checked separately.
 
 For ad-hoc checks, pass expectations directly:
 
@@ -268,7 +262,7 @@ Keyword alerts:
 Map health GET probes select a server and do not count as upload attempts or
 failures. `health_checks` and `health_check_reasons` preserve them separately
 in summaries/reports; real POST/local failures retain their configured severity.
-See the [current and legacy log classification](docs/sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
+See the [health-probe and upload classification](docs/sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
 
 Upload delivery:
 
@@ -287,16 +281,17 @@ Payload observations:
 
 - parses stable `[PAYLOAD]` lines with `channel`, `encoding`, `encrypted`,
   `payload_len`, and `sample_available` metadata;
-- extracts compact sensor values only from the explicit `sample=` field;
-- treats `channel=sensors-connectivity` as the primary sensor-sample source and
-  accepts `channel=datalog` until the first connectivity sample, then suppresses
-  datalog samples for the rest of the run;
-- also accepts full nested sensor JSON snapshots, including after UART text
-  prefixes. Without an `_observations` marker these retain legacy payload-source
-  selection behavior, including no automatic fallback after connectivity stops.
-  Versioned UART telemetry selects its own source and deduplicates successful
-  measurement identities;
-  see [freshness and deduplication](#measurement-freshness-and-deduplication).
+- retains payload metadata without extracting sensor measurements from `sample=`.
+
+Sensor measurements:
+
+- require debug UART snapshots with `_observations` version 1;
+- use successful measurement identity/time for freshness and deduplication;
+- ignore ordinary sensor JSON and PAYLOAD samples during acceptance;
+- fail with `SENSOR_OBSERVATION_MISSING` if the versioned stream is absent.
+
+Full sensor JSON remains available to diagnostic extraction; see
+[freshness and deduplication](#measurement-freshness-and-deduplication).
 
 C6 Map defaults prefer protobuf using a built-in endpoint when the
 custom URL is empty. A successful protobuf POST skips legacy JSON formatting
@@ -317,7 +312,7 @@ and gas resistance/baseline. Numeric values are preserved, while text
 `voc_phrase` is ignored. VOC is a qualitative device-relative indicator, not calibrated
 laboratory TVOC. The firmware uses a relative MOS/ABC scale:
 `voc_ppb` is an integer 0–10000 with JSON unit `ppb`; index/level are derived
-from that scale. Older firmware without `voc_ppb` remains supported.
+from that scale.
 
 - `voc_ppb`: integer 0–10000; `voc_index`: integer 0–100; `voc_level`: integer
   0–3; `voc_spikes_today`: integer 0–65535. Out-of-range or fractional values fail range checks with
@@ -340,7 +335,7 @@ This applies to observed JSON samples. The release driver does not
 print those snapshots; the policy does not add a release measurement source
 or make VOC fields mandatory in the Insight presence preset.
 
-Release log contract:
+UART log contract:
 
 - verifies that firmware logs contain enough stable, machine-readable telemetry
   for acceptance testing;
@@ -805,24 +800,22 @@ observations and produce no sensor readings. The report shows the malformed
 count; summary and events retain up to five bounded, sanitized examples with
 UART line numbers. Raw serial bytes and existing verdict/exit-code policies are
 unchanged. See [the parser contract](docs/sensor-log-patterns.md#malformed-payload-diagnostics)
-for fields, limits and compatibility.
+for fields and limits.
 
 ## Measurement freshness and deduplication
 
 Debug firmware supplies versioned UART sensor snapshots with successful
 measurement sequence/time and boot identity. Repeated cached values do not
 count as new measurements; new measurements with equal values still count.
-The first versioned observation selects the independent source for the capture.
-Malformed versioned observations cannot silently fall back to PAYLOAD or old
-JSON. Firmware without versioned observations remains supported by the legacy
-parser, without a freshness guarantee.
+The capture uses this source from the start; malformed or absent observations
+cannot fall back to PAYLOAD or ordinary sensor JSON. Missing telemetry produces
+FAIL/exit 1. Full JSON extraction remains available through diagnostic commands.
 
 Freshness uses the configured cadence interval and missed-count thresholds;
 current read failures or an invalid contract produce FAIL/exit 1. Cadence and
 flatline use projected measurement time, while artifacts retain host receipt
-time and provenance. `summary.sensor_observations` shows the selected source,
-repeat/loss counters, sensor states and last successful ages. Previously captured
-legacy sample lines remain diagnostic artifacts after selection. See the
+time and provenance. `summary.sensor_observations` shows the required source,
+repeat/loss counters, sensor states and last successful ages. See the
 [versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations).
 
 Choose a capture window that covers the configured sensor intervals with a

@@ -15,7 +15,6 @@ names/counts and validated identity/status fields; unknown keys, raw_fields,
 credentials and entire matching lines are never summary fields.
 
 JSON examples are available in `tests/fixtures/sensor_json_snapshots.log`.
-Legacy `Datalog data` lines are not compact-reading inputs.
 
 ## Full Sensor JSON Snapshot
 
@@ -93,8 +92,9 @@ use Ohm; the qualitative VOC index is not concentration in ppm.
 BME680 firmware (`sensors/bmx680i2c_sensor.cpp`) emits integer
 `voc_ppb` 0–10000 with unit `ppb`: a relative MOS/ABC scale, not laboratory
 TVOC. Index 0–100 and level 0–3 derive from that scale; daily counter 0–65535
-is also integer. Older snapshots without `voc_ppb` remain supported; it is
-not mandatory in the Insight presence preset. Default range checks fail values outside these bounds and fractional values. Level -1 is
+is also integer. VOC fields are not mandatory in the Insight presence preset.
+Default range checks fail values outside these bounds and fractional values.
+Level -1 is
 an unavailable-reading sentinel and produces WARN; it is not warmup. No elapsed-time
 warmup inference is possible from partial UART capture.
 
@@ -115,13 +115,10 @@ temperature/humidity and imported `altruist_urban` pressure cannot confirm BME68
 imported or aggregated readings cannot confirm Urban BME280. Missing pairs fail
 acceptance and appear as `missing_sensor_metrics` in `sensor_presence` and in
 the report message. `missing_metrics` still lists globally absent metric names.
-Compact PAYLOAD readings have an unknown physical source: they remain available
-for metric/range/cadence checks, but cannot satisfy `expect.sensors`. Unresolved
-compact metric names appear in `ambiguous_metrics` with an explicit diagnostic.
-Use debug JSON for physical sensor checks. Explicit `expect.metrics` alone
-accepts readings from any source, including compact PAYLOAD; an empty expectation
-set still warns. Existing artifacts are not rewritten. This verifies observed
-source labels, not hardware initialization, freshness or deduplication.
+Versioned `_observations` records are the only acceptance measurement source.
+Explicit `expect.metrics` alone accepts measurements from any physical sensor;
+an empty expectation set warns. Source labels do not prove hardware initialization.
+Freshness and deduplication are checked separately.
 
 ## Health Contract
 
@@ -138,7 +135,7 @@ Parser guidance:
 - Parse reset-context fields when present.
 - Do not drop the whole health snapshot only because reset-context fields are
   missing.
-- Let the release log contract warn separately when reset context is absent
+- Let the UART log contract warn separately when reset context is absent
   from both `[BOOT]` and `[HEALTH]`.
 
 ## Build Contract
@@ -172,51 +169,13 @@ Firmware source:
 
 - `apis/helpers/message_formatter.cpp`
 
-The payload contract is built from the same `sensors_data` document. It applies
-share/encryption flags and may choose one temperature/humidity source when both
-`BME680` and `SCD4x` are present.
+The firmware formats payloads from `sensors_data`, applying sharing/encryption
+flags and selecting temperature/humidity sources where applicable. The tester
+records `channel`, `encoding`, `encrypted`, `payload_len` and `sample_available`
+as transport metadata. It does not extract measurements from `sample=` or from
+transport bodies. Ciphertext, signatures and `[PROTO]` are not sensor readings.
+Acceptance measurements come only from versioned debug UART observations.
 
-Compact Urban measurement aliases:
-
-- `h`: humidity
-- `t`: temperature
-- `p`: pressure, emitted in pascals by current payload samples
-- `nm`: max noise
-- `na`: mean noise
-- `p1`: PM10
-- `p2`: PM2.5
-
-Additional aliases supported by firmware:
-
-- `gc`: radiation
-- `co2`: CO2
-- `co`: CO
-- `o3`: O3
-- `no2`: NO2
-- `fa`: fast AQI
-- `ea`: EPA AQI
-
-Parser guidance:
-
-- Parse compact sensor values only from optional `sample=...` on
-  `channel=sensors-connectivity` or `channel=datalog`.
-- Capture accepts datalog samples until the first connectivity sample, then
-  suppresses datalog samples for the rest of the run. Full JSON snapshots
-  bypass this legacy selection. Versioned UART snapshots select a single
-  independent acceptance source instead, as described below.
-- Treat `custom-http` payloads as observations, not sensor-series input.
-- For plain unencrypted samples with parseable `payload_len`, require an exact
-  length match before creating readings. Missing/unparseable lengths currently
-  bypass that guard.
-- Never parse encrypted `e...` values or full transport payloads as sensor
-  metrics.
-- Treat `channel`, `encoding`, `encrypted`, `payload_len`, and
-  `sample_available` as payload metadata.
-- Full JSON snapshots preserve physical sensor names and units. Encrypted
-  payloads may omit readable samples, and C6 protobuf success skips legacy
-  payload formatting/logging. Use debug local sensor JSON; versioned UART
-  telemetry provides freshness/deduplication metadata. `[PROTO]` cannot replace
-  sensor readings.
 
 ## Malformed PAYLOAD diagnostics
 
@@ -225,8 +184,7 @@ channels. Missing/empty channels (including a bare `[PAYLOAD]`) are classified
 as `missing_channel`; other names, including truncated names, as `unknown_channel`.
 These records do not contribute to normal payload counts, channel/encoding
 statistics, observation records or sensor samples. `custom-http` remains a valid
-metadata observation without compact sensor readings. Valid JSON snapshots and
-existing datalog/connectivity selection and plain-length checks are unchanged.
+metadata observation without compact sensor readings. Versioned sensor observations are handled independently of payload metadata.
 
 `summary.json` adds `malformed_payload_observations_count`,
 `malformed_payload_observations_by_reason`, and
@@ -244,8 +202,7 @@ UART is preserved unchanged in `serial.log`; old artifacts are not rewritten.
 ## Map server selection and upload outcomes
 
 Map server health GET probes are server-selection diagnostics, not data uploads.
-`[CONNECTIVITY] ... stage=health` and legacy failures with the exact
-`reason=health_get_failed` or `reason=health_begin_failed` are retained in
+`[CONNECTIVITY] ... stage=health` records are retained in
 `events.jsonl` (including `raw_fields`) and counted separately as `health_checks`
 and `health_check_reasons` in upload summaries/reports. They do not affect upload
 attempts, success rate, failure streaks, or delivery targets. A failed health GET
@@ -338,30 +295,29 @@ absence of intermediate errors or capture every physical sample. Sensors that
 fail initialization may be absent entirely; expected physical presence remains
 the tester profile's responsibility.
 
-The first claimed `_observations` record, including an invalid record, selects
-`serial_observation_v1` for acceptance for the remainder of the capture.
-Previously captured legacy readings remain in samples.jsonl for diagnosis but
-are excluded from acceptance series. Later old JSON/PAYLOAD remains raw evidence
-and cannot fill gaps or refresh versioned observations. Firmware without this
-marker retains the legacy full-JSON/compact behavior, without a freshness guarantee.
+`serial_observation_v1` is the only acceptance measurement source for the entire
+capture. Missing `_observations` telemetry produces `SENSOR_OBSERVATION_MISSING`
+and FAIL/exit 1. Malformed records fail the contract; ordinary sensor JSON and
+PAYLOAD samples cannot fill gaps or refresh measurements. Full sensor JSON is
+parsed only by diagnostic extraction commands.
 
 Deduplication uses device/boot/sensor/metric/measurement sequence. A repeated
 measurement is not appended even in a later snapshot; a new equal value is.
 Regressed/inconsistent sequence/time/value, dropped metric fields, conflicting
 identity, unknown version/state, malformed/oversized records or reboot produce
 FAIL findings. Unknown extension fields are ignored and cannot override validated
-fields. No nested legacy values are salvaged from malformed versioned records.
+fields. No nested ordinary JSON values are salvaged from malformed versioned records.
 
 `events.jsonl` stores sanitized sensor_observation events, including error/cache
-states, and source selection. `samples.jsonl` adds an optional `observation`
+states. `samples.jsonl` adds an optional `observation`
 object with device/boot identity, sequence, device snapshot/measurement times,
 state and projected `measured_ts`; its `ts` remains host receipt time. A fixed
 per-boot mapping, established on first observation, projects device milliseconds
 onto host UTC for cadence/flatline; it is not a synchronized device UTC clock.
-Legacy sample records remain readable. `summary.sensor_observations` records
+`summary.sensor_observations` records
 source, snapshot/duplicate/loss counters, issues, latest sensor states and metric
-ages. `sensor_samples_count` counts acceptance records, so can differ from the
-number of diagnostic lines in samples.jsonl when source selection happened late.
+ages. `sensor_samples_count` counts the accepted measurement records written
+to samples.jsonl; cache repeats do not create new records.
 
 Freshness uses device age at the latest snapshot plus host time since receipt.
 Warn/fail thresholds reuse the tester's configured cadence expected interval and

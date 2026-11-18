@@ -236,9 +236,9 @@ def test_capture_selects_independent_source_and_preserves_raw_uart(tmp_path):
         24,
     ]
     assert stats.sensor_observations["duplicates"] == 1
-    # Previously captured legacy samples are preserved but excluded from acceptance.
+    # Non-versioned values never enter measurement artifacts.
     records = _read_jsonl(artifacts.samples_jsonl)
-    assert len(records) == 3
+    assert len(records) == 2
     assert records[-1]["observation"]["seq"] == 2
     assert any(
         e["type"] == "sensor_observation" for e in _read_jsonl(artifacts.events_jsonl)
@@ -361,3 +361,20 @@ def test_capture_checks_identity_from_observation_metadata(tmp_path):
             clock=clock,
             expected_device_id="588C8140B8EC",
         )
+
+
+def test_missing_versioned_observations_fail_even_with_plain_sensor_json(tmp_path):
+    from altruist_tester.rules.engine import RuleEngineConfig, evaluate_rules
+    from altruist_tester.serial_logger import capture_raw_serial
+    from tests.test_serial_logger import FakeClock, FakeSerial, _create_artifacts
+
+    raw = b'{"BME280":{"temperature":{"value":24}}}\n'
+    clock = FakeClock()
+    stats = capture_raw_serial(
+        FakeSerial([raw], clock), _create_artifacts(tmp_path), 1, clock=clock
+    )
+    assert stats.sensor_samples_count == 0
+    assert stats.sensor_observations["source"] == "serial_observation_v1"
+    result = evaluate_rules(stats, RuleEngineConfig())
+    assert result.verdict == "FAIL"
+    assert any(f.code == "SENSOR_OBSERVATION_MISSING" for f in result.findings)

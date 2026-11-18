@@ -375,7 +375,8 @@ def test_report_and_summary_separate_health_probes_from_uploads(tmp_path):
     )
     stats = UploadStats()
     for tail in [
-        "failed channel=sensors-connectivity seq=1 reason=health_get_failed",
+        "failed channel=sensors-connectivity seq=1 "
+        "stage=health reason=health_get_failed",
         "attempt channel=sensors-connectivity seq=1",
         "success channel=sensors-connectivity seq=1",
     ]:

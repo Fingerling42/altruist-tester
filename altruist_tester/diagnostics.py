@@ -391,7 +391,7 @@ def run_http(device, deadline, attempt, *, exercise=False, reserve=60, set_level
         try:
             page = device.page(f"/debug?lvl={set_level}", deadline)
             if device.profile == "release":
-                expected = 1 if set_level == 2 else min(3, set_level)
+                expected = min(3, set_level)
             else:
                 expected = set_level if set_level >= 4 else max(4, initial.level or 0)
             outcomes["mode_change"] = (
@@ -444,8 +444,8 @@ def run_http(device, deadline, attempt, *, exercise=False, reserve=60, set_level
     attempt.phase("saved_baseline", outcomes["saved_baseline"])
     dirty = False
     try:
-        levels = [0, 1, 3, 5, 2] if device.profile == "release" else [4, 5, 0]
-        expected = [0, 1, 3, 3, 1] if device.profile == "release" else [4, 5, 5]
+        levels = [0, 1, 3, 5] if device.profile == "release" else [4, 5, 0]
+        expected = [0, 1, 3, 3] if device.profile == "release" else [4, 5, 5]
         observations = []
         for level, active in zip(levels, expected, strict=True):
             dirty = True
@@ -636,7 +636,7 @@ def parser():
             actions.add_argument(
                 "--set-level",
                 type=int,
-                choices=range(6),
+                choices=(0, 1, 3, 4, 5),
                 help="Change only the live log mode; requires device approval",
             )
             actions.add_argument(

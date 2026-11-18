@@ -35,6 +35,7 @@ def _datalog_sample(metric: str, value: float, offset_seconds: int):
 
 def test_evaluate_rules_returns_pass_candidate_without_findings():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=10,
         bytes_read=100,
         first_line_elapsed_seconds=1.0,
@@ -67,6 +68,7 @@ def test_evaluate_rules_returns_pass_candidate_without_findings():
 
 def test_evaluate_rules_returns_warn_for_non_failing_findings():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=2,
         bytes_read=20,
         first_line_elapsed_seconds=1.0,
@@ -93,6 +95,7 @@ def test_evaluate_rules_returns_warn_for_non_failing_findings():
 
 def test_evaluate_rules_lets_fail_dominate_warn():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=0,
         bytes_read=0,
         dev_metrics_records=(),
@@ -120,6 +123,7 @@ def test_evaluate_rules_lets_fail_dominate_warn():
 
 def test_evaluate_rules_includes_subsystem_health_findings():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=10,
         bytes_read=100,
         first_line_elapsed_seconds=1.0,
@@ -167,6 +171,7 @@ def test_evaluate_rules_fails_on_firmware_sensor_json_overflow_event():
     assert event is not None
 
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=10,
         bytes_read=100,
         first_line_elapsed_seconds=1.0,
@@ -205,6 +210,7 @@ def test_evaluate_rules_fails_on_wifi_config_portal_timeout_event():
     assert event is not None
 
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=10,
         bytes_read=100,
         first_line_elapsed_seconds=1.0,
@@ -237,6 +243,7 @@ def test_evaluate_rules_fails_on_wifi_config_portal_timeout_event():
 
 def test_evaluate_rules_warns_on_nearly_zero_urban_pm_series():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=120,
         bytes_read=1200,
         first_line_elapsed_seconds=1.0,
@@ -269,6 +276,7 @@ def test_evaluate_rules_warns_on_nearly_zero_urban_pm_series():
 
 def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=120,
         bytes_read=1200,
         first_line_elapsed_seconds=1.0,
@@ -302,6 +310,7 @@ def test_evaluate_rules_uses_expected_sds_as_urban_pm_fallback():
 
 def test_evaluate_rules_uses_configured_device_model_for_urban_pm():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=120,
         bytes_read=1200,
         first_line_elapsed_seconds=1.0,
@@ -332,6 +341,7 @@ def test_evaluate_rules_uses_configured_device_model_for_urban_pm():
 
 def test_evaluate_rules_configured_non_urban_model_overrides_sds_fallback():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=120,
         bytes_read=1200,
         first_line_elapsed_seconds=1.0,
@@ -362,6 +372,7 @@ def test_evaluate_rules_configured_non_urban_model_overrides_sds_fallback():
 
 def test_evaluate_rules_can_require_upload_success():
     stats = SerialLogStats(
+        sensor_observations={"selected": True},
         lines_read=10,
         bytes_read=100,
         first_line_elapsed_seconds=1.0,

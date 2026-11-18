@@ -32,7 +32,7 @@ def build_stats(profile, *, telemetry=False, channel="testing", late=False):
         ("debug", False, 1),
         ("debug", True, 0),
         ("release", False, 2),
-        ("release", True, 0),
+        ("release", True, 2),
         ("mystery", True, 2),
         (None, False, 1),
         (None, True, 0),

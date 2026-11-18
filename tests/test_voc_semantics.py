@@ -113,6 +113,7 @@ def _evaluate_voc(values, *, reboot=False):
             series.append(sample_record("BME680", metric, value, offset * 300))
     return evaluate_rules(
         SerialLogStats(
+            sensor_observations={"selected": True},
             lines_read=len(values),
             bytes_read=100,
             first_line_elapsed_seconds=0,

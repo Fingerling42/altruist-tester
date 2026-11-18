@@ -1,4 +1,4 @@
-"""Checks that firmware release logs are sufficient for tester rules."""
+"""Checks that firmware debug UART logs are sufficient for tester rules."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ LogContractStatus = Literal["ok", "warn", "fail"]
 
 @dataclass(frozen=True, slots=True)
 class LogContractFinding:
-    """One missing release-log signal finding."""
+    """One missing UART signal finding."""
 
     status: RuleSeverity
     code: str
@@ -142,7 +142,7 @@ def _missing_upload_finding(
         status=severity_for_upload_mode(config.mode),
         code=f"LOG_CONTRACT_{channel.upper()}_UPLOAD_MISSING",
         message=(
-            f"{channel} upload telemetry was not observed; release logs are not "
+            f"{channel} upload telemetry was not observed; debug UART logs are not "
             "showing configured upload activity"
         ),
     )
@@ -165,7 +165,7 @@ def _late_signal_finding(
 
 
 def firmware_profile_error(stats: SerialLogStats) -> str | None:
-    """Validate BUILD after capture, allowing historical telemetry-rich releases."""
+    """Validate that captured BUILD metadata identifies a supported debug profile."""
     builds = list(stats.build_event_records)
     if stats.build_events.last_build is not None:
         builds.append(stats.build_events.last_build)
@@ -190,11 +190,9 @@ def firmware_profile_error(stats: SerialLogStats) -> str | None:
             "Unknown [BUILD] firmware profile; USB acceptance was not evaluated. "
             "Use supported debug firmware. Stable/Testing is only a channel."
         )
-    if profiles == {"release"} and not (
-        _has_health_telemetry(stats) and _has_sensor_samples(stats)
-    ):
+    if profiles == {"release"}:
         return (
-            "Firmware profile release does not provide the observed HEALTH/sensor "
+            "Firmware profile release does not support the HEALTH/sensor "
             "contract required for USB acceptance. Sensor health was not evaluated; "
             "this is not evidence of a sensor defect. Prepare debug firmware and "
             "capture again. Operational LOG/status output cannot replace readings; "
@@ -210,7 +208,7 @@ def check_log_contract(
     connectivity_upload: UploadChannelConfig,
     datalog_upload: UploadChannelConfig,
 ) -> LogContractReport:
-    """Check that release logs expose the minimum tester-facing telemetry."""
+    """Check that debug UART logs expose the minimum tester-facing telemetry."""
 
     signals = {
         "health_telemetry": _has_health_telemetry(stats),
@@ -348,10 +346,10 @@ def check_log_contract(
         status = "ok"
 
     if status == "ok":
-        message = "Release logs contain the minimum tester-facing telemetry"
+        message = "Debug UART logs contain the minimum tester-facing telemetry"
     else:
         missing = ", ".join(finding.code for finding in findings)
-        message = "Release logs are missing tester-facing telemetry: " + missing
+        message = "Debug UART logs are missing tester-facing telemetry: " + missing
 
     return LogContractReport(
         status=status,

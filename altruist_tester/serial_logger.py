@@ -16,10 +16,8 @@ from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamPars
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.payload_events import (
     PayloadObservation,
-    parse_payload_metadata,
     parse_payload_observation,
 )
-from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.parsers.subsystem_events import (
     SubsystemEvent,
     parse_subsystem_event,
@@ -538,29 +536,6 @@ def _append_sensor_samples(
     return tuple(appended_samples)
 
 
-def _select_payload_sensor_samples(
-    line: str,
-    samples: list[SensorSample],
-    *,
-    primary_payload_samples_seen: bool,
-) -> tuple[list[SensorSample], bool]:
-    if not samples:
-        return samples, primary_payload_samples_seen
-
-    fields = parse_payload_metadata(line)
-    if fields is None:
-        return samples, primary_payload_samples_seen
-
-    channel = fields.get("channel")
-    if channel == "sensors-connectivity":
-        return samples, True
-
-    if channel == "datalog" and primary_payload_samples_seen:
-        return [], primary_payload_samples_seen
-
-    return samples, primary_payload_samples_seen
-
-
 def _append_dev_metrics(
     artifacts: RunArtifacts,
     metrics: DevMetrics,
@@ -675,7 +650,6 @@ def capture_raw_serial(
     payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
-    primary_payload_samples_seen = False
     observation_tracker = SensorObservationTracker()
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
@@ -798,31 +772,10 @@ def capture_raw_serial(
                     line_number=line_number,
                 )
 
-            sensor_samples, primary_payload_samples_seen = (
-                _select_payload_sensor_samples(
-                    decoded_line,
-                    (
-                        []
-                        if payload_observation is not None
-                        and payload_observation.malformed_reason is not None
-                        else parse_sensor_values(decoded_line)
-                    ),
-                    primary_payload_samples_seen=primary_payload_samples_seen,
-                )
-            )
-            was_selected = observation_tracker.selected
-            observation, independent_samples = observation_tracker.feed(
+            observation, sensor_samples = observation_tracker.feed(
                 decoded_line, utc_now()
             )
             if observation_tracker.selected:
-                if not was_selected:
-                    # Prior legacy samples remain diagnostic artifacts, but do
-                    # not contribute to independent-source acceptance.
-                    sensor_series.by_key.clear()
-                    artifacts.append_event(
-                        "sensor_source_selected", source="serial_observation_v1"
-                    )
-                sensor_samples = independent_samples
                 if observation is not None:
                     artifacts.append_event("sensor_observation", **observation)
                     observed_id = observation.get("device_id")

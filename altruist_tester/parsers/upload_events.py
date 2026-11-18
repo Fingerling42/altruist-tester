@@ -37,16 +37,10 @@ class UploadEvent:
 
     @property
     def is_health_check(self) -> bool:
-        """Identify server selection, including firmware logs without a stage."""
+        """Identify explicitly marked server-selection health probes."""
 
         fields = self.raw_fields or {}
-        return self.channel == "connectivity" and (
-            fields.get("stage") == "health"
-            or (
-                self.status == "failure"
-                and fields.get("reason") in {"health_get_failed", "health_begin_failed"}
-            )
-        )
+        return self.channel == "connectivity" and fields.get("stage") == "health"
 
     def as_event_payload(self) -> dict[str, object]:
         """Return upload observation as an event payload."""

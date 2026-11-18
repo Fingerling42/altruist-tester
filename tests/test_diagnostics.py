@@ -227,11 +227,7 @@ class Firmware:
 
     @property
     def active(self):
-        return (
-            max(4, self.level)
-            if self.profile == "debug"
-            else min(3, 1 if self.level == 2 else self.level)
-        )
+        return max(4, self.level) if self.profile == "debug" else min(3, self.level)
 
     def build(self):
         return BUILD.replace("profile=debug", "profile=" + self.profile)
@@ -289,7 +285,7 @@ class Firmware:
                 if value >= 4:
                     self.level = value
             else:
-                self.level = 1 if value == 2 else min(3, value)
+                self.level = min(3, value)
         return self.page().encode()
 
 
@@ -872,7 +868,7 @@ def test_interrupt_closes_pending_connection_before_propagating(monkeypatch):
 def test_restore_target_is_loaded_saved_value_not_initial_ram(tmp_path):
     clock = Clock()
     firmware = Firmware(clock, profile="release")
-    firmware.saved = 2
+    firmware.saved = 1
     firmware.level = 3
     attempt = diag.Attempt(tmp_path, [])
     outcomes = diag.run_http(
@@ -880,7 +876,7 @@ def test_restore_target_is_loaded_saved_value_not_initial_ram(tmp_path):
     )
     assert outcomes["baseline_reboot"]["status"] == "PASS"
     assert outcomes["restoration"]["status"] == "PASS"
-    assert firmware.saved == firmware.level == 2
+    assert firmware.saved == firmware.level == 1
 
 
 def test_missing_baseline_witness_never_saves_configuration(tmp_path):
@@ -897,7 +893,7 @@ def test_missing_baseline_witness_never_saves_configuration(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "profile,level,active", [("release", 5, 3), ("release", 2, 1), ("debug", 0, 4)]
+    "profile,level,active", [("release", 5, 3), ("release", 1, 1), ("debug", 0, 4)]
 )
 def test_live_mode_change_is_separate_from_persistence(
     tmp_path, profile, level, active
@@ -1052,3 +1048,25 @@ def test_current_insight_diagnostics_require_ppb():
     summary.feed((HEALTH + "\n" + json.dumps(payload) + "\n").encode())
     finding = uart_check(summary.finish(), "debug", "insight", None)
     assert finding["status"] == "FAIL"
+
+
+def test_removed_warning_mode_is_rejected_before_io(capsys):
+    with pytest.raises(SystemExit):
+        diag.main(
+            [
+                "http-check",
+                "--host",
+                "127.0.0.1",
+                "--device-id",
+                ID,
+                "--firmware-commit",
+                COMMIT,
+                "--model",
+                "insight",
+                "--profile",
+                "release",
+                "--set-level",
+                "2",
+            ]
+        )
+    assert "invalid_arguments" in capsys.readouterr().err

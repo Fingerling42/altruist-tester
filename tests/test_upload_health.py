@@ -97,7 +97,6 @@ def test_check_upload_health_warns_for_attempt_without_previous_outcome():
     assert report.findings[0].code == "UPLOAD_LOG_SEQUENCE_WARNING"
 
 
-@pytest.mark.parametrize("stage", ["", "stage=health "])
 @pytest.mark.parametrize(
     "mode,missing_status",
     [("required", "fail"), ("optional", "warn"), ("disabled", "ok")],
@@ -105,10 +104,10 @@ def test_check_upload_health_warns_for_attempt_without_previous_outcome():
 @pytest.mark.parametrize(
     "outcome", ["success", "failed reason=http_error code=500", None]
 )
-def test_health_probes_are_separate_from_delivery(stage, mode, missing_status, outcome):
+def test_health_probes_are_separate_from_delivery(mode, missing_status, outcome):
     lines = [
         f"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
-        f"{stage}reason={reason} host=probe code=-1 extension=kept"
+        f"stage=health reason={reason} host=probe code=-1 extension=kept"
         for reason in ["health_get_failed", "health_begin_failed", "health_get_failed"]
     ]
     if outcome:
@@ -155,6 +154,8 @@ def test_health_probes_are_separate_from_delivery(stage, mode, missing_status, o
         "encryption_failed",
         "health_unknown",
         "health_get_failed_extra",
+        "health_get_failed",
+        "health_begin_failed",
     ],
 )
 def test_non_health_failures_remain_delivery_failures(reason):
@@ -181,7 +182,10 @@ def test_health_does_not_reset_failure_streak_or_complete_pending_post():
     stats = _stats(
         event("failed channel=sensors-connectivity seq=1 reason=http_error"),
         event("attempt channel=sensors-connectivity seq=2"),
-        event("failed channel=sensors-connectivity seq=2 reason=health_get_failed"),
+        event(
+            "failed channel=sensors-connectivity seq=2 "
+            "stage=health reason=health_get_failed"
+        ),
         event("failed channel=sensors-connectivity seq=2 reason=http_error"),
         event("attempt channel=sensors-connectivity seq=2 encoding=proto"),
         event(

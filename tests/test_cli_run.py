@@ -12,7 +12,7 @@ from tests.cli_helpers import (
     release_log_stats,
     series_with_metrics,
 )
-from tests.helpers import sample_record, sample_series
+from tests.helpers import sample_record, sample_series, uart_snapshot
 
 
 def test_run_rejects_missing_serial_port(tmp_path):
@@ -251,6 +251,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
                 max_errors={"wifi": 0, "sensor": 0, "sd": 0},
             ),
             sensor_samples_count=2,
+            sensor_observations={"selected": True},
             sensor_series=series_with_metrics("temperature", "humidity"),
             serial_device_ids=("1051DB010C70",),
         ),
@@ -691,6 +692,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
+            sensor_observations={"selected": True},
             sensor_series=sample_series(
                 sample_record("SCD4x", "co2", 612.0, 0),
                 sample_record("SCD4x", "co2", 612.0, 60 * 60),
@@ -736,6 +738,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
+            sensor_observations={"selected": True},
             sensor_series=sample_series(
                 sample_record("BME280", "temperature", 24.0, 0),
                 sample_record("BME280", "temperature", 24.5, 25 * 60),
@@ -882,7 +885,7 @@ def test_epd_and_runtime_alerts_flow_through_capture_summary_and_report(
         b"[HEALTH] uptime=60 boot=1 heap=200000 rssi=-50 tx=1 errors=0 "
         b"wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
         b"reset_reason=power_on_reset\n",
-        b'{"BME280":{"temperature":{"value":24,"units":"C"}}}\n',
+        (json.dumps(uart_snapshot("BME280", {"temperature": 24})) + "\n").encode(),
     ]
     if failure:
         lines.append(f"{failure}\n".encode())
