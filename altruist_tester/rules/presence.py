@@ -81,7 +81,6 @@ class SensorPresenceReport:
     missing_metrics: tuple[str, ...]
     message: str
     missing_sensor_metrics: tuple[tuple[str, str], ...] = ()
-    ambiguous_metrics: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -103,7 +102,6 @@ class SensorPresenceReport:
                 {"sensor": sensor, "metric": metric}
                 for sensor, metric in self.missing_sensor_metrics
             ],
-            "ambiguous_metrics": list(self.ambiguous_metrics),
         }
 
 
@@ -171,8 +169,7 @@ def check_sensor_presence(
     """Check that expected metrics were observed at least once.
 
     Sensor presets require each metric from the named physical source.
-    Explicit metric expectations accept any source. Compact payload channels
-    preserve readings but cannot establish physical sensor identity.
+    Explicit metric expectations accept any measurement source.
     """
 
     observed_metrics = observed_metrics_from_series(series)
@@ -204,16 +201,6 @@ def check_sensor_presence(
         for metric in SENSOR_EXPECTED_METRICS[sensor]
         if (sensor, metric) not in observed_pairs
     )
-    compact_metrics = {
-        metric
-        for sensor, metric in observed_pairs
-        if sensor in {"datalog", "sensors-connectivity"}
-    }
-    ambiguous = tuple(
-        sorted(
-            {metric for _sensor, metric in missing_pairs if metric in compact_metrics}
-        )
-    )
     if missing or missing_pairs:
         reasons = []
         if missing:
@@ -223,10 +210,6 @@ def check_sensor_presence(
                 "Missing physical sensor metrics: "
                 + ", ".join(f"{sensor}.{metric}" for sensor, metric in missing_pairs)
             )
-        if ambiguous:
-            reasons.append(
-                "Compact sample physical source is unknown for: " + ", ".join(ambiguous)
-            )
         return SensorPresenceReport(
             status=severity_for_missing_sensor_metrics(),
             expected_sensors=expected_sensor_names,
@@ -235,7 +218,6 @@ def check_sensor_presence(
             missing_metrics=missing,
             message="; ".join(reasons),
             missing_sensor_metrics=missing_pairs,
-            ambiguous_metrics=ambiguous,
         )
 
     return SensorPresenceReport(

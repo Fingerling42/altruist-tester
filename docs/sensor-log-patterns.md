@@ -114,7 +114,8 @@ own JSON object (with sensor/metric aliases normalized). For example, SCD4x
 temperature/humidity and imported `altruist_urban` pressure cannot confirm BME680;
 imported or aggregated readings cannot confirm Urban BME280. Missing pairs fail
 acceptance and appear as `missing_sensor_metrics` in `sensor_presence` and in
-the report message. `missing_metrics` still lists globally absent metric names.
+the report message. `missing_metrics` lists globally absent metric names;
+`missing_sensor_metrics` lists every unconfirmed physical sensor/metric pair.
 Versioned `_observations` records are the only acceptance measurement source.
 Explicit `expect.metrics` alone accepts measurements from any physical sensor;
 an empty expectation set warns. Source labels do not prove hardware initialization.

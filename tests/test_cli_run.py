@@ -973,5 +973,11 @@ def test_run_rejects_foreign_metrics_as_physical_bme680(monkeypatch, tmp_path):
     presence = summary["sensor_presence"]
     assert presence["status"] == "fail"
     assert presence["missing_metrics"] == []
-    assert len(presence["missing_sensor_metrics"]) == 3
-    assert "bme680.pressure" in (run_dir / "report.txt").read_text()
+    assert presence["missing_sensor_metrics"] == [
+        {"sensor": "bme680", "metric": metric}
+        for metric in ("humidity", "pressure", "temperature")
+    ]
+    assert "ambiguous_metrics" not in presence
+    report = (run_dir / "report.txt").read_text()
+    for metric in ("humidity", "pressure", "temperature"):
+        assert f"bme680.{metric}" in report
