@@ -286,7 +286,7 @@ Payload observations:
 
 Sensor measurements:
 
-- require debug UART snapshots with `_observations` version 1;
+- require debug UART snapshots with `_observations` version 2;
 - use successful measurement identity/time for freshness and deduplication;
 - ignore ordinary sensor JSON and PAYLOAD samples during acceptance;
 - fail with `SENSOR_OBSERVATION_MISSING` if the versioned stream is absent.
@@ -818,8 +818,23 @@ Freshness uses the configured cadence interval and missed-count thresholds;
 current read failures or an invalid contract produce FAIL/exit 1. Cadence and
 flatline use projected measurement time, while artifacts retain host receipt
 time and provenance. `summary.sensor_observations` shows the required source,
-repeat/loss counters, sensor states and last successful ages. See the
+repeat/loss counters, per-channel cycles, bounded failure history, noise statistics,
+sensor states and last successful ages. See the
 [versioned UART schema and limits](docs/sensor-log-patterns.md#versioned-debug-uart-observations).
 
 Choose a capture window that covers the configured sensor intervals with a
 margin. Short checks do not establish long-term flatline behavior or VOC stability.
+
+
+UART v2 requires explicit expected settings for each observed physical sensor in
+`[observations.settings.SENSOR]`, using the canonical names in the example
+Urban/Insight profiles. `[observations]` also records `firmware_source` and
+`settings_rule`; these describe the operator-selected firmware/config contract.
+Review effective send/SDS intervals, gas enablement and noise pause settings
+before capture. TOML omits inapplicable null fields. A missing expectation,
+settings mismatch or settings change stops capture with exit 2, preserving raw
+UART, the expected/declared values, rule provenance and observed BUILD in the
+summary/report. This does not declare a sensor defect. The device declaration
+never changes the expectation automatically. Unknown BUILD remains unknown.
+Malformed required fields or contradictory counters/history are contract
+FAIL/exit 1; v1 has no acceptance fallback.

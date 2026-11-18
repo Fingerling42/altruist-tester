@@ -191,6 +191,35 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     urban_pm = details.get("urban_pm")
     firmware_build = details.get("firmware_build")
     subsystem_health = details.get("subsystem_health")
+    observations = details.get("sensor_observations")
+    if isinstance(observations, dict):
+        lines.extend(
+            [
+                "",
+                "## UART observation contract",
+                "",
+                f"- source: {observations.get('source')}",
+                f"- valid snapshots: {observations.get('snapshots', 0)}",
+                "- issues: " + json.dumps(observations.get("issues", {})),
+                "",
+                "```json",
+                json.dumps(
+                    {
+                        k: observations.get(k)
+                        for k in (
+                            "coverage",
+                            "expected_settings",
+                            "profile_rules",
+                            "profile_error",
+                            "sensors",
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                "```",
+            ]
+        )
     payload_observations = details.get("payload_observations")
     upload_health = details.get("upload_health")
     if isinstance(sensor_presence, dict):

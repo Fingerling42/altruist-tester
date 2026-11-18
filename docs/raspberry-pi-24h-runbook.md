@@ -510,14 +510,27 @@ See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
 
 Use the existing Urban/Insight profiles and expected-MAC guard. The first
 versioned UART stream is required throughout capture; inspect
-`summary.sensor_observations.source` for `serial_observation_v1` and require no
+`summary.sensor_observations.source` for `serial_observation_v2` and require no
 contract issues. Presence must come from each expected physical sensor. Compare
-duplicate counts with accepted samples: heartbeat cache repeats should not
+duplicate counts with accepted samples: cached observations must not
 increase measurement counts. Freshness follows `[cadence]` thresholds, not the
-30-second UART heartbeat. Error states fail; recovered cumulative errors warn.
+publication interval. Error states fail; recovered cumulative failed cycles warn.
 See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations).
 
 Choose a capture window that covers the configured sensor intervals with a
 margin. Keep measurement intervals and network/encryption settings consistent
 with the intended operating conditions. Short checks do not replace full burn-in
 or long-duration VOC observation.
+
+
+Before opening serial, select an explicit UART v2 profile and review
+`observations.firmware_source`, `observations.settings_rule` and each canonical
+sensor table in `observations.settings`. Adjust expected effective values before
+capture; do not copy observed settings into the profile during acceptance.
+The example profiles assume 30 s send and 300 s SDS settings. For noise without
+active SDS set both SDS timing expectations to zero. Inapplicable null fields
+are omitted from TOML. Settings mismatch/change stops capture immediately with
+exit 2. Inspect `sensor_observations.profile_error`, expected settings, declared
+settings and BUILD in summary/report, correct the environment/profile, and start
+a new capture. This outcome is a setup problem, not a sensor defect. Missing
+required fields and contradictory counters/history remain FAIL/exit 1.

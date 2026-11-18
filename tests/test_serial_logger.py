@@ -472,7 +472,7 @@ def test_capture_raw_serial_writes_only_versioned_sensor_samples(tmp_path):
         ("BME280", "temperature", 25.5),
         ("SDS", "P1", 16.3),
     ]
-    assert {s["source"] for s in samples} == {"serial_observation_v1"}
+    assert {s["source"] for s in samples} == {"serial_observation_v2"}
     assert stats.sensor_samples_count == 2
     assert stats.payload_observations.count == 1
     assert artifacts.serial_log.read_bytes() == b"".join(raw)

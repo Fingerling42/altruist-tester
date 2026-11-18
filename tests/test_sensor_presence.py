@@ -260,7 +260,7 @@ def test_metric_only_expectations_accept_versioned_sensor_measurements():
     for sample in parse_sensor_values(
         json.dumps(uart_snapshot("BME280", {"temperature": 24, "humidity": 45}))
     ):
-        assert sample.source == "serial_observation_v1"
+        assert sample.source == "serial_observation_v2"
         series.append(
             SensorSampleRecord(ts="2026-11-18T12:00:00Z", **sample.as_payload())
         )

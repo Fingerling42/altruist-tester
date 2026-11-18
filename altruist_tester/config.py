@@ -16,6 +16,7 @@ from altruist_tester.rules.defaults import (
     SensorRange,
 )
 from altruist_tester.rules.uploads import UploadChannelConfig, UploadMode
+from altruist_tester.sensor_contract import METRICS, SETTINGS, validate_settings
 
 BATCH_DEVICE_MODELS = frozenset({"urban", "insight"})
 
@@ -83,6 +84,9 @@ class TesterConfig:
         default_factory=UploadChannelConfig
     )
     datalog_upload: UploadChannelConfig = field(default_factory=UploadChannelConfig)
+
+    observation_settings: Mapping[str, dict] = field(default_factory=dict)
+    observation_rules: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def defaults(cls) -> TesterConfig:
@@ -555,7 +559,10 @@ def load_tester_config(path: Path | None) -> TesterConfig:
         "uploads.datalog_thresholds",
     )
 
+    settings, rules = _observation_profile(data)
     return TesterConfig(
+        observation_settings=settings,
+        observation_rules=rules,
         expected_sensors=_string_tuple(expect.get("sensors"), "expect.sensors"),
         expected_metrics=_string_tuple(expect.get("metrics"), "expect.metrics"),
         sensor_ranges=_sensor_ranges(data),
@@ -625,3 +632,31 @@ def load_tester_config(path: Path | None) -> TesterConfig:
             "datalog",
         ),
     )
+
+
+def _observation_profile(data: Mapping[str, Any]) -> tuple[dict, dict]:
+    table = _optional_table(data, "observations")
+    unknown = set(table) - {"settings", "firmware_source", "settings_rule"}
+    if unknown:
+        raise ConfigError(f"Unknown observations fields: {sorted(unknown)}")
+    sensors = _require_mapping(table.get("settings", {}), "observations.settings")
+    rules = {}
+    if sensors:
+        for key in ("firmware_source", "settings_rule"):
+            rules[key] = _required_string(table.get(key), "observations." + key)
+    settings = {}
+    for sensor, value in sensors.items():
+        if sensor not in METRICS:
+            raise ConfigError(f"Unknown observations.settings sensor: {sensor}")
+        value = _require_mapping(value, "observations.settings." + sensor)
+        if set(value) - set(SETTINGS):
+            raise ConfigError(
+                f"Unknown settings for {sensor}: {sorted(set(value) - set(SETTINGS))}"
+            )
+        # TOML has no null: only the schema's inapplicable parameters may be omitted.
+        normalized = {k: value.get(k) for k in SETTINGS}
+        try:
+            settings[sensor] = validate_settings(sensor, normalized)
+        except ValueError as exc:
+            raise ConfigError(f"observations.settings.{sensor}: {exc}") from exc
+    return settings, rules

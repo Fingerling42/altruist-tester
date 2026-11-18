@@ -61,6 +61,7 @@ from altruist_tester.rules.presence import (
 from altruist_tester.serial_logger import (
     SerialIdentityError,
     SerialLogProgress,
+    SerialSettingsError,
     capture_raw_serial,
 )
 
@@ -2043,8 +2044,25 @@ def run(
                 artifacts,
                 duration_seconds,
                 progress_callback=show_progress,
+                observation_settings=dict(tester_config.observation_settings),
+                observation_rules=dict(tester_config.observation_rules),
                 **({"expected_device_id": expected_mac} if expected_mac else {}),
             )
+    except SerialSettingsError as exc:
+        message = str(exc)
+        finished_at = utc_now()
+        artifacts.append_event(
+            "run_failed", reason="observation_settings", message=message
+        )
+        artifacts.write_summary(
+            "failed", message=message, finished_at=finished_at, extra=exc.details
+        )
+        artifacts.write_report(
+            "failed", message=message, finished_at=finished_at, details=exc.details
+        )
+        write_worker_status(status_file, "ERROR", message=message)
+        typer.secho(message, fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
     except (serial.SerialException, SerialIdentityError) as exc:
         message = f"Serial capture failed on {resolved_port}: {exc}"
         write_worker_status(status_file, "ERROR", message=message)

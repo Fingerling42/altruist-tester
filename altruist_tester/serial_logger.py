@@ -584,6 +584,18 @@ def _build_progress(
     )
 
 
+class SerialSettingsError(ValueError):
+    """A declared profile mismatch stops capture without a sensor-defect verdict."""
+
+    def __init__(self, details: dict):
+        self.details = details
+        error = details["sensor_observations"]["profile_error"]
+        super().__init__(
+            f"UART settings {error['reason']} for {error['sensor']}; "
+            "select/correct the expected firmware profile before capture"
+        )
+
+
 def capture_raw_serial(
     serial_port: SerialReader,
     artifacts: RunArtifacts,
@@ -594,6 +606,8 @@ def capture_raw_serial(
     progress_callback: Callable[[SerialLogProgress], None] | None = None,
     progress_interval_seconds: float = 1.0,
     expected_device_id: str | None = None,
+    observation_settings: dict | None = None,
+    observation_rules: dict | None = None,
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses.
 
@@ -636,7 +650,9 @@ def capture_raw_serial(
     payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
-    observation_tracker = SensorObservationTracker()
+    observation_tracker = SensorObservationTracker(
+        expected_settings=observation_settings, profile_rules=observation_rules or {}
+    )
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
     structured_events_count = 0
@@ -764,6 +780,17 @@ def capture_raw_serial(
             if observation_tracker.selected:
                 if observation is not None:
                     artifacts.append_event("sensor_observation", **observation)
+                    if observation_tracker.profile_error:
+                        raise SerialSettingsError(
+                            {
+                                "sensor_observations": observation_tracker.as_dict(),
+                                "firmware_build": build_events_summary.as_dict(),
+                                "build_event_records": list(build_event_records),
+                                "serial_lines_read": lines_read,
+                                "serial_bytes_read": bytes_read,
+                                "serial_capture_started_at": capture_started_at,
+                            }
+                        )
                     observed_id = observation.get("device_id")
                     if observed_id is not None:
                         observed_id = str(observed_id).upper()

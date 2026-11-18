@@ -2,162 +2,31 @@
 
 from __future__ import annotations
 
-import json
-import math
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
 
 from altruist_tester.samples import SensorSample
+from altruist_tester.sensor_contract import metric_channel, parse_contract
 
 MARKER = '"_observations"'
-MAX_LINE_BYTES = 8192
-SENSORS = {"BME280", "BMP280", "BME680", "SCD4x", "SDS", "ICS43434"}
-
-
-def _integer(value: Any, *, minimum: int = 0) -> bool:
-    return type(value) is int and minimum <= value <= 2**53 - 1
-
-
-def parse_sensor_observation(line: str) -> dict[str, Any] | None:
-    """Return a validated snapshot; raise on a claimed but invalid observation.
-
-    Unknown fields are ignored, while all known fields are checked atomically.
-    """
-    if MARKER not in line:
-        return None
-    if len(line.encode("utf-8")) > MAX_LINE_BYTES:
-        raise ValueError("line_too_long")
-    try:
-        data = json.loads(line[line.index("{") :])
-    except (ValueError, TypeError, RecursionError) as exc:
-        raise ValueError("invalid_json") from exc
-    meta = data.get("_observations") if isinstance(data, dict) else None
-    if not isinstance(meta, dict) or type(meta.get("version")) is not int:
-        raise ValueError("missing_version")
-    if meta["version"] != 1:
-        raise ValueError("unknown_version")
-    if not re.fullmatch(r"[0-9a-fA-F]{12}", str(meta.get("device_id", ""))):
-        raise ValueError("invalid_device_id")
-    if not re.fullmatch(
-        r"[0-9a-fA-F]{1,8}-[0-9a-fA-F]{1,8}", str(meta.get("boot_id", ""))
-    ):
-        raise ValueError("invalid_boot_id")
-    if not isinstance(meta.get("model"), str) or meta.get("model") not in {
-        "urban",
-        "insight",
-    }:
-        raise ValueError("invalid_model")
-    sensor = meta.get("sensor")
-    if not isinstance(sensor, str) or sensor not in SENSORS:
-        raise ValueError("invalid_sensor")
-    for key in ("snapshot_seq", "time_ms"):
-        value = meta.get(key)
-        if isinstance(value, str) and re.fullmatch(r"[0-9]{1,16}", value):
-            meta[key] = int(value)
-    if not all(
-        _integer(meta.get(k), minimum=m)
-        for k, m in (("snapshot_seq", 1), ("time_ms", 0), ("errors", 0))
-    ):
-        raise ValueError("invalid_snapshot_clock")
-    if meta["time_ms"] > 2**42 - 1:
-        raise ValueError("invalid_snapshot_clock")
-    if not isinstance(meta.get("state"), str) or meta.get("state") not in {
-        "never",
-        "ok",
-        "error",
-        "warming",
-        "waiting",
-    }:
-        raise ValueError("invalid_state")
-    if not re.fullmatch(r"[a-z0-9_]{1,64}", str(meta.get("reason", ""))):
-        raise ValueError("invalid_reason")
-    metrics = data.get(sensor)
-    if not isinstance(metrics, dict) or len(metrics) > 16:
-        raise ValueError("invalid_metrics")
-    samples = []
-    for metric, item in metrics.items():
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,47}", metric) or not isinstance(
-            item, dict
-        ):
-            raise ValueError("invalid_metric")
-        value = item.get("value")
-        if metric == "voc_phrase" and isinstance(value, str):
-            continue
-        obs = item.get("observation")
-        if not isinstance(obs, dict):
-            raise ValueError("missing_metric_observation")
-        for key in ("seq", "measured_ms"):
-            value_clock = obs.get(key)
-            if isinstance(value_clock, str) and re.fullmatch(
-                r"[0-9]{1,16}", value_clock
-            ):
-                obs[key] = int(value_clock)
-        if not _integer(obs.get("seq"), minimum=1) or not _integer(
-            obs.get("measured_ms")
-        ):
-            raise ValueError("invalid_measurement_clock")
-        if obs["measured_ms"] > meta["time_ms"]:
-            raise ValueError("measurement_in_future")
-        if not isinstance(obs.get("state"), str) or obs.get("state") not in {
-            "ok",
-            "error",
-            "warming",
-            "waiting",
-        }:
-            raise ValueError("invalid_metric_state")
-        # Null/invalid cached values are allowed only as failed observations.
-        if (
-            type(value) not in {int, float}
-            or (type(value) is int and abs(value) > 2**53 - 1)
-            or not math.isfinite(value)
-        ):
-            if obs["state"] == "ok":
-                raise ValueError("invalid_value")
-            value = None
-        unit = item.get("units")
-        if unit is not None and (not isinstance(unit, str) or len(unit) > 24):
-            raise ValueError("invalid_unit")
-        samples.append(
-            {
-                "metric": metric,
-                "value": value,
-                "unit": unit,
-                **{k: obs[k] for k in ("seq", "measured_ms", "state")},
-            }
-        )
-    return {
-        **{
-            k: meta[k]
-            for k in (
-                "version",
-                "device_id",
-                "boot_id",
-                "model",
-                "sensor",
-                "snapshot_seq",
-                "time_ms",
-                "state",
-                "errors",
-                "reason",
-            )
-        },
-        "metrics": samples,
-    }
+parse_sensor_observation = parse_contract
 
 
 @dataclass(slots=True)
 class SensorObservationTracker:
     """Keep only latest identities; snapshots do not promise every measurement."""
 
+    expected_settings: dict | None = None
+    profile_rules: dict = field(default_factory=dict)
+    profile_error: dict | None = None
     selected: bool = False
     snapshots: int = 0
     duplicates: int = 0
     missed_snapshots: int = 0
     unobserved_updates: int = 0
     issues: Counter = field(default_factory=Counter)
+    coverage: Counter = field(default_factory=Counter)
     latest: dict[tuple[str, str], dict] = field(default_factory=dict)
     _snapshots: dict[str, dict] = field(default_factory=dict)
     _origins: dict[str, datetime] = field(default_factory=dict)
@@ -206,33 +75,74 @@ class SensorObservationTracker:
                 snapshot["snapshot_seq"] == previous["snapshot_seq"]
                 and snapshot == previous
             ):
-                self.duplicates += len(snapshot["metrics"])
+                self.duplicates += sum(m["seq"] > 0 for m in snapshot["metrics"])
                 return snapshot, []
             if (
                 snapshot["snapshot_seq"] <= previous["snapshot_seq"]
                 or snapshot["time_ms"] < previous["time_ms"]
-                or snapshot["errors"] < previous["errors"]
             ):
                 self.issues["snapshot_regression"] += 1
                 return {"invalid_reason": "snapshot_regression"}, []
+        # Validate temporal evidence atomically before changing the accepted baseline.
+        if previous:
+            try:
+                validate_transition(previous, snapshot)
+            except ValueError as exc:
+                self.issues[str(exc)] += 1
+                return {"invalid_reason": str(exc)}, []
+        if self.expected_settings is not None:
+            expected = self.expected_settings.get(sensor)
+            if expected != snapshot["settings"]:
+                self.profile_error = {
+                    "sensor": sensor,
+                    "expected": expected,
+                    "declared": snapshot["settings"],
+                    "reason": "settings_mismatch",
+                }
+        if previous and snapshot["settings"] != previous["settings"]:
+            self.profile_error = {
+                "sensor": sensor,
+                "expected": previous["settings"],
+                "declared": snapshot["settings"],
+                "reason": "settings_changed",
+            }
+        if self.profile_error:
+            return {**snapshot, "profile_error": self.profile_error}, []
         current_metrics = {m["metric"] for m in snapshot["metrics"]}
         if any(s == sensor and m not in current_metrics for s, m in self.latest):
             self.issues["missing_metric"] += 1
         # Validate all identities before accepting any metric from this snapshot.
         for item in snapshot["metrics"]:
             prior = self.latest.get((sensor, item["metric"]))
-            if prior and (
-                item["seq"] < prior["seq"]
-                or item["measured_ms"] < prior["measured_ms"]
-                or (
-                    item["seq"] == prior["seq"]
-                    and any(
-                        item[k] != prior[k] for k in ("value", "unit", "measured_ms")
-                    )
+            if prior and previous and item["seq"] > prior["seq"]:
+                channel = metric_channel(sensor, item["metric"])
+                delta = (
+                    snapshot["channels"][channel]["ok_total"]
+                    - previous["channels"][channel]["ok_total"]
                 )
-                or (
-                    item["seq"] > prior["seq"]
-                    and item["measured_ms"] <= prior["measured_ms"]
+                if item["seq"] - prior["seq"] > delta:
+                    self.issues["metric_cycle_conflict"] += 1
+                    return {"invalid_reason": "metric_cycle_conflict"}, []
+            if (
+                prior
+                and prior["seq"] > 0
+                and (
+                    item["seq"] < prior["seq"]
+                    or (
+                        item["measured_ms"] is None
+                        or item["measured_ms"] < prior["measured_ms"]
+                    )
+                    or (
+                        item["seq"] == prior["seq"]
+                        and any(
+                            item[k] != prior[k]
+                            for k in ("value", "unit", "measured_ms")
+                        )
+                    )
+                    or (
+                        item["seq"] > prior["seq"]
+                        and item["measured_ms"] <= prior["measured_ms"]
+                    )
                 )
             ):
                 self.issues["measurement_regression"] += 1
@@ -241,15 +151,34 @@ class SensorObservationTracker:
             self.missed_snapshots += (
                 snapshot["snapshot_seq"] - previous["snapshot_seq"] - 1
             )
+        if previous:
+            delta = snapshot["failures"]["next_seq"] - previous["failures"]["next_seq"]
+            visible = sum(
+                r["seq"] >= previous["failures"]["next_seq"]
+                for r in snapshot["failures"]["recent"]
+            )
+            if delta > visible:
+                self.coverage["failure_tail_eviction"] += delta - visible
+            if "noise" in snapshot:
+                if snapshot["snapshot_seq"] > previous["snapshot_seq"] + 1:
+                    self.coverage["noise_interval_loss"] += 1
+                completed = (
+                    snapshot["noise"]["window_current"]["seq"]
+                    - previous["noise"]["window_current"]["seq"]
+                )
+                if completed > len(snapshot["noise"]["windows"]):
+                    self.coverage["noise_window_loss"] += completed - len(
+                        snapshot["noise"]["windows"]
+                    )
         self._snapshots[sensor] = snapshot
         samples = []
         for item in snapshot["metrics"]:
             key = sensor, item["metric"]
             prior = self.latest.get(key)
-            is_new = prior is None or item["seq"] > prior["seq"]
+            is_new = item["seq"] > 0 and (prior is None or item["seq"] > prior["seq"])
             if prior and is_new:
-                self.unobserved_updates += item["seq"] - prior["seq"] - 1
-            if not is_new:
+                self.unobserved_updates += max(0, item["seq"] - prior["seq"] - 1)
+            if not is_new and item["seq"] > 0:
                 self.duplicates += 1
             observation = {
                 "device_id": device,
@@ -260,23 +189,27 @@ class SensorObservationTracker:
                 "state": item["state"],
                 "measured_ts": (
                     self._origins[boot] + timedelta(milliseconds=item["measured_ms"])
-                ).isoformat(),
+                ).isoformat()
+                if item["measured_ms"] is not None
+                else None,
             }
             self.latest[key] = {
                 **item,
                 "sensor_state": snapshot["state"],
-                "errors": snapshot["errors"],
-                "age_seconds": (snapshot["time_ms"] - item["measured_ms"]) / 1000,
+                "channel": metric_channel(sensor, item["metric"]),
+                "age_seconds": (snapshot["time_ms"] - item["measured_ms"]) / 1000
+                if item["measured_ms"] is not None
+                else None,
                 "received_ts": received.isoformat(),
             }
-            if is_new and item["state"] == "ok" and snapshot["state"] == "ok":
+            if is_new and item["state"] == "ok":
                 samples.append(
                     SensorSample(
                         sensor=sensor,
                         metric=item["metric"],
                         value=item["value"],
                         unit=item["unit"],
-                        source="serial_observation_v1",
+                        source="serial_observation_v2",
                         observation=observation,
                     )
                 )
@@ -284,13 +217,17 @@ class SensorObservationTracker:
 
     def as_dict(self) -> dict:
         return {
+            "expected_settings": self.expected_settings,
+            "profile_rules": self.profile_rules,
+            "profile_error": self.profile_error,
             "selected": self.selected,
-            "source": "serial_observation_v1",
+            "source": "serial_observation_v2",
             "snapshots": self.snapshots,
             "duplicates": self.duplicates,
             "missed_snapshots": self.missed_snapshots,
             "unobserved_updates": self.unobserved_updates,
             "issues": dict(self.issues),
+            "coverage": dict(self.coverage),
             "sensors": [
                 {k: v for k, v in snapshot.items() if k != "metrics"}
                 for snapshot in self._snapshots.values()
@@ -330,23 +267,34 @@ def observation_findings(
                 "rule": "sensor_observations",
             }
         )
+    for reason, count in report.get("coverage", {}).items():
+        findings.append(
+            {
+                "severity": "warn",
+                "code": "SENSOR_OBSERVATION_COVERAGE",
+                "message": f"Incomplete UART evidence: {reason} ({count})",
+                "rule": "sensor_observations",
+            }
+        )
     for sensor in report.get("sensors", []):
-        if sensor["errors"] or sensor["state"] == "error":
-            severity = "fail" if sensor["state"] == "error" else "warn"
-            findings.append(
-                {
-                    "severity": severity,
-                    "code": "SENSOR_OBSERVATION_READ_ERRORS",
-                    "message": (
-                        f"{sensor['sensor']}: state={sensor['state']}, "
-                        f"cumulative errors={sensor['errors']}, "
-                        f"reason={sensor['reason']}"
-                    ),
-                    "rule": "sensor_observations",
-                }
-            )
+        for name, channel in sensor["channels"].items():
+            if channel["failed_total"] or channel["state"] == "error":
+                findings.append(
+                    {
+                        "severity": "fail" if channel["state"] == "error" else "warn",
+                        "code": "SENSOR_OBSERVATION_READ_ERRORS",
+                        "message": (
+                            f"{sensor['sensor']}.{name}: state={channel['state']}, "
+                            f"failed cycles={channel['failed_total']}, "
+                            f"reason={channel['reason']}"
+                        ),
+                        "rule": "sensor_observations",
+                    }
+                )
     for item in report.get("latest", []):
         age = item["age_seconds"]
+        if age is None:
+            continue
         if reference_time:
             age += max(
                 0,
@@ -365,7 +313,7 @@ def observation_findings(
             f"{item['sensor']}.{item['metric']}: "
             f"last successful measurement age {age:.1f}s"
         )
-        if item["state"] == "error" or item["sensor_state"] == "error":
+        if item["state"] == "error":
             status = "fail"
             message += "; reading failed; cached value is not a new measurement"
         elif item["state"] != "ok":
@@ -381,3 +329,148 @@ def observation_findings(
                 }
             )
     return findings
+
+
+def validate_transition(previous: dict, current: dict) -> None:
+    """Check counters and repeated bounded evidence across received snapshots."""
+
+    def require(condition, reason):
+        if not condition:
+            raise ValueError(reason)
+
+    require(current["cycle_seq"] >= previous["cycle_seq"], "cycle_regression")
+    cycle_delta = current["cycle_seq"] - previous["cycle_seq"]
+    channel_deltas = [
+        current["channels"][name]["cycles_total"] - c["cycles_total"]
+        for name, c in previous["channels"].items()
+    ]
+    require(
+        max(channel_deltas) <= cycle_delta <= sum(channel_deltas),
+        "channel_cycle_delta_conflict",
+    )
+    for name, prior in previous["channels"].items():
+        channel = current["channels"][name]
+        for key in ("cycles_total", "ok_total", "failed_total"):
+            require(channel[key] >= prior[key], "channel_counter_regression")
+        for key, counter in (
+            ("last_ok_ms", "ok_total"),
+            ("last_failed_ms", "failed_total"),
+        ):
+            old, new = prior[key], channel[key]
+            require(
+                old is None or (new is not None and new >= old),
+                "channel_time_regression",
+            )
+            require(
+                channel[counter] != prior[counter] or new == old,
+                "channel_time_without_cycle",
+            )
+            require(
+                channel[counter] == prior[counter]
+                or (new is not None and (old is None or new > old)),
+                "channel_cycle_without_time",
+            )
+        old, new = prior["last_recovered_ms"], channel["last_recovered_ms"]
+        require(old is None or (new is not None and new >= old), "recovery_regression")
+        if new != old:
+            require(
+                channel["ok_total"] > prior["ok_total"] and new > previous["time_ms"],
+                "recovery_without_success",
+            )
+        if prior["state"] == "error" and channel["state"] != "error":
+            require(
+                channel["ok_total"] > prior["ok_total"]
+                and new is not None
+                and new > previous["time_ms"],
+                "error_cleared_without_success",
+            )
+    old_tail, new_tail = previous["failures"], current["failures"]
+    require(new_tail["next_seq"] >= old_tail["next_seq"], "failure_sequence_regression")
+    old_records = {r["seq"]: r for r in old_tail["recent"]}
+    for record in new_tail["recent"]:
+        if record["seq"] in old_records:
+            require(record == old_records[record["seq"]], "failure_history_changed")
+        elif record["seq"] >= old_tail["next_seq"]:
+            require(
+                record["at_ms"] >= previous["time_ms"]
+                and record["cycle_seq"] > previous["cycle_seq"],
+                "failure_before_baseline",
+            )
+    new_records = [r for r in new_tail["recent"] if r["seq"] >= old_tail["next_seq"]]
+    delta = new_tail["next_seq"] - old_tail["next_seq"]
+    deltas = []
+    for name, channel in current["channels"].items():
+        failed = channel["failed_total"] - previous["channels"][name]["failed_total"]
+        visible = sum(name in r["channels"] for r in new_records)
+        require(visible <= failed <= delta, "failure_delta_conflict")
+        require(delta > len(new_records) or failed == visible, "failure_delta_conflict")
+        deltas.append(failed)
+    require(max(deltas) <= delta <= sum(deltas), "failure_delta_conflict")
+    if "noise" not in current:
+        return
+    old, new = previous["noise"], current["noise"]
+    require(old["started_ms"] == new["started_ms"], "noise_start_changed")
+    for key in ("successful_blocks_total", "active_ms_total"):
+        require(new[key] >= old[key], "noise_counter_regression")
+    p, q = old["sds_pause"], new["sds_pause"]
+    require(
+        q["cycle_seq"] >= p["cycle_seq"]
+        and q["excluded_ms_total"] >= p["excluded_ms_total"],
+        "pause_regression",
+    )
+    budget = (
+        current["settings"]["sds_warmup_ms"] + current["settings"]["sds_collect_ms"]
+    )
+    # Unseen cycles cannot exclude more elapsed time or renew an old allowance.
+    extra = q["excluded_ms_total"] - p["excluded_ms_total"]
+    allowance = (q["cycle_seq"] - p["cycle_seq"]) * budget
+    if p["state"] == "active":
+        allowance += max(0, budget - (previous["time_ms"] - p["started_ms"]))
+    require(
+        extra <= min(current["time_ms"] - previous["time_ms"], allowance),
+        "pause_budget_conflict",
+    )
+    if q["cycle_seq"] == p["cycle_seq"]:
+        require(q["started_ms"] == p["started_ms"], "pause_start_changed")
+        require(p["state"] != "idle" or q["state"] != "active", "pause_reentered")
+    require(
+        new["interval"]["start_ms"] >= previous["time_ms"], "noise_interval_overlap"
+    )
+    if current["snapshot_seq"] == previous["snapshot_seq"] + 1:
+        require(
+            new["interval"]["start_ms"] == previous["time_ms"], "noise_interval_missing"
+        )
+    prior_windows = {w["seq"]: w for w in old["windows"]}
+    for window in new["windows"]:
+        if window["seq"] in prior_windows:
+            require(window == prior_windows[window["seq"]], "noise_window_changed")
+    a, b = old["window_current"], new["window_current"]
+    require(b["seq"] >= a["seq"], "noise_window_regression")
+    success_delta = new["successful_blocks_total"] - old["successful_blocks_total"]
+    if a["seq"] == b["seq"]:
+        require(
+            b["successful_blocks"] - a["successful_blocks"] == success_delta,
+            "noise_success_delta_conflict",
+        )
+    elif any(w["seq"] == a["seq"] for w in new["windows"]):
+        blocks = sum(
+            w["successful_blocks"] for w in new["windows"] if w["seq"] >= a["seq"]
+        )
+        require(
+            blocks + b["successful_blocks"] - a["successful_blocks"] == success_delta,
+            "noise_success_delta_conflict",
+        )
+    if a["seq"] == b["seq"]:
+        require(
+            b["start_ms"] == a["start_ms"]
+            and b["successful_blocks"] >= a["successful_blocks"],
+            "noise_current_regression",
+        )
+    else:
+        closed = next((w for w in new["windows"] if w["seq"] == a["seq"]), None)
+        if closed:
+            require(
+                closed["start_ms"] == a["start_ms"]
+                and closed["successful_blocks"] >= a["successful_blocks"],
+                "noise_current_regression",
+            )

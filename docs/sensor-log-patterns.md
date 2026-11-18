@@ -243,93 +243,133 @@ and the final FAIL verdict (CLI exit 1). Raw serial.log bytes are unchanged.
 
 ## Versioned debug UART observations
 
-Debug firmware extends the existing sensor/metric/value/units JSON shape with
-`_observations` at the root and `observation` per numeric metric. Each line is
-one snapshot of **one physical sensor**, not a promise to deliver every reading.
-Only debug emits this schema, independently of encryption, connectivity and
-protobuf success. Metadata is assembled in a separate UART document; API,
-uplink and SD data retain their existing shape. BME280/BMP280, BME680, SCD4x,
-SDS and ICS43434 are supported; experimental radiation does not emit this schema.
+Acceptance requires `_observations.version` as the JSON integer `2` and uses
+only `serial_observation_v2`. One line describes one physical sensor, independent
+of uplink, API and SD. Ordinary full JSON remains available to diagnostic
+extraction. Version 1, missing observations and malformed records cannot refresh
+acceptance measurements through another source. BUILD/BOOT/HEALTH and delivery
+checks remain independent. Debug is required for acceptance measurements.
 
-```json
-{"BME280":{"temperature":{"value":24,"units":"°C","observation":{"seq":"7","measured_ms":"300010","state":"ok"}}},"_observations":{"version":1,"device_id":"1051DB010C70","boot_id":"1a2b-3c4d","model":"urban","sensor":"BME280","snapshot_seq":"12","time_ms":"330000","state":"ok","errors":0,"reason":"none"}}
-```
+The metadata repeats device_id (12 hexadecimal digits), boot_id (two 1–8 digit
+hexadecimal components separated by `-`), model (`urban`/`insight`), sensor,
+snapshot_seq, time_ms, cycle_seq, state, reason, settings, channels and failures.
+Sensor names are BME280/BMP280/BME680/SCD4x/SDS/ICS43434. Context changes during
+capture fail. Snapshot sequence starts at one and advances per sensor even when
+a generated line is lost. cycle_seq counts completed external cycles. The old
+`errors` field is invalid; failed cycles are separate from diagnostic messages.
+An explicit `snapshot_overflow` marker fails without salvaging measurements.
 
-Required root metadata: version 1; twelve hexadecimal device-id digits; a
-per-boot random token of two 1–8 digit hexadecimal components separated by `-`;
-model `urban`/`insight`; physical sensor; increasing per-sensor snapshot sequence;
-monotonic milliseconds since boot; state; cumulative per-sensor error count and
-stable error reason. Context repeats in every snapshot for late attachment.
-The random token changes on reboot; a context change during capture fails the
-contract check even if HEALTH/BOOT was missed. The token is observational identity,
-not authentication. Device identity must still match expected USB/UART identity.
+All clocks and counters accept decimal strings or exact JSON integers, never
+booleans or floats. Clocks are monotonic boot milliseconds through 2^42−1,
+counters through 2^53−1. Negative/future values and duplicate JSON keys fail.
+Limits are 8192 UTF-8 bytes per line and 16 metric fields per sensor. Unknown
+extensions are ignored and omitted from structured artifacts; known fields are
+validated atomically. No nested values are salvaged from malformed records.
 
-Clock and sequence fields are emitted as decimal strings to preserve 64-bit
-precision without changing ArduinoJson globally. The parser also accepts exact
-JSON integers. It validates clocks through 2^42−1 ms and sequences through
-2^53−1; booleans and negative counters are invalid. Device clocks use
-`esp_timer_get_time`, so they do not wrap with 32-bit `millis()`. Numeric values
-must be finite (integer values within ±(2^53−1)); original units are preserved,
-including legacy BME280 pressure labeling and current SDS µg/m³.
+Each known numeric metric has value, optional units and observation with seq,
+measured_ms and state. Values must be finite, with integers within ±(2^53−1).
+Before its first success a metric has null value/time and seq=0; its state can
+be never/warming/waiting/error. This is evidence of state, never a sample.
+After success, value/time and seq>=1 remain cached during errors/waits. New equal
+values advance identity; a duplicate does not create a sample. An identity may
+not change its value/unit/time. New metric identities require successful channel
+cycles. Display strings and unknown metric extensions are not samples.
 
-Each numeric metric carries its successful update sequence, successful update
-milliseconds, and state. New equal values increment the sequence. Reprinting
-or a failed read preserves successful identity/time. Errors mark cached metrics
-as failed and increment the sensor error count; partial invalid numeric values
-can mark one metric failed. `voc_level=-1` retains the unavailable-reading
-WARN, and VOC indicator/counter flatline exceptions remain unchanged. The schema
-accepts `never`, `warming`, `waiting`, `ok`, `error` sensor states and all except
-`never` for metrics with a successful identity. Current drivers emit `never`
-before a first result, `ok` after updates and `error` on instrumented failures;
-ordinary SDS sleep/noise pause does not create an error. This does not infer VOC
-algorithm readiness from elapsed time.
+Required metrics (even before first success):
 
-SDS updates represent completed measurement windows (with existing trimmed-mean
-processing). Noise values are running aggregates of the current sending window:
-sequence/time advance on each successful aggregate update, not merely on UART
-publication, and reset of the aggregate does not reset sequence. Noise snapshots
-can therefore represent partial windows. BME680 gas and VOC values are derived
-from the same successful fetch. Individual metric times remain separate.
+| Sensor | Metrics | Channels |
+| --- | --- | --- |
+| BME280 | temperature, humidity, pressure | main |
+| BMP280 | temperature, pressure | main |
+| BME680 | temperature, humidity, pressure; gas_resistance, gas_baseline, voc_ppb, voc_index, voc_level, voc_spikes_today when gas enabled | environment, gas |
+| SCD4x | temperature, humidity, co2 | main |
+| SDS | P1, P2 | main |
+| ICS43434 | noiseAvg, noiseMax | main |
 
-A heartbeat is checked by the sensor worker: nominally every 30 seconds per
-active supported sensor, also at first observation and after a reported error.
-Blocking existing sensor/network work may delay it; this is not a hard realtime
-guarantee. At most 16 metric fields per sensor and 8192 UTF-8 bytes per line are
-accepted. Firmware builds an 8192-byte temporary JSON document, then writes the
-serialized line in one call. Overflow emits an invalid observation marker and
-fails acceptance instead of producing a partial PASS. Snapshot sequence gaps
-and skipped metric updates are counted separately; snapshots cannot establish
-absence of intermediate errors or capture every physical sample. Sensors that
-fail initialization may be absent entirely; expected physical presence remains
-the tester profile's responsibility.
+Every channel has cycles_total=ok_total+failed_total, last_ok_ms,
+last_failed_ms, last_recovered_ms, state and reason. Timestamps are null before
+an event. Counters and timestamps cannot regress. Init errors can have zero
+cycles. A failed channel cannot clear to waiting/ok without a new successful
+cycle. BME680 environment success remains a sample when gas fails; errors do
+not multiply by the number of metric fields. Global state is error while a
+channel is in error. Stable reason codes use `[a-z0-9_]{1,64}`; ok uses none,
+error requires a non-none reason. Supported states are
+never/warming/waiting/ok/error. Waiting/sds_active is not an error.
 
-`serial_observation_v1` is the only acceptance measurement source for the entire
-capture. Missing `_observations` telemetry produces `SENSOR_OBSERVATION_MISSING`
-and FAIL/exit 1. Malformed records fail the contract; ordinary sensor JSON and
-PAYLOAD samples cannot fill gaps or refresh measurements. Full sensor JSON is
-parsed only by diagnostic extraction commands.
+`failures` contains next_seq and recent, a complete contiguous tail of up to 16
+records. Each record has seq, cycle_seq, at_ms, a nonempty unique channels list
+and reason. Failure sequence is global per sensor/boot; a shared BME680 failure
+has both channels in one record. The parser validates history against channel
+failed counters and times, including deltas between snapshots, and rejects
+rewritten repeated records. Tail eviction preserves counters without inventing
+unseen times. These records are evidence, not an unlimited error journal.
 
-Deduplication uses device/boot/sensor/metric/measurement sequence. A repeated
-measurement is not appended even in a later snapshot; a new equal value is.
-Regressed/inconsistent sequence/time/value, dropped metric fields, conflicting
-identity, unknown version/state, malformed/oversized records or reboot produce
-FAIL findings. Unknown extension fields are ignored and cannot override validated
-fields. No nested ordinary JSON values are salvaged from malformed versioned records.
+### Expected effective settings
 
-`events.jsonl` stores sanitized sensor_observation events, including error/cache
-states. `samples.jsonl` adds an optional `observation`
-object with device/boot identity, sequence, device snapshot/measurement times,
-state and projected `measured_ts`; its `ts` remains host receipt time. A fixed
-per-boot mapping, established on first observation, projects device milliseconds
-onto host UTC for cadence/flatline; it is not a synchronized device UTC clock.
-`summary.sensor_observations` records
-source, snapshot/duplicate/loss counters, issues, latest sensor states and metric
-ages. `sensor_samples_count` counts the accepted measurement records written
-to samples.jsonl; cache repeats do not create new records.
+Every UART settings object contains all of these keys:
 
-Freshness uses device age at the latest snapshot plus host time since receipt.
-Warn/fail thresholds reuse the tester's configured cadence expected interval and
-missed-count multipliers, rather than the 30-second publication interval. Current
-read errors fail; cumulative recovered/pre-capture errors warn without asserting
-when they occurred. These findings participate in the usual report and CLI 1.
-Delivery rules remain independent: local readings never confirm remote delivery.
+| Key | Meaning |
+| --- | --- |
+| fetch_wait_ms | Positive effective wait before external calls |
+| measurement_interval_ms | BME/SCD >=300000; SDS >=30000; noise null |
+| publication | on_update, or coalesced for noise |
+| publish_interval_ms | 0, or 30000 for noise |
+| state_min_interval_ms | 1000 |
+| gas_enabled | Boolean for BME680; null otherwise |
+| sds_warmup_ms / sds_collect_ms | 15000/5000 for SDS and noise with SDS, 0/0 for noise without SDS; null otherwise |
+| noise_window_active_ms | 300000 for noise; null otherwise |
+
+The tester compares these with explicit `[observations.settings.SENSOR]` tables
+in the selected TOML profile. Null fields are omitted in TOML, not in UART.
+Canonical sensor names are case-sensitive. Profiles also require nonempty
+`observations.firmware_source` and `observations.settings_rule`. Expectations
+are fixed before capture. Unknown profile setting names fail config validation.
+A missing expectation, valid-but-different settings or a settings change stops
+capture with CLI 2. This records a setup problem without a device-defect verdict.
+Malformed declarations, missing required fields and counter contradictions are
+contract failures (CLI 1). Unknown BUILD is retained without inferring a local
+firmware revision. Credentials and transport URLs do not belong in settings.
+
+### Noise evidence
+
+ICS43434 additionally requires noise with started_ms, successful_blocks_total,
+active_ms_total, last_ok_ms, sds_pause, interval, windows and window_current.
+Successful blocks equal main.ok_total. Active time equals elapsed time since
+subsystem start minus bounded excluded SDS time; it grows during failures too.
+`sds_pause` has cycle_seq, state active/idle, started_ms (nullable) and
+excluded_ms_total. One SDS cycle cannot exclude more than warmup+collect.
+Repeated/reentered cycles cannot renew this allowance. Without SDS the pause
+has zero sequence/exclusion and null start. Unseen pause boundaries are not
+proof of exact per-interval exclusion.
+
+`interval` contains start_ms, end_ms, max_gap_active_ms, max_gap_end_ms and
+open_gap_active_ms. End equals snapshot time. A consecutive snapshot's interval
+starts at the previous snapshot; a snapshot gap cannot be replaced with an
+invented zero interval. Open gaps include time since subsystem start before
+the first success. Repeated completed windows are immutable.
+
+`windows` holds the two last completed consecutive non-overlapping windows:
+seq, start_ms, end_ms, active_ms=300000, successful_blocks. `window_current`
+is mandatory and has seq, start_ms, active_ms<300000 and successful_blocks.
+Window sequences and active time must agree, adjacent boundaries must meet,
+and counts cannot exceed cumulative successes. Windows describe statistics of
+reads; they do not produce additional noiseAvg/noiseMax samples.
+
+### Events and reports
+
+`events.jsonl` stores sanitized sensor_observation events including state-only
+records, channel counters, history, settings and noise evidence.
+`samples.jsonl` contains only new successful metrics, with observation identity,
+snapshot/measurement times and projected measured_ts. Its ts is host receipt.
+The fixed boot mapping projects monotonic device time onto host time; it is not
+synchronized UTC. `summary.sensor_observations` and the UART report section
+preserve expected_settings, profile_rules, profile_error, issues, accepted
+sensor declarations, duplicate/loss counters and latest metric ages. A rejected
+profile declaration is retained inside profile_error.declared and its event.
+BUILD is saved separately even when unknown or absent.
+
+Freshness uses device age plus host time since receipt with configured cadence
+thresholds. Current errors fail; recovered cumulative failed cycles warn without
+claiming their capture attribution. Contract evidence alone does not establish
+a rolling error budget or a noise-frequency verdict. Delivery checks remain
+independent of local sensor measurements.

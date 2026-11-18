@@ -23,27 +23,19 @@ def snapshot(
     boot="a-b",
     value=24.0,
 ):
-    return {
-        "_observations": {
-            "version": 1,
-            "device_id": "1051DB010C70",
-            "boot_id": boot,
-            "model": "urban",
-            "sensor": "BME280",
-            "snapshot_seq": snapshot_seq,
-            "time_ms": time,
-            "state": "ok",
-            "errors": 0,
-            "reason": "none",
-        },
-        "BME280": {
-            "temperature": {
-                "value": value,
-                "units": "°C",
-                "observation": {"seq": seq, "measured_ms": measured, "state": state},
-            }
-        },
-    }
+    from tests.helpers import uart_snapshot
+
+    data = uart_snapshot("BME280", {"temperature": value})
+    data["_observations"].update(
+        snapshot_seq=snapshot_seq, time_ms=time, boot_id=boot, cycle_seq=seq
+    )
+    data["_observations"]["channels"]["main"].update(
+        cycles_total=seq, ok_total=seq, last_ok_ms=measured
+    )
+    data["BME280"]["temperature"].update(
+        units="°C", observation=dict(seq=seq, measured_ms=measured, state=state)
+    )
+    return data
 
 
 def feed(tracker, **kwargs):
@@ -63,7 +55,27 @@ def test_error_with_cache_does_not_refresh_measurement():
     tracker = SensorObservationTracker()
     feed(tracker)
     data = snapshot(time=5000, snapshot_seq=2, state="error")
-    data["_observations"].update(state="error", errors=1, reason="bmx280_read_failed")
+    meta = data["_observations"]
+    meta.update(state="error", reason="bmx280_read_failed", cycle_seq=2)
+    meta["channels"]["main"].update(
+        cycles_total=2,
+        failed_total=1,
+        last_failed_ms=5000,
+        state="error",
+        reason="bmx280_read_failed",
+    )
+    meta["failures"] = dict(
+        next_seq=2,
+        recent=[
+            dict(
+                seq=1,
+                cycle_seq=2,
+                at_ms=5000,
+                channels=["main"],
+                reason="bmx280_read_failed",
+            )
+        ],
+    )
     assert tracker.feed(json.dumps(data), NOW)[1] == []
     assert tracker.latest[("BME280", "temperature")]["measured_ms"] == 1000
     findings = observation_findings(
@@ -97,7 +109,7 @@ def test_reboot_changes_measurement_identity_and_is_reported():
 @pytest.mark.parametrize(
     "mutation",
     [
-        lambda d: d["_observations"].update(version=2),
+        lambda d: d["_observations"].update(version=1),
         lambda d: d["_observations"].update(version=True),
         lambda d: d["_observations"].update(time_ms=-1),
         lambda d: d["BME280"]["temperature"].pop("observation"),
@@ -152,11 +164,13 @@ def test_physical_sources_do_not_merge():
     tracker = SensorObservationTracker()
     feed(tracker)
     data = snapshot()
-    data["SCD4x"] = data.pop("BME280")
+    from tests.helpers import uart_snapshot
+
+    data = uart_snapshot("SCD4x", {"temperature": 24})
     data["_observations"]["sensor"] = "SCD4x"
     _, samples = tracker.feed(json.dumps(data), NOW)
     assert samples[0].sensor == "SCD4x"
-    assert len(tracker.latest) == 2
+    assert len(tracker.latest) == 6
 
 
 def test_freshness_uses_host_tail_since_last_snapshot():
@@ -175,7 +189,7 @@ def test_freshness_uses_host_tail_since_last_snapshot():
 def test_unknown_extensions_do_not_change_schema():
     data = snapshot()
     data["_observations"]["extension"] = {"anything": "ignored"}
-    assert parse_sensor_observation(json.dumps(data))["metrics"][0]["value"] == 24
+    assert parse_sensor_observation(json.dumps(data))["metrics"][-1]["value"] == 24
 
 
 @pytest.mark.parametrize("field", ["time_ms", "snapshot_seq"])
@@ -185,12 +199,12 @@ def test_decimal_wire_clocks(field):
     data["BME280"]["temperature"]["observation"].update(seq="1", measured_ms="1000")
     parsed = parse_sensor_observation(json.dumps(data))
     assert parsed[field] == 4294967297
-    assert parsed["metrics"][0]["measured_ms"] == 1000
+    assert parsed["metrics"][-1]["measured_ms"] == 1000
 
 
 def test_valid_new_json_remains_available_to_stateless_diagnostics():
     samples = parse_sensor_values(json.dumps(snapshot()))
-    assert samples[0].source == "serial_observation_v1"
+    assert samples[0].source == "serial_observation_v2"
     assert samples[0].sensor == "BME280"
 
 
@@ -257,7 +271,7 @@ def test_measurement_time_drives_cadence_and_flatline():
             metric="temperature",
             value=24,
             unit="°C",
-            source="serial_observation_v1",
+            source="serial_observation_v2",
             observation={"measured_ts": (NOW + timedelta(seconds=offset)).isoformat()},
         )
         for offset in (0, 1200)
@@ -339,7 +353,7 @@ def test_independent_source_does_not_depend_on_transport(tmp_path, transport):
     )
     assert stats.sensor_samples_count == 2
     assert all(
-        record.source == "serial_observation_v1"
+        record.source == "serial_observation_v2"
         for record in stats.sensor_series.by_key[("BME280", "temperature")]
     )
     assert not stats.sensor_observations["issues"]
@@ -371,7 +385,7 @@ def test_missing_versioned_observations_fail_even_with_plain_sensor_json(tmp_pat
         FakeSerial([raw], clock), _create_artifacts(tmp_path), 1, clock=clock
     )
     assert stats.sensor_samples_count == 0
-    assert stats.sensor_observations["source"] == "serial_observation_v1"
+    assert stats.sensor_observations["source"] == "serial_observation_v2"
     result = evaluate_rules(stats, RuleEngineConfig())
     assert result.verdict == "FAIL"
     assert any(f.code == "SENSOR_OBSERVATION_MISSING" for f in result.findings)

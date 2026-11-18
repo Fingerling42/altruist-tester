@@ -89,10 +89,10 @@ def parse_sensor_values(line: str) -> list[SensorSample]:
                 metric=item["metric"],
                 value=item["value"],
                 unit=item["unit"],
-                source="serial_observation_v1",
+                source="serial_observation_v2",
                 observation={k: item[k] for k in ("seq", "measured_ms", "state")},
             )
             for item in snapshot["metrics"]
-            if snapshot["state"] == "ok" and item["state"] == "ok"
+            if item["seq"] > 0 and item["state"] == "ok"
         ]
     return _parse_json_sensor_snapshots(line)

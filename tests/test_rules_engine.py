@@ -34,7 +34,7 @@ def _build_events() -> BuildEventsSummary:
 def _sds_sample(metric: str, value: float, offset_seconds: int):
     return replace(
         sample_record("SDS", metric, value, offset_seconds),
-        source="serial_observation_v1",
+        source="serial_observation_v2",
         observation={"seq": offset_seconds + 1, "measured_ms": offset_seconds * 1000},
     )
 
