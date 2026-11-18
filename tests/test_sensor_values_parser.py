@@ -28,18 +28,21 @@ def test_parse_sensor_json_snapshot_from_fixture():
 def test_payload_aliases_do_not_create_measurements():
     line = (
         "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=48 "
-        "sample_available=1 sample=gc:1.5,co2:612,co:0.1,o3:0.2,no2:0.3,"
+        "sample=gc:1.5,co2:612,co:0.1,o3:0.2,no2:0.3,"
         "fa:42,ea:55"
     )
 
     assert parse_sensor_values(line) == []
-    assert parse_payload_metadata(line)["sample_available"] == "1"
+    assert parse_payload_metadata(line)["channel"] in {
+        "datalog",
+        "sensors-connectivity",
+    }
 
 
 def test_parse_payload_metadata_after_uart_log_prefix():
     line = (
         "[123] [INFO] [PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-        "payload_len=15 sample_available=1 sample=h:65.15,t:25.84"
+        "payload_len=15 sample=h:65.15,t:25.84"
     )
 
     fields = parse_payload_metadata(line)
@@ -49,7 +52,6 @@ def test_parse_payload_metadata_after_uart_log_prefix():
         "encoding": "plain",
         "encrypted": "0",
         "payload_len": "15",
-        "sample_available": "1",
         "sample": "h:65.15,t:25.84",
     }
 
@@ -57,18 +59,18 @@ def test_parse_payload_metadata_after_uart_log_prefix():
 def test_plain_payload_keeps_metadata_without_measurements():
     line = (
         "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-        "payload_len=26 sample_available=1 sample=h:65.15,t:25.84,p:99860.91"
+        "payload_len=26 sample=h:65.15,t:25.84,p:99860.91"
     )
 
     assert parse_sensor_values(line) == []
-    assert parse_payload_metadata(line)["sample_available"] == "1"
+    assert parse_payload_metadata(line)["channel"] in {
+        "datalog",
+        "sensors-connectivity",
+    }
 
 
 def test_parse_payload_ignores_encrypted_payload_without_sample():
-    line = (
-        "[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 "
-        "sample_available=0"
-    )
+    line = "[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 "
 
     assert parse_sensor_values(line) == []
 
@@ -76,37 +78,46 @@ def test_parse_payload_ignores_encrypted_payload_without_sample():
 def test_encrypted_payload_with_plain_sample_is_not_a_measurement():
     line = (
         "[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 "
-        "sample_available=1 sample=h:65.15,t:25.84,p1:eJxEncrypted,p2:7.37"
+        "sample=h:65.15,t:25.84,p1:eJxEncrypted,p2:7.37"
     )
 
     assert parse_sensor_values(line) == []
-    assert parse_payload_metadata(line)["sample_available"] == "1"
+    assert parse_payload_metadata(line)["channel"] in {
+        "datalog",
+        "sensors-connectivity",
+    }
 
 
 def test_payload_with_service_time_is_not_a_measurement():
     line = (
         "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=38 "
-        "sample_available=1 sample=h:65.15,t:25.84,time:17833545,p1:16.33"
+        "sample=h:65.15,t:25.84,time:17833545,p1:16.33"
     )
 
     assert parse_sensor_values(line) == []
-    assert parse_payload_metadata(line)["sample_available"] == "1"
+    assert parse_payload_metadata(line)["channel"] in {
+        "datalog",
+        "sensors-connectivity",
+    }
 
 
 def test_datalog_payload_is_not_a_measurement_fallback():
     line = (
         "[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=15 "
-        "sample_available=1 sample=h:65.15,t:25.84"
+        "sample=h:65.15,t:25.84"
     )
 
     assert parse_sensor_values(line) == []
-    assert parse_payload_metadata(line)["sample_available"] == "1"
+    assert parse_payload_metadata(line)["channel"] in {
+        "datalog",
+        "sensors-connectivity",
+    }
 
 
 def test_parse_truncated_plain_payload_sample_is_ignored():
     line = (
         "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-        "payload_len=54 sample_available=1 "
+        "payload_len=54 "
         "sample=h:56.17,t:27.66,p:9967,nm:44,na:42,p1:5.80,p2:4.00"
     )
 
@@ -116,11 +127,11 @@ def test_parse_truncated_plain_payload_sample_is_ignored():
 def test_parse_non_contract_payload_channels_do_not_create_sensor_samples():
     line = (
         "[PAYLOAD] channel=robonomics-map encoding=mixed encrypted=1 "
-        "payload_len=280 sample_available=1 sample=h:65.15,t:25.84"
+        "payload_len=280 sample=h:65.15,t:25.84"
     )
     custom_http_line = (
         "[PAYLOAD] channel=custom-http encoding=plain encrypted=0 "
-        "payload_len=28 sample_available=1 sample=h:65.15,t:25.84"
+        "payload_len=28 sample=h:65.15,t:25.84"
     )
 
     assert parse_sensor_values(line) == []

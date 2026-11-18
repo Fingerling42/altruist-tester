@@ -286,8 +286,6 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 f"- channels: {channels}",
                 "- encrypted: "
                 f"{payload_observations.get('encrypted_payload_observations_count')}",
-                "- sample available: "
-                f"{payload_observations.get('sample_available_payload_observations_count')}",
             ]
         )
     if isinstance(upload_health, dict):

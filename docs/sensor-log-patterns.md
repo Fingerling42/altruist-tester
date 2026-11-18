@@ -160,9 +160,9 @@ Parser guidance:
 Observed serial shape:
 
 ```text
-[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=56 sample_available=1 sample=h:65.99,t:25.51,p:101069.09,nm:83,na:81,p1:16.33,p2:7.33
-[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324 sample_available=0
-[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 payload_len=280 sample_available=0
+[PAYLOAD] channel=datalog encoding=plain encrypted=0 payload_len=56
+[PAYLOAD] channel=datalog encoding=cps encrypted=1 payload_len=324
+[PAYLOAD] channel=sensors-connectivity encoding=mixed encrypted=1 payload_len=280
 ```
 
 Firmware source:
@@ -171,9 +171,10 @@ Firmware source:
 
 The firmware formats payloads from `sensors_data`, applying sharing/encryption
 flags and selecting temperature/humidity sources where applicable. The tester
-records `channel`, `encoding`, `encrypted`, `payload_len` and `sample_available`
-as transport metadata. It does not extract measurements from `sample=` or from
-transport bodies. Ciphertext, signatures and `[PROTO]` are not sensor readings.
+records `channel`, `encoding`, `encrypted` and `payload_len` as transport
+metadata. PAYLOAD lines contain no sensor values or sample-availability field.
+Transport bodies are not measurement inputs. Ciphertext, signatures and
+`[PROTO]` are not sensor readings.
 Acceptance measurements come only from versioned debug UART observations.
 
 

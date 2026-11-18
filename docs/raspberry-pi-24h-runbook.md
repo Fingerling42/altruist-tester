@@ -185,7 +185,7 @@ only when there is an active Robonomics subscription and the device address
 was added to it.
 
 C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
-built-in endpoint. Success skips legacy JSON and its `[PAYLOAD] sample=`;
+built-in endpoint. Success skips legacy JSON and its `[PAYLOAD]` metadata;
 both Map toggles mean JSON fallback, not unconditional dual-send. Confirm
 debug sensor JSON and HEALTH during a preflight run before starting 24 hours,
 including Insight VOC/gas when applicable. BME680 and

@@ -190,7 +190,6 @@ class PayloadObservationsSummary:
     by_channel: dict[str, int] = field(default_factory=dict)
     by_encoding: dict[str, int] = field(default_factory=dict)
     encrypted_count: int = 0
-    sample_available_count: int = 0
     last_observation: dict[str, Any] | None = None
     malformed_count: int = 0
     malformed_by_reason: dict[str, int] = field(default_factory=dict)
@@ -213,9 +212,6 @@ class PayloadObservationsSummary:
             "payload_observations_by_channel": self.by_channel,
             "payload_observations_by_encoding": self.by_encoding,
             "encrypted_payload_observations_count": self.encrypted_count,
-            "sample_available_payload_observations_count": (
-                self.sample_available_count
-            ),
             "last_payload_observation": self.last_observation,
             "malformed_payload_observations_count": self.malformed_count,
             "malformed_payload_observations_by_reason": self.malformed_by_reason,
@@ -415,8 +411,6 @@ def _update_payload_observations_summary(
         by_encoding=by_encoding,
         encrypted_count=summary.encrypted_count
         + (1 if observation.encrypted is True else 0),
-        sample_available_count=summary.sample_available_count
-        + (1 if observation.sample_available is True else 0),
         last_observation=payload,
     )
 
@@ -494,7 +488,6 @@ def _append_payload_observation(
                 "encoding",
                 "encrypted",
                 "payload_len",
-                "sample_available",
             ):
                 value = (observation.raw_fields or {}).get(key)
                 if value is None:

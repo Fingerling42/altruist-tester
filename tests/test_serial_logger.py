@@ -305,13 +305,12 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
             b"prev_uptime=0 prev_heap=0 last_section_id=0 "
             b"last_section=Idle/MainLoop\n",
             b"[123] [INFO] [PAYLOAD] channel=datalog encoding=cps "
-            b"encrypted=1 payload_len=324 sample_available=1 "
+            b"encrypted=1 payload_len=324 "
             b"sample=h:65.15,t:25.84,co2:723 e1=999\n",
             b"[PAYLOAD] channel=sensors-connectivity encoding=mixed "
-            b"encrypted=1 payload_len=360 sample_available=1 "
+            b"encrypted=1 payload_len=360 "
             b"sample=h:65.15,t:25.84 e1=999\n",
-            b"[PAYLOAD] channel=custom-http encoding=cps encrypted=1 "
-            b"payload_len=128 sample_available=0\n",
+            b"[PAYLOAD] channel=custom-http encoding=cps encrypted=1 payload_len=128\n",
             b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
             b"[DATALOG] failed reason=encryption_failed\n",
             b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
@@ -350,13 +349,12 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
             event["encoding"],
             event["encrypted"],
             event["payload_len"],
-            event["sample_available"],
         )
         for event in payload_events
     ] == [
-        ("datalog", "cps", True, 324, True),
-        ("sensors-connectivity", "mixed", True, 360, True),
-        ("custom-http", "cps", True, 128, False),
+        ("datalog", "cps", True, 324),
+        ("sensors-connectivity", "mixed", True, 360),
+        ("custom-http", "cps", True, 128),
     ]
     assert "sample" not in payload_events[0]["raw_fields"]
 
@@ -463,7 +461,7 @@ def test_capture_raw_serial_writes_only_versioned_sensor_samples(tmp_path):
     lines = [
         json.dumps({"BME280": {"temperature": {"value": 99}}}),
         "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-        "payload_len=4 sample_available=1 sample=t:77",
+        "payload_len=4 sample=t:77",
         json.dumps(uart_snapshot("BME280", {"temperature": 25.5})),
         json.dumps(uart_snapshot("SDS", {"P1": 16.3})),
     ]
@@ -489,12 +487,12 @@ def test_capture_records_payload_metadata_without_measurements(
         [
             (
                 b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=15 sample_available=1 "
+                b"encrypted=0 payload_len=15 "
                 b"sample=h:65.99,t:25.51\n"
             ),
             (
                 b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-                b"payload_len=15 sample_available=1 "
+                b"payload_len=15 "
                 b"sample=h:65.99,t:25.51\n"
             ),
         ],
@@ -511,7 +509,6 @@ def test_capture_records_payload_metadata_without_measurements(
         "sensors-connectivity": 1,
     }
     assert stats.payload_observations.by_encoding == {"plain": 2}
-    assert stats.payload_observations.sample_available_count == 2
     assert stats.payload_observation_records == (
         {
             "ts": stats.payload_observation_records[0]["ts"],
@@ -519,13 +516,11 @@ def test_capture_records_payload_metadata_without_measurements(
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 15,
-            "sample_available": True,
             "raw_fields": {
                 "channel": "sensors-connectivity",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "15",
-                "sample_available": "1",
             },
         },
         {
@@ -534,13 +529,11 @@ def test_capture_records_payload_metadata_without_measurements(
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 15,
-            "sample_available": True,
             "raw_fields": {
                 "channel": "datalog",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "15",
-                "sample_available": "1",
             },
         },
     )
@@ -792,7 +785,7 @@ def test_capture_quarantines_unknown_payload_channel(tmp_path):
     artifacts = _create_artifacts(tmp_path)
     raw = (
         b"[PAYLOAD] channel=sensors-connectivit encoding=plain encrypted=0 "
-        b"payload_len=4 sample_available=1 sample=t:20\n"
+        b"payload_len=4 sample=t:20\n"
     )
     stats = capture_raw_serial(FakeSerial([raw], clock), artifacts, 1, clock=clock)
     assert artifacts.serial_log.read_bytes() == raw
@@ -810,7 +803,7 @@ def test_malformed_payload_examples_are_bounded_and_do_not_reset_valid_counts(tm
         + "界" * 1000
         + " encoding="
         + "界" * 1000
-        + " encrypted=0 payload_len=5 sample_available=1 sample=t:999 wire=SECRET\n"
+        + " encrypted=0 payload_len=5 sample=t:999 wire=SECRET\n"
     ).encode()
     lines = [invalid] * 7 + [
         b"[PAYLOAD]\n",
@@ -823,7 +816,6 @@ def test_malformed_payload_examples_are_bounded_and_do_not_reset_valid_counts(tm
     assert payloads.by_channel == {"custom-http": 1}
     assert payloads.by_encoding == {"plain": 1}
     assert payloads.encrypted_count == 0
-    assert payloads.sample_available_count == 0
     assert len(stats.payload_observation_records) == 1
     assert payloads.malformed_count == 8
     assert payloads.malformed_by_reason == {"unknown_channel": 7, "missing_channel": 1}

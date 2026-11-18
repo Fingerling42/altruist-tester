@@ -280,8 +280,8 @@ Upload delivery:
 Payload observations:
 
 - parses stable `[PAYLOAD]` lines with `channel`, `encoding`, `encrypted`,
-  `payload_len`, and `sample_available` metadata;
-- retains payload metadata without extracting sensor measurements from `sample=`.
+  `payload_len` metadata;
+- records transport metadata without sensor measurement values.
 
 Sensor measurements:
 
@@ -295,9 +295,9 @@ Full sensor JSON remains available to diagnostic extraction; see
 
 C6 Map defaults prefer protobuf using a built-in endpoint when the
 custom URL is empty. A successful protobuf POST skips legacy JSON formatting
-and its `[PAYLOAD] sample=` output, even with both Map toggles enabled.
-Readable datalog samples depend on configuration/encryption, and full local
-sensor JSON is debug-only in the firmware drivers. A release run with BUILD but
+and its `[PAYLOAD]` metadata output, even with both Map toggles enabled.
+Datalog observations depend on the configured route; local sensor UART
+measurements require debug firmware. A release run with BUILD but
 without readable measurements exits 2 as an unsuitable USB acceptance
 configuration. `[PROTO]` is envelope-construction metadata and cannot substitute
 for readings.

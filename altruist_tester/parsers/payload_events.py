@@ -71,7 +71,6 @@ class PayloadObservation:
     encoding: str | None = None
     encrypted: bool | None = None
     payload_len: int | None = None
-    sample_available: bool | None = None
     raw_fields: dict[str, str] | None = None
 
     @property
@@ -94,7 +93,6 @@ class PayloadObservation:
             "encoding": self.encoding,
             "encrypted": self.encrypted,
             "payload_len": self.payload_len,
-            "sample_available": self.sample_available,
             "raw_fields": raw_fields,
         }
 
@@ -107,7 +105,6 @@ def payload_observation_from_fields(fields: dict[str, str]) -> PayloadObservatio
         encoding=fields.get("encoding"),
         encrypted=_parse_bool(fields, "encrypted"),
         payload_len=_parse_int(fields, "payload_len"),
-        sample_available=_parse_bool(fields, "sample_available"),
         raw_fields=fields,
     )
 

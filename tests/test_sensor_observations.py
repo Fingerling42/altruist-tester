@@ -220,7 +220,7 @@ def test_capture_selects_independent_source_and_preserves_raw_uart(tmp_path):
         json.dumps(snapshot(time=2000, snapshot_seq=2)),
         (
             "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-            "sample_available=1 sample=t:77 payload_len=4"
+            "sample=t:77 payload_len=4"
         ),
         json.dumps(snapshot(seq=2, measured=3000, time=3000, snapshot_seq=3)),
         legacy,
@@ -312,16 +312,13 @@ def test_extremely_large_number_is_rejected_without_overflow():
     [
         (
             "[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-            "sample_available=1 payload_len=4 sample=t:99"
+            " payload_len=4 sample=t:99"
         ),
-        (
-            "[PAYLOAD] channel=datalog encoding=cps encrypted=1 "
-            "sample_available=0 payload_len=100"
-        ),
+        ("[PAYLOAD] channel=datalog encoding=cps encrypted=1  payload_len=100"),
         "[PROTO] HTTP code=200",
         (
             "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
-            "sample_available=1 payload_len=4 sample=t:99"
+            " payload_len=4 sample=t:99"
         ),
     ],
 )
