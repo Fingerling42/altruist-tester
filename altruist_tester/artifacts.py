@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from altruist_tester.config import BatchConfig, BatchDeviceConfig
 from altruist_tester.samples import SensorSample, SensorSampleRecord
@@ -366,6 +368,12 @@ class RunArtifacts:
     samples_jsonl: Path = field(init=False)
     summary_json: Path = field(init=False)
     report_txt: Path = field(init=False)
+    _events_writer: TextIO | None = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _samples_writer: TextIO | None = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self.serial_log = self.run_dir / "serial.log"
@@ -373,6 +381,28 @@ class RunArtifacts:
         self.samples_jsonl = self.run_dir / "samples.jsonl"
         self.summary_json = self.run_dir / "summary.json"
         self.report_txt = self.run_dir / "report.txt"
+
+    @contextmanager
+    def capture_jsonl(self) -> Iterator[None]:
+        """Reuse line-buffered JSONL writers for one serial capture."""
+        with (
+            self.events_jsonl.open("a", encoding="utf-8", buffering=1) as events,
+            self.samples_jsonl.open("a", encoding="utf-8", buffering=1) as samples,
+        ):
+            self._events_writer, self._samples_writer = events, samples
+            try:
+                yield
+            finally:
+                self._events_writer = self._samples_writer = None
+
+    @staticmethod
+    def _append_jsonl(path: Path, value: dict[str, Any], writer: TextIO | None) -> None:
+        line = json.dumps(value, sort_keys=True) + "\n"
+        if writer is None:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+        else:
+            writer.write(line)
 
     def append_event(self, event_type: str, **payload: Any) -> dict[str, Any]:
         """Append one structured runtime event to ``events.jsonl``.
@@ -388,8 +418,7 @@ class RunArtifacts:
             "type": event_type,
             **payload,
         }
-        with self.events_jsonl.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, sort_keys=True) + "\n")
+        self._append_jsonl(self.events_jsonl, event, self._events_writer)
         return event
 
     def append_sample(self, sample: SensorSample) -> SensorSampleRecord:
@@ -402,8 +431,7 @@ class RunArtifacts:
             "ts": format_timestamp(utc_now()),
             **sample.as_payload(),
         }
-        with self.samples_jsonl.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        self._append_jsonl(self.samples_jsonl, record, self._samples_writer)
         return SensorSampleRecord.from_mapping(record)
 
     def write_summary(

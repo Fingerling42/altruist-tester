@@ -268,16 +268,18 @@ def check_sensor_sample_ranges(
     counts for checked samples, warnings, and failures.
     """
 
-    checks = tuple(
-        check_sensor_sample_range(
+    checked_samples_count = 0
+    findings = []
+    for sample in samples:
+        checked_samples_count += 1
+        check = check_sensor_sample_range(
             sample,
             ranges=ranges,
             warn_on_unknown=warn_on_unknown,
             unknown_non_negative_metrics=unknown_non_negative_metrics,
         )
-        for sample in samples
-    )
-    findings = tuple(check for check in checks if check.status != "ok")
+        if check.status != "ok":
+            findings.append(check)
     warning_count = sum(1 for finding in findings if finding.status == "warn")
     failure_count = sum(1 for finding in findings if finding.status == "fail")
 
@@ -293,9 +295,9 @@ def check_sensor_sample_ranges(
 
     return SensorRangeReport(
         status=status,
-        checked_samples_count=len(checks),
+        checked_samples_count=checked_samples_count,
         warning_count=warning_count,
         failure_count=failure_count,
-        findings=findings,
+        findings=tuple(findings),
         message=message,
     )

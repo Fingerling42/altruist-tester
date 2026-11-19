@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -885,6 +886,39 @@ def test_capture_preserves_oversized_line_without_parsing_its_suffix(tmp_path):
     assert stats.sensor_observations["issues"] == {"line_too_long": 1}
     assert stats.payload_observations.malformed_count == 1
     assert stats.payload_observations.malformed_examples[0]["line_number"] == 2
+
+
+def test_capture_reuses_jsonl_files_and_keeps_each_record_visible(
+    tmp_path, monkeypatch
+):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    snapshot = (
+        json.dumps(uart_snapshot("BME280", {"temperature": 24, "humidity": 60})) + "\n"
+    ).encode()
+    original_open = Path.open
+    append_opens = Counter()
+
+    def count_open(path, mode="r", *args, **kwargs):
+        if mode == "a":
+            append_opens[path] += 1
+        return original_open(path, mode, *args, **kwargs)
+
+    def check_progress(progress):
+        assert _read_jsonl(artifacts.events_jsonl)[-1]["type"] == "sensor_observation"
+        assert len(_read_jsonl(artifacts.samples_jsonl)) == 2
+
+    monkeypatch.setattr(Path, "open", count_open)
+    capture_raw_serial(
+        FakeSerial([snapshot], clock),
+        artifacts,
+        1,
+        clock=clock,
+        progress_callback=check_progress,
+    )
+    assert append_opens == {artifacts.events_jsonl: 1, artifacts.samples_jsonl: 1}
+    artifacts.append_event("after_capture")
+    assert _read_jsonl(artifacts.events_jsonl)[-1]["type"] == "after_capture"
 
 
 def test_capture_preserves_health_evidence_without_delivery_failure(tmp_path):

@@ -639,7 +639,7 @@ def capture_raw_serial(
             )
         )
 
-    with artifacts.serial_log.open("ab") as raw_log:
+    with artifacts.serial_log.open("ab") as raw_log, artifacts.capture_jsonl():
         while (now := clock()) < deadline:
             chunk = serial_port.readline(MAX_SERIAL_LINE_BYTES + 1)
             now = clock()
