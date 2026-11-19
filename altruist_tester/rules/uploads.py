@@ -129,10 +129,6 @@ class UploadHealthReport:
         }
 
 
-def _finding_status(mode: UploadMode) -> UploadStatus:
-    return severity_for_upload_mode(mode)
-
-
 def _finding(
     *,
     mode: UploadMode,
@@ -141,7 +137,7 @@ def _finding(
     message: str,
 ) -> UploadFinding:
     return UploadFinding(
-        status=_finding_status(mode),
+        status=severity_for_upload_mode(mode),
         channel=channel,
         code=code,
         message=message,
@@ -170,30 +166,10 @@ def _warning_reasons_text(stats: UploadChannelStats) -> str:
     )
 
 
-def _check_channel(
+def _channel_findings(
     stats: UploadChannelStats,
     config: UploadChannelConfig,
-) -> UploadChannelReport:
-    if config.mode == "disabled":
-        return UploadChannelReport(
-            status="ok",
-            channel=stats.channel,
-            mode=config.mode,
-            attempts=stats.effective_attempts,
-            successes=stats.successes,
-            failures=stats.failures,
-            warnings=stats.warnings,
-            health_checks=stats.health_checks,
-            health_check_reasons=dict(sorted(stats.health_check_reasons.items())),
-            success_rate=stats.success_rate,
-            max_consecutive_failures=stats.max_consecutive_failures,
-            targets=tuple(sorted(stats.targets)),
-            failure_reasons=dict(sorted(stats.failure_reasons.items())),
-            warning_reasons=dict(sorted(stats.warning_reasons.items())),
-            findings=(),
-            message=f"{stats.channel} upload check is disabled",
-        )
-
+) -> tuple[UploadFinding, ...]:
     findings: list[UploadFinding] = []
     if stats.warnings:
         findings.append(
@@ -256,17 +232,25 @@ def _check_channel(
             )
         )
 
-    if any(finding.status == "fail" for finding in findings):
-        status: UploadStatus = "fail"
+    return tuple(findings)
+
+
+def _check_channel(
+    stats: UploadChannelStats,
+    config: UploadChannelConfig,
+) -> UploadChannelReport:
+    findings = () if config.mode == "disabled" else _channel_findings(stats, config)
+    if config.mode == "disabled":
+        status: UploadStatus = "ok"
+        message = f"{stats.channel} upload check is disabled"
     elif findings:
-        status = "warn"
+        status = (
+            "fail" if any(finding.status == "fail" for finding in findings) else "warn"
+        )
+        message = f"{stats.channel} upload delivery needs attention"
     else:
         status = "ok"
-
-    if status == "ok":
         message = f"{stats.channel} upload delivery satisfied configured thresholds"
-    else:
-        message = f"{stats.channel} upload delivery needs attention"
 
     return UploadChannelReport(
         status=status,
@@ -283,7 +267,7 @@ def _check_channel(
         targets=tuple(sorted(stats.targets)),
         failure_reasons=dict(sorted(stats.failure_reasons.items())),
         warning_reasons=dict(sorted(stats.warning_reasons.items())),
-        findings=tuple(findings),
+        findings=findings,
         message=message,
     )
 

@@ -8,6 +8,7 @@ from typing import Any
 
 _BOOT_RE = re.compile(r"^\[BOOT\]\s+(?P<fields>.+?)\s*$")
 _FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>\S+)")
+_SPACED_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 
 def parse_key_value_fields(text: str) -> dict[str, str]:
@@ -18,8 +19,19 @@ def parse_key_value_fields(text: str) -> dict[str, str]:
     }
 
 
-def _parse_int(fields: dict[str, str], key: str) -> int | None:
-    value = fields.get(key)
+def parse_fields_with_spaces(text: str) -> dict[str, str]:
+    """Read each value up to the next key or the end of the record."""
+    matches = list(_SPACED_FIELD_RE.finditer(text))
+    fields: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        value_end = (
+            matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        )
+        fields[match.group("key")] = text[match.end() : value_end].strip()
+    return fields
+
+
+def parse_optional_int(value: str | None) -> int | None:
     if value is None:
         return None
     try:
@@ -28,10 +40,7 @@ def _parse_int(fields: dict[str, str], key: str) -> int | None:
         return None
 
 
-def _parse_bool(fields: dict[str, str], key: str) -> bool | None:
-    value = fields.get(key)
-    if value is None:
-        return None
+def parse_optional_bool(value: str | None) -> bool | None:
     if value in {"0", "false", "False"}:
         return False
     if value in {"1", "true", "True"}:
@@ -76,14 +85,14 @@ def boot_event_from_fields(fields: dict[str, str]) -> BootEvent:
 
     return BootEvent(
         reset_reason=fields.get("reset_reason"),
-        reset_code=_parse_int(fields, "reset_code"),
-        boot=_parse_int(fields, "boot"),
-        crash_valid=_parse_bool(fields, "crash_valid"),
-        prev_uptime_sec=_parse_int(fields, "prev_uptime"),
-        prev_free_heap=_parse_int(fields, "prev_heap"),
-        last_section_id=_parse_int(fields, "last_section_id"),
+        reset_code=parse_optional_int(fields.get("reset_code")),
+        boot=parse_optional_int(fields.get("boot")),
+        crash_valid=parse_optional_bool(fields.get("crash_valid")),
+        prev_uptime_sec=parse_optional_int(fields.get("prev_uptime")),
+        prev_free_heap=parse_optional_int(fields.get("prev_heap")),
+        last_section_id=parse_optional_int(fields.get("last_section_id")),
         last_section=fields.get("last_section"),
-        free_heap=_parse_int(fields, "heap"),
+        free_heap=parse_optional_int(fields.get("heap")),
         raw_fields=fields,
     )
 

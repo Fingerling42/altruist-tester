@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from altruist_tester.parsers.boot_events import parse_key_value_fields
+from altruist_tester.parsers.boot_events import (
+    parse_key_value_fields,
+    parse_optional_bool,
+    parse_optional_int,
+)
 
 _HEALTH_RE = re.compile(
     r"^\[HEALTH\]\s+"
@@ -89,25 +93,6 @@ class DevMetrics:
         }
 
 
-def _optional_int(value: str | None) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def _optional_bool(value: str | None) -> bool | None:
-    if value is None:
-        return None
-    if value in {"0", "false", "False"}:
-        return False
-    if value in {"1", "true", "True"}:
-        return True
-    return None
-
-
 def parse_health_line(line: str) -> DevMetrics | None:
     """Parse one HEALTH line; return None for incomplete or unrelated input."""
 
@@ -134,10 +119,10 @@ def parse_health_line(line: str) -> DevMetrics | None:
         free_heap=int(match.group("heap")),
         error_count=error_count,
         reset_reason=extra_fields.get("reset_reason"),
-        reset_code=_optional_int(extra_fields.get("reset_code")),
-        crash_valid=_optional_bool(extra_fields.get("crash_valid")),
-        prev_uptime_sec=_optional_int(extra_fields.get("prev_uptime")),
-        prev_free_heap=_optional_int(extra_fields.get("prev_heap")),
-        last_section_id=_optional_int(extra_fields.get("last_section_id")),
+        reset_code=parse_optional_int(extra_fields.get("reset_code")),
+        crash_valid=parse_optional_bool(extra_fields.get("crash_valid")),
+        prev_uptime_sec=parse_optional_int(extra_fields.get("prev_uptime")),
+        prev_free_heap=parse_optional_int(extra_fields.get("prev_heap")),
+        last_section_id=parse_optional_int(extra_fields.get("last_section_id")),
         last_section=extra_fields.get("last_section"),
     )

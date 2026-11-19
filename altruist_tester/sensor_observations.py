@@ -197,6 +197,7 @@ class SensorObservationTracker:
         self.acceptance.feed(snapshot, previous, received)
         self._snapshots[sensor] = snapshot
         samples = []
+        received_ts = received.isoformat()
         for item in snapshot["metrics"]:
             key = sensor, item["metric"]
             prior = self.latest.get(key)
@@ -205,19 +206,6 @@ class SensorObservationTracker:
                 self.unobserved_updates += max(0, item["seq"] - prior["seq"] - 1)
             if not is_new and item["seq"] > 0:
                 self.duplicates += 1
-            observation = {
-                "device_id": device,
-                "boot_id": boot,
-                "snapshot_ms": snapshot["time_ms"],
-                "seq": item["seq"],
-                "measured_ms": item["measured_ms"],
-                "state": item["state"],
-                "measured_ts": (
-                    self._origins[boot] + timedelta(milliseconds=item["measured_ms"])
-                ).isoformat()
-                if item["measured_ms"] is not None
-                else None,
-            }
             self.latest[key] = {
                 **item,
                 "sensor_state": snapshot["state"],
@@ -225,9 +213,21 @@ class SensorObservationTracker:
                 "age_seconds": (snapshot["time_ms"] - item["measured_ms"]) / 1000
                 if item["measured_ms"] is not None
                 else None,
-                "received_ts": received.isoformat(),
+                "received_ts": received_ts,
             }
             if is_new and item["state"] == "ok":
+                observation = {
+                    "device_id": device,
+                    "boot_id": boot,
+                    "snapshot_ms": snapshot["time_ms"],
+                    "seq": item["seq"],
+                    "measured_ms": item["measured_ms"],
+                    "state": item["state"],
+                    "measured_ts": (
+                        self._origins[boot]
+                        + timedelta(milliseconds=item["measured_ms"])
+                    ).isoformat(),
+                }
                 samples.append(
                     SensorSample(
                         sensor=sensor,

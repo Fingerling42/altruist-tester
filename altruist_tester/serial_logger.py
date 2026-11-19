@@ -27,7 +27,7 @@ from altruist_tester.parsers.upload_events import (
     UploadEvent,
     parse_upload_event,
 )
-from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
+from altruist_tester.samples import SensorSampleSeries
 from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.uploads import UploadStats
 
@@ -316,54 +316,6 @@ def _max_error_counters(
     }
 
 
-def _update_dev_metrics_summary(
-    summary: DevMetricsSummary,
-    metrics: DevMetrics,
-    event_ts: str,
-) -> DevMetricsSummary:
-    payload = metrics.as_event_payload()
-    return DevMetricsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_metrics=payload,
-        max_boot=_max_optional(summary.max_boot, metrics.boot),
-        min_uptime_sec=_min_optional(summary.min_uptime_sec, metrics.uptime_sec),
-        max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
-        min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
-        max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
-        max_errors=_max_error_counters(summary.max_errors, metrics),
-    )
-
-
-def _update_boot_events_summary(
-    summary: BootEventsSummary,
-    boot_event: BootEvent,
-    event_ts: str,
-) -> BootEventsSummary:
-    payload = boot_event.as_event_payload()
-    return BootEventsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_boot=payload,
-    )
-
-
-def _update_build_events_summary(
-    summary: BuildEventsSummary,
-    build_event: BuildEvent,
-    event_ts: str,
-) -> BuildEventsSummary:
-    payload = build_event.as_event_payload()
-    return BuildEventsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_build=payload,
-    )
-
-
 def _increment_counter(current: dict[str, int], key: str) -> dict[str, int]:
     updated = dict(current)
     updated[key] = updated.get(key, 0) + 1
@@ -381,33 +333,6 @@ def _update_subsystem_events_summary(
         last_seen=event_ts,
         by_subsystem=_increment_counter(summary.by_subsystem, event.subsystem),
         by_reason=_increment_counter(summary.by_reason, event.reason),
-    )
-
-
-def _update_payload_observations_summary(
-    summary: PayloadObservationsSummary,
-    observation: PayloadObservation,
-    event_ts: str,
-) -> PayloadObservationsSummary:
-    payload = observation.as_event_payload()
-    by_channel = summary.by_channel
-    if observation.channel is not None:
-        by_channel = _increment_counter(by_channel, observation.channel)
-
-    by_encoding = summary.by_encoding
-    if observation.encoding is not None:
-        by_encoding = _increment_counter(by_encoding, observation.encoding)
-
-    return replace(
-        summary,
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        by_channel=by_channel,
-        by_encoding=by_encoding,
-        encrypted_count=summary.encrypted_count
-        + (1 if observation.encrypted is True else 0),
-        last_observation=payload,
     )
 
 
@@ -432,7 +357,12 @@ def _append_boot_event(
     payload = boot_event.as_event_payload()
     event = artifacts.append_event("boot_event", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_boot_events_summary(summary, boot_event, event["ts"])
+    return BootEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_boot=payload,
+    )
 
 
 def _append_build_event(
@@ -444,7 +374,12 @@ def _append_build_event(
     payload = build_event.as_event_payload()
     event = artifacts.append_event("build_event", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_build_events_summary(summary, build_event, event["ts"])
+    return BuildEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_build=payload,
+    )
 
 
 def _append_subsystem_event(
@@ -509,20 +444,25 @@ def _append_payload_observation(
     payload = observation.as_event_payload()
     event = artifacts.append_event("payload_observation", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_payload_observations_summary(summary, observation, event["ts"])
+    by_channel = summary.by_channel
+    if observation.channel is not None:
+        by_channel = _increment_counter(by_channel, observation.channel)
 
+    by_encoding = summary.by_encoding
+    if observation.encoding is not None:
+        by_encoding = _increment_counter(by_encoding, observation.encoding)
 
-def _append_sensor_samples(
-    artifacts: RunArtifacts,
-    samples: list[SensorSample],
-    series: SensorSampleSeries,
-) -> tuple[SensorSampleRecord, ...]:
-    appended_samples = []
-    for sample in samples:
-        record = artifacts.append_sample(sample)
-        series.append(record)
-        appended_samples.append(record)
-    return tuple(appended_samples)
+    return replace(
+        summary,
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        by_channel=by_channel,
+        by_encoding=by_encoding,
+        encrypted_count=summary.encrypted_count
+        + (1 if observation.encrypted is True else 0),
+        last_observation=payload,
+    )
 
 
 def _append_dev_metrics(
@@ -534,7 +474,18 @@ def _append_dev_metrics(
     payload = metrics.as_event_payload()
     event = artifacts.append_event("dev_metrics", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_dev_metrics_summary(summary, metrics, event["ts"])
+    return DevMetricsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_metrics=payload,
+        max_boot=_max_optional(summary.max_boot, metrics.boot),
+        min_uptime_sec=_min_optional(summary.min_uptime_sec, metrics.uptime_sec),
+        max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
+        min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
+        max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
+        max_errors=_max_error_counters(summary.max_errors, metrics),
+    )
 
 
 def _append_upload_event(
@@ -835,7 +786,8 @@ def capture_raw_serial(
                             )
                         if observed_id not in serial_device_ids:
                             serial_device_ids.append(observed_id)
-            _append_sensor_samples(artifacts, sensor_samples, sensor_series)
+            for sample in sensor_samples:
+                sensor_series.append(artifacts.append_sample(sample))
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
