@@ -142,7 +142,7 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 "Boot/reset:",
                 f"- boot events seen: {boot_reset.get('boot_events_count', 0)}",
                 f"- last boot event: {_format_boot_context(last_boot_context)}",
-                "- last health reset context: "
+                "- last HEALTH reset context: "
                 f"{_format_boot_context(health_boot_context)}",
             ]
         )
@@ -175,12 +175,12 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             "",
             "Health:",
             f"- config: {details.get('config') or 'built-in defaults'}",
-            f"- dev metrics seen: {details.get('metrics_seen')}",
+            f"- HEALTH records seen: {details.get('metrics_seen')}",
             f"- samples seen: {details.get('samples_seen')}",
             f"- serial lines: {details.get('serial_lines_read')}",
             f"- serial bytes: {details.get('serial_bytes_read')}",
             f"- max serial silence: {details.get('max_serial_silence_seconds')}s",
-            f"- last dev metrics: {last_metrics_text}",
+            f"- last HEALTH: {last_metrics_text}",
         ]
     )
 
@@ -191,6 +191,38 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
     urban_pm = details.get("urban_pm")
     firmware_build = details.get("firmware_build")
     subsystem_health = details.get("subsystem_health")
+    observations = details.get("sensor_observations")
+    if isinstance(observations, dict):
+        lines.extend(
+            [
+                "",
+                "## UART observation contract",
+                "",
+                f"- source: {observations.get('source')}",
+                f"- valid snapshots: {observations.get('snapshots', 0)}",
+                "- issues: " + json.dumps(observations.get("issues", {})),
+                "",
+                "```json",
+                json.dumps(
+                    {
+                        k: observations.get(k)
+                        for k in (
+                            "coverage",
+                            "acceptance",
+                            "expected_settings",
+                            "activity_only",
+                            "probe_baselines",
+                            "profile_rules",
+                            "profile_error",
+                            "sensors",
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                "```",
+            ]
+        )
     payload_observations = details.get("payload_observations")
     upload_health = details.get("upload_health")
     if isinstance(sensor_presence, dict):
@@ -203,6 +235,8 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                 f"- samples: {details.get('sensor_samples_count')}",
                 f"- observed metrics: {', '.join(observed) if observed else 'none'}",
                 f"- missing metrics: {', '.join(missing) if missing else 'none'}",
+                f"- presence: {sensor_presence.get('status')} "
+                f"— {sensor_presence.get('message')}",
             ]
         )
     if isinstance(sensor_ranges, dict):
@@ -272,16 +306,18 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
             else "none"
         )
         observations_count = payload_observations.get("payload_observations_count")
+        malformed_count = payload_observations.get(
+            "malformed_payload_observations_count", 0
+        )
         lines.extend(
             [
                 "",
                 "Payloads:",
                 f"- observations: {observations_count}",
+                f"- malformed observations: {malformed_count}",
                 f"- channels: {channels}",
                 "- encrypted: "
                 f"{payload_observations.get('encrypted_payload_observations_count')}",
-                "- sample available: "
-                f"{payload_observations.get('sample_available_payload_observations_count')}",
             ]
         )
     if isinstance(upload_health, dict):
@@ -303,7 +339,8 @@ def _append_final_report_details(lines: list[str], details: dict[str, Any]) -> N
                     f"attempts={channel.get('attempts')}, "
                     f"successes={channel.get('successes')}, "
                     f"failures={channel.get('failures')}, "
-                    f"success_rate={success_rate_text})"
+                    f"success_rate={success_rate_text}, "
+                    f"health_checks={channel.get('health_checks', 0)})"
                 )
 
 
@@ -657,6 +694,12 @@ def _append_batch_report_device_details(
         lines.append("  findings:")
         for message in finding_messages:
             lines.append(f"    - {message}")
+    if device.get("worker_returncode") is not None:
+        lines.append(f"  worker exit code: {device['worker_returncode']}")
+    if device.get("failure_kind"):
+        lines.append(f"  worker failure: {device['failure_kind']}")
+    if device.get("worker_error"):
+        lines.append(f"  worker error: {device['worker_error']}")
     summary_error = device.get("summary_error")
     if summary_error:
         lines.append(f"  summary error: {summary_error}")

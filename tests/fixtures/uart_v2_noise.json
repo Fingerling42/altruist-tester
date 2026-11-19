@@ -1,0 +1,105 @@
+{
+  "ICS43434": {
+    "noiseMax": {
+      "value": 60,
+      "units": "dBA",
+      "observation": {
+        "seq": "1500",
+        "measured_ms": "329900",
+        "state": "ok"
+      }
+    },
+    "noiseAvg": {
+      "value": 45,
+      "units": "dBA",
+      "observation": {
+        "seq": "1500",
+        "measured_ms": "329900",
+        "state": "ok"
+      }
+    }
+  },
+  "_observations": {
+    "version": 2,
+    "device_id": "0123456789AB",
+    "boot_id": "1a2b-3c4d",
+    "model": "urban",
+    "sensor": "ICS43434",
+    "snapshot_seq": "12",
+    "time_ms": "330000",
+    "cycle_seq": "1501",
+    "state": "ok",
+    "reason": "none",
+    "settings": {
+      "fetch_wait_ms": "100",
+      "measurement_interval_ms": null,
+      "publication": "coalesced",
+      "publish_interval_ms": "30000",
+      "state_min_interval_ms": "1000",
+      "gas_enabled": null,
+      "sds_warmup_ms": "15000",
+      "sds_collect_ms": "5000",
+      "noise_window_active_ms": "300000"
+    },
+    "channels": {
+      "main": {
+        "cycles_total": "1501",
+        "ok_total": "1500",
+        "failed_total": "1",
+        "last_ok_ms": "329900",
+        "last_failed_ms": "150000",
+        "last_recovered_ms": "150200",
+        "state": "ok",
+        "reason": "none"
+      }
+    },
+    "failures": {
+      "next_seq": "2",
+      "recent": [
+        {
+          "seq": "1",
+          "cycle_seq": "750",
+          "at_ms": "150000",
+          "channels": [
+            "main"
+          ],
+          "reason": "i2s_read_failed"
+        }
+      ]
+    },
+    "noise": {
+      "successful_blocks_total": "1500",
+      "active_ms_total": "310000",
+      "last_ok_ms": "329900",
+      "sds_pause": {
+        "cycle_seq": "1",
+        "state": "idle",
+        "started_ms": "100000",
+        "excluded_ms_total": "20000"
+      },
+      "interval": {
+        "start_ms": "300000",
+        "end_ms": "330000",
+        "max_gap_active_ms": "1000",
+        "max_gap_end_ms": "321000",
+        "open_gap_active_ms": "100"
+      },
+      "windows": [
+        {
+          "seq": "1",
+          "start_ms": "0",
+          "end_ms": "320000",
+          "active_ms": "300000",
+          "successful_blocks": "1470"
+        }
+      ],
+      "window_current": {
+        "seq": "2",
+        "start_ms": "320000",
+        "active_ms": "10000",
+        "successful_blocks": "30"
+      },
+      "started_ms": "0"
+    }
+  }
+}

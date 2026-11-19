@@ -1,9 +1,9 @@
+import pytest
+
 from altruist_tester.parsers.dev_metrics import (
     DevMetrics,
     DevMetricsErrors,
-    DevMetricsStreamParser,
-    parse_dev_metrics_block,
-    parse_dev_metrics_blocks,
+    parse_health_line,
 )
 
 HEALTH_LINE = (
@@ -15,7 +15,7 @@ HEALTH_LINE = (
 
 
 def test_parse_current_health_line():
-    metrics = parse_dev_metrics_block([HEALTH_LINE])
+    metrics = parse_health_line(HEALTH_LINE)
 
     assert metrics == DevMetrics(
         status="ERROR",
@@ -38,14 +38,12 @@ def test_parse_current_health_line():
 
 
 def test_parse_current_health_line_with_reset_context():
-    metrics = parse_dev_metrics_block(
-        [
-            "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
-            "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
-            "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
-            "prev_uptime=0 prev_heap=0 last_section_id=0 "
-            "last_section=Idle/MainLoop"
-        ]
+    metrics = parse_health_line(
+        "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+        "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+        "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+        "prev_uptime=0 prev_heap=0 last_section_id=0 "
+        "last_section=Idle/MainLoop"
     )
 
     assert metrics is not None
@@ -59,14 +57,12 @@ def test_parse_current_health_line_with_reset_context():
 
 
 def test_parse_current_health_line_uses_wifi_field_for_link_state():
-    metrics = parse_dev_metrics_block(
-        [
-            "[HEALTH] uptime=61 boot=5 heap=180000 rssi=-62 tx=0 "
-            "errors=0 wifi=0 wifi_errors=0 sensor_errors=0 sd_errors=0 "
-            "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
-            "prev_uptime=0 prev_heap=0 last_section_id=0 "
-            "last_section=Idle/MainLoop"
-        ]
+    metrics = parse_health_line(
+        "[HEALTH] uptime=61 boot=5 heap=180000 rssi=-62 tx=0 "
+        "errors=0 wifi=0 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+        "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
+        "prev_uptime=0 prev_heap=0 last_section_id=0 "
+        "last_section=Idle/MainLoop"
     )
 
     assert metrics is not None
@@ -74,11 +70,9 @@ def test_parse_current_health_line_uses_wifi_field_for_link_state():
 
 
 def test_parse_health_line_without_reset_context_keeps_base_metrics():
-    metrics = parse_dev_metrics_block(
-        [
-            "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
-            "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0"
-        ]
+    metrics = parse_health_line(
+        "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
+        "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0"
     )
 
     assert metrics is not None
@@ -98,26 +92,39 @@ def test_parse_health_line_without_reset_context_keeps_base_metrics():
     assert metrics.last_section is None
 
 
-def test_parse_metrics_block_is_not_supported():
-    metrics = parse_dev_metrics_block(
-        [
-            "=== [URBAN] METRICS ===",
-            "Status: ALIVE",
-            "Uptime: 1h 2m 3s (3723s total)",
-            "Boot: 1",
-            "WiFi: OK (RSSI: -54 dBm)",
-            "TX: 42",
-            "Errors: WiFi=0 Sensor=1 SD=2",
-            "ESP Temp: 43.1C",
-            "==========================",
-        ]
+@pytest.mark.parametrize(
+    "line",
+    [
+        "",
+        "Boot: 1",
+        "Status: ALIVE",
+        "=== [URBAN] METRICS ===",
+        "[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 errors=0",
+        HEALTH_LINE.replace("wifi=1", "wifi=2"),
+        HEALTH_LINE.replace("uptime=3600", "uptime=invalid"),
+        HEALTH_LINE.replace("sd_errors=0", "sd_errors=-1"),
+        HEALTH_LINE + "\n" + HEALTH_LINE,
+    ],
+)
+def test_invalid_or_incomplete_health_line_returns_none(line):
+    assert parse_health_line(line) is None
+
+
+def test_invalid_optional_context_keeps_base_metrics():
+    metrics = parse_health_line(
+        HEALTH_LINE.replace("reset_code=1", "reset_code=invalid")
+        .replace("crash_valid=0", "crash_valid=invalid")
+        .replace("prev_uptime=0", "prev_uptime=invalid")
+        .replace("prev_heap=0", "prev_heap=invalid")
+        .replace("last_section_id=0", "last_section_id=invalid")
     )
-
-    assert metrics is None
-
-
-def test_parse_non_metrics_text_returns_none():
-    assert parse_dev_metrics_block(["Boot: 1", "Status: ALIVE"]) is None
+    assert metrics is not None
+    assert metrics.uptime_sec == 3600
+    assert metrics.reset_code is None
+    assert metrics.crash_valid is None
+    assert metrics.prev_uptime_sec is None
+    assert metrics.prev_free_heap is None
+    assert metrics.last_section_id is None
 
 
 def test_metrics_event_payload_is_json_friendly():
@@ -128,16 +135,13 @@ def test_metrics_event_payload_is_json_friendly():
     )
 
     assert metrics.as_event_payload() == {
-        "model": None,
         "status": "ALIVE",
         "uptime_sec": 121,
         "boot": None,
         "wifi_state": None,
         "rssi": None,
         "tx": None,
-        "last_tx_age_sec": None,
         "errors": {"wifi": 0, "sensor": 0, "sd": 0},
-        "esp_temp_c": None,
         "free_heap": None,
         "error_count": None,
         "reset_reason": None,
@@ -150,41 +154,8 @@ def test_metrics_event_payload_is_json_friendly():
     }
 
 
-def test_parse_dev_metrics_blocks_from_line_stream():
-    metrics = parse_dev_metrics_blocks(
-        [
-            "noise before health",
-            HEALTH_LINE,
-            "[INFO] unrelated line",
-            (
-                "[HEALTH] uptime=3660 boot=4 heap=219000 rssi=-60 tx=13 "
-                "errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
-                "reset_reason=power_on_reset reset_code=1 crash_valid=0 "
-                "prev_uptime=0 prev_heap=0 last_section_id=0 "
-                "last_section=Idle/MainLoop"
-            ),
-        ]
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"])
+def test_health_line_accepts_serial_line_endings(ending):
+    assert parse_health_line("  " + HEALTH_LINE + ending) == parse_health_line(
+        HEALTH_LINE
     )
-
-    assert [item.uptime_sec for item in metrics] == [3600, 3660]
-    assert [item.boot for item in metrics] == [4, 4]
-
-
-def test_dev_metrics_stream_parser_returns_current_health_line_immediately():
-    parser = DevMetricsStreamParser()
-
-    metrics = parser.feed(HEALTH_LINE)
-
-    assert metrics is not None
-    assert metrics.uptime_sec == 3600
-    assert metrics.free_heap == 219584
-    assert parser.finish() is None
-
-
-def test_dev_metrics_stream_parser_ignores_legacy_blocks():
-    parser = DevMetricsStreamParser()
-
-    assert parser.feed("=== [URBAN] METRICS ===") is None
-    assert parser.feed("Uptime: 2m 1s (121s total)") is None
-    assert parser.feed("==========================") is None
-    assert parser.finish() is None

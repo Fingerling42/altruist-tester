@@ -1,3 +1,8 @@
+import json
+
+import pytest
+
+from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.rules.presence import (
     UnknownExpectedSensorError,
     canonical_metric_name,
@@ -8,6 +13,7 @@ from altruist_tester.rules.presence import (
     observed_metrics_from_series,
 )
 from altruist_tester.samples import SensorSampleRecord, SensorSampleSeries
+from tests.helpers import uart_snapshot
 
 
 def _series_with_metrics(*metrics: str) -> SensorSampleSeries:
@@ -128,3 +134,146 @@ def test_check_sensor_presence_passes_when_all_expected_metrics_are_seen():
     assert report.status == "ok"
     assert report.ok is True
     assert report.missing_metrics == ()
+
+
+def _snapshot_series(sensors):
+    series = SensorSampleSeries()
+    payload = {
+        sensor: {metric: {"value": 42} for metric in metrics}
+        for sensor, metrics in sensors.items()
+    }
+    for sample in parse_sensor_values(json.dumps(payload)):
+        series.append(
+            SensorSampleRecord(ts="2026-11-18T12:00:00Z", **sample.as_payload())
+        )
+    return series
+
+
+def test_insight_other_sources_cannot_confirm_missing_bme680():
+    series = _snapshot_series(
+        {
+            "SCD4x": ("temperature", "humidity", "co2"),
+            "altruist_urban": ("pressure", "temperature", "humidity"),
+        }
+    )
+    report = check_sensor_presence(series, expected_sensors=("scd41", "bme680"))
+    assert report.status == "fail"
+    assert report.missing_metrics == ()
+    assert report.missing_sensor_metrics == (
+        ("bme680", "humidity"),
+        ("bme680", "pressure"),
+        ("bme680", "temperature"),
+    )
+    assert "bme680.pressure" in report.message
+    assert report.as_dict()["missing_sensor_metrics"][0] == {
+        "sensor": "bme680",
+        "metric": "humidity",
+    }
+
+
+@pytest.mark.parametrize("source", ["altruist_urban", "BME680", "unknown_sensor"])
+def test_foreign_or_aggregated_source_cannot_confirm_bme280(source):
+    series = _snapshot_series({source: ("temperature", "humidity", "pressure")})
+    report = check_sensor_presence(series, expected_sensors=("bme280",))
+    assert report.status == "fail"
+    assert report.missing_sensor_metrics == (
+        ("bme280", "humidity"),
+        ("bme280", "pressure"),
+        ("bme280", "temperature"),
+    )
+
+
+@pytest.mark.parametrize(
+    "sensor, alias, metrics",
+    [
+        ("BME680", "bme-680", ("temperature", "humidity", "pressure")),
+        ("bme_280", "BME280", ("temperature", "humidity", "pressure")),
+        ("SCD4x", "scd40", ("temperature", "humidity", "co2")),
+        ("SDS011", "sds-011", ("P1", "P2")),
+        ("I2S_noise", "ics-43434", ("noiseAvg", "noiseMax")),
+    ],
+)
+def test_physical_sensor_and_metric_aliases_pass(sensor, alias, metrics):
+    report = check_sensor_presence(
+        _snapshot_series({sensor: metrics}), expected_sensors=(alias,)
+    )
+    assert report.status == "ok"
+    assert report.missing_sensor_metrics == ()
+
+
+def test_each_physical_sensor_must_supply_each_required_metric():
+    series = _snapshot_series(
+        {
+            "BME680": ("pressure",),
+            "SCD4x": ("temperature", "humidity", "co2"),
+        }
+    )
+    report = check_sensor_presence(series, expected_sensors=("bme680", "scd41"))
+    assert report.status == "fail"
+    assert report.missing_sensor_metrics == (
+        ("bme680", "humidity"),
+        ("bme680", "temperature"),
+    )
+
+
+@pytest.mark.parametrize("channel", ["datalog", "sensors-connectivity"])
+def test_payload_cannot_satisfy_sensor_or_metric_expectations(channel):
+    series = SensorSampleSeries()
+    compact = "h:50,t:20,p:100000"
+    line = (
+        f"[PAYLOAD] channel={channel} encoding=plain encrypted=0 "
+        f"payload_len={len(compact)} sample={compact}"
+    )
+    for sample in parse_sensor_values(line):
+        series.append(
+            SensorSampleRecord(ts="2026-11-18T12:00:00Z", **sample.as_payload())
+        )
+    assert series.count() == 0
+    report = check_sensor_presence(series, expected_sensors=("bme680",))
+    assert report.status == "fail"
+    assert report.missing_metrics == ("humidity", "pressure", "temperature")
+    assert len(report.missing_sensor_metrics) == 3
+    assert (
+        check_sensor_presence(
+            series, expected_metrics=("temperature", "humidity", "pressure")
+        ).status
+        == "fail"
+    )
+
+
+def test_named_sensor_metrics_do_not_cover_an_unobserved_metric():
+    series = _snapshot_series(
+        {
+            "BME680": ("temperature", "humidity", "pressure"),
+        }
+    )
+    report = check_sensor_presence(
+        series, expected_sensors=("bme680",), expected_metrics=("co2",)
+    )
+    assert report.status == "fail"
+    assert report.missing_metrics == ("co2",)
+    assert report.missing_sensor_metrics == ()
+
+
+def test_metric_only_expectations_accept_versioned_sensor_measurements():
+    series = SensorSampleSeries()
+    for sample in parse_sensor_values(
+        json.dumps(uart_snapshot("BME280", {"temperature": 24, "humidity": 45}))
+    ):
+        assert sample.source == "serial_observation_v2"
+        series.append(
+            SensorSampleRecord(ts="2026-11-18T12:00:00Z", **sample.as_payload())
+        )
+
+    report = check_sensor_presence(series, expected_metrics=("temperature", "humidity"))
+
+    assert report.status == "ok"
+    assert report.as_dict() == {
+        "status": "ok",
+        "expected_sensors": [],
+        "expected_metrics": ["humidity", "temperature"],
+        "observed_metrics": ["humidity", "temperature"],
+        "missing_metrics": [],
+        "message": "All expected sensor metrics were observed",
+        "missing_sensor_metrics": [],
+    }

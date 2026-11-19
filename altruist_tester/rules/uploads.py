@@ -57,6 +57,8 @@ class UploadChannelReport:
     successes: int
     failures: int
     warnings: int
+    health_checks: int
+    health_check_reasons: dict[str, int]
     success_rate: float | None
     max_consecutive_failures: int
     targets: tuple[str, ...]
@@ -82,6 +84,8 @@ class UploadChannelReport:
             "successes": self.successes,
             "failures": self.failures,
             "warnings": self.warnings,
+            "health_checks": self.health_checks,
+            "health_check_reasons": self.health_check_reasons,
             "success_rate": self.success_rate,
             "max_consecutive_failures": self.max_consecutive_failures,
             "targets": list(self.targets),
@@ -179,6 +183,8 @@ def _check_channel(
             successes=stats.successes,
             failures=stats.failures,
             warnings=stats.warnings,
+            health_checks=stats.health_checks,
+            health_check_reasons=dict(sorted(stats.health_check_reasons.items())),
             success_rate=stats.success_rate,
             max_consecutive_failures=stats.max_consecutive_failures,
             targets=tuple(sorted(stats.targets)),
@@ -270,6 +276,8 @@ def _check_channel(
         successes=stats.successes,
         failures=stats.failures,
         warnings=stats.warnings,
+        health_checks=stats.health_checks,
+        health_check_reasons=dict(sorted(stats.health_check_reasons.items())),
         success_rate=stats.success_rate,
         max_consecutive_failures=stats.max_consecutive_failures,
         targets=tuple(sorted(stats.targets)),

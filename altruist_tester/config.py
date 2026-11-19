@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from altruist_tester.rules.defaults import (
     SensorRange,
 )
 from altruist_tester.rules.uploads import UploadChannelConfig, UploadMode
+from altruist_tester.sensor_contract import METRICS, SETTINGS, validate_settings
 
 BATCH_DEVICE_MODELS = frozenset({"urban", "insight"})
 
@@ -34,6 +36,7 @@ class BatchDeviceConfig:
     effective_config: Path | None = None
     expected_sensors: tuple[str, ...] = ()
     expected_metrics: tuple[str, ...] = ()
+    expected_mac: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +50,7 @@ class BatchConfig:
     device_config: Path | None = None
     wait_port: bool = False
     wait_port_timeout_input: str = "2m"
-    wait_port_timeout_seconds: int = 120
+    wait_port_timeout_seconds: int | None = 120
     devices: tuple[BatchDeviceConfig, ...] = ()
 
 
@@ -71,9 +74,6 @@ class TesterConfig:
     flatline_window_seconds: int = 30 * 60
     flatline_fail_after_seconds: int = 60 * 60
     flatline_min_distinct_values: int = 2
-    cadence_expected_interval_seconds: int = 5 * 60
-    cadence_warn_after_missed: int = 2
-    cadence_fail_after_missed: int = 4
     silence_warn_after_seconds: int = 2 * 60
     silence_fail_after_seconds: int = 10 * 60
     log_contract_startup_window_seconds: int = 10 * 60
@@ -81,6 +81,10 @@ class TesterConfig:
         default_factory=UploadChannelConfig
     )
     datalog_upload: UploadChannelConfig = field(default_factory=UploadChannelConfig)
+
+    observation_settings: Mapping[str, dict] = field(default_factory=dict)
+    observation_rules: Mapping[str, str] = field(default_factory=dict)
+    observation_activity_only: tuple[str, ...] = ()
 
     @classmethod
     def defaults(cls) -> TesterConfig:
@@ -342,6 +346,21 @@ def _load_toml(path: Path) -> Mapping[str, Any]:
     return data
 
 
+def parse_mac(value: str) -> str:
+    """Accept full MAC addresses, returning their canonical 12-hex identity."""
+    if not re.fullmatch(
+        r"(?:[0-9a-fA-F]{12}|(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2})",
+        value,
+    ):
+        raise ConfigError(f"Invalid MAC address: {value}")
+    return value.replace(":", "").replace("-", "").upper()
+
+
+def parse_wait_port_timeout(value: str) -> int | None:
+    """Keep infinite waiting explicit and separate from capture durations."""
+    return None if value == "infinite" else parse_duration_seconds(value)
+
+
 def _batch_device_config(
     value: object,
     *,
@@ -353,6 +372,7 @@ def _batch_device_config(
     table = _require_mapping(value, name)
     config = _path_value(table.get("config"), f"{name}.config", base_dir=base_dir)
     return BatchDeviceConfig(
+        expected_mac=table.get("expected_mac"),
         slot=_required_string(table.get("slot"), f"{name}.slot"),
         port=cast(Path, _path_value(table.get("port"), f"{name}.port", required=True)),
         model=_optional_model(table.get("model"), f"{name}.model"),
@@ -396,6 +416,10 @@ def validate_batch_config(config: BatchConfig) -> None:
 
     for index, device in enumerate(config.devices):
         name = f"devices[{index}]"
+        if device.expected_mac is not None:
+            if not isinstance(device.expected_mac, str):
+                raise ConfigError(f"{name}.expected_mac must be a MAC address")
+            parse_mac(device.expected_mac)
         if device.config is not None:
             _ensure_file_exists(device.config, f"{name}.config")
         if device.effective_config is None:
@@ -412,6 +436,18 @@ def validate_batch_config(config: BatchConfig) -> None:
         name="port",
     )
 
+    _validate_unique_batch_values(
+        tuple((device.port.resolve(), device.slot) for device in config.devices),
+        name="resolved port",
+    )
+    _validate_unique_batch_values(
+        tuple(
+            (parse_mac(device.expected_mac), device.slot)
+            for device in config.devices
+            if device.expected_mac is not None
+        ),
+        name="MAC",
+    )
     models = {device.model for device in config.devices if device.model is not None}
     if len(models) > 1:
         devices_without_config = [
@@ -469,10 +505,12 @@ def load_batch_config(path: Path) -> BatchConfig:
             batch.get("wait_port_timeout", "2m"),
             "batch.wait_port_timeout",
         ),
-        wait_port_timeout_seconds=_duration_value(
-            batch.get("wait_port_timeout", "2m"),
-            "batch.wait_port_timeout",
-            120,
+        wait_port_timeout_seconds=(
+            None
+            if batch.get("wait_port_timeout") == "infinite"
+            else _duration_value(
+                batch.get("wait_port_timeout", "2m"), "batch.wait_port_timeout", 120
+            )
         ),
         devices=tuple(
             _batch_device_config(
@@ -506,7 +544,11 @@ def load_tester_config(path: Path | None) -> TesterConfig:
     expect = _optional_table(data, "expect")
     range_checks = _optional_table(data, "range_checks")
     flatline = _optional_table(data, "flatline")
-    cadence = _optional_table(data, "cadence")
+    if "cadence" in data:
+        raise ConfigError(
+            "[cadence] is not supported: UART v2 uses per-sensor "
+            "[observations.settings.SENSOR] intervals and fixed acceptance policy"
+        )
     serial = _optional_table(data, "serial")
     log_contract = _optional_table(data, "log_contract")
     uploads = _optional_table(data, "uploads")
@@ -519,7 +561,11 @@ def load_tester_config(path: Path | None) -> TesterConfig:
         "uploads.datalog_thresholds",
     )
 
+    settings, rules = _observation_profile(data)
     return TesterConfig(
+        observation_settings=settings,
+        observation_activity_only=_activity_only(data, settings),
+        observation_rules=rules,
         expected_sensors=_string_tuple(expect.get("sensors"), "expect.sensors"),
         expected_metrics=_string_tuple(expect.get("metrics"), "expect.metrics"),
         sensor_ranges=_sensor_ranges(data),
@@ -548,21 +594,6 @@ def load_tester_config(path: Path | None) -> TesterConfig:
             "flatline.min_distinct_values",
             2,
         ),
-        cadence_expected_interval_seconds=_duration_value(
-            cadence.get("expected_interval"),
-            "cadence.expected_interval",
-            5 * 60,
-        ),
-        cadence_warn_after_missed=_int_value(
-            cadence.get("warn_after_missed"),
-            "cadence.warn_after_missed",
-            2,
-        ),
-        cadence_fail_after_missed=_int_value(
-            cadence.get("fail_after_missed"),
-            "cadence.fail_after_missed",
-            4,
-        ),
         silence_warn_after_seconds=_duration_value(
             serial.get("silence_warn_after"),
             "serial.silence_warn_after",
@@ -589,3 +620,59 @@ def load_tester_config(path: Path | None) -> TesterConfig:
             "datalog",
         ),
     )
+
+
+def _observation_profile(data: Mapping[str, Any]) -> tuple[dict, dict]:
+    table = _optional_table(data, "observations")
+    unknown = set(table) - {
+        "settings",
+        "firmware_source",
+        "settings_rule",
+        "activity_only",
+    }
+    if unknown:
+        raise ConfigError(f"Unknown observations fields: {sorted(unknown)}")
+    sensors = _require_mapping(table.get("settings", {}), "observations.settings")
+    rules = {}
+    if sensors:
+        for key in ("firmware_source", "settings_rule"):
+            rules[key] = _required_string(table.get(key), "observations." + key)
+    settings = {}
+    for sensor, value in sensors.items():
+        if sensor not in METRICS:
+            raise ConfigError(f"Unknown observations.settings sensor: {sensor}")
+        value = _require_mapping(value, "observations.settings." + sensor)
+        if set(value) - set(SETTINGS):
+            raise ConfigError(
+                f"Unknown settings for {sensor}: {sorted(set(value) - set(SETTINGS))}"
+            )
+        # TOML has no null: only the schema's inapplicable parameters may be omitted.
+        normalized = {k: value.get(k) for k in SETTINGS}
+        try:
+            settings[sensor] = validate_settings(sensor, normalized)
+        except ValueError as exc:
+            raise ConfigError(f"observations.settings.{sensor}: {exc}") from exc
+    return settings, rules
+
+
+def _activity_only(data: Mapping[str, Any], settings: dict) -> tuple[str, ...]:
+    selected = _string_tuple(
+        _optional_table(data, "observations").get("activity_only"),
+        "observations.activity_only",
+    )
+    if len(selected) != len(set(selected)) or set(selected) - {
+        "BME680.gas",
+        "ICS43434.main",
+    }:
+        raise ConfigError(
+            "observations.activity_only accepts unique BME680.gas / ICS43434.main only"
+        )
+    for item in selected:
+        sensor = item.split(".")[0]
+        if sensor not in settings or (
+            sensor == "BME680" and not settings[sensor]["gas_enabled"]
+        ):
+            raise ConfigError(
+                f"observations.activity_only requires enabled settings for {item}"
+            )
+    return selected

@@ -18,7 +18,6 @@ def test_load_tester_config_returns_defaults_without_path():
 
     assert config == ProfileConfig.defaults()
     assert config.silence_warn_after_seconds == 2 * 60
-    assert config.cadence_expected_interval_seconds == 5 * 60
 
 
 def test_load_tester_config_reads_expected_sensors_and_thresholds(tmp_path):
@@ -33,11 +32,6 @@ metrics = ["temperature"]
 window = "2m"
 fail_after = "10m"
 min_distinct_values = 3
-
-[cadence]
-expected_interval = "30s"
-warn_after_missed = 3
-fail_after_missed = 5
 
 [serial]
 silence_warn_after = "15s"
@@ -73,9 +67,6 @@ maximum = 60.0
     assert config.flatline_window_seconds == 120
     assert config.flatline_fail_after_seconds == 600
     assert config.flatline_min_distinct_values == 3
-    assert config.cadence_expected_interval_seconds == 30
-    assert config.cadence_warn_after_missed == 3
-    assert config.cadence_fail_after_missed == 5
     assert config.silence_warn_after_seconds == 15
     assert config.silence_fail_after_seconds == 45
     assert config.log_contract_startup_window_seconds == 180
@@ -437,3 +428,10 @@ def test_batch_usb_example_config_loads():
     assert [device.model for device in config.devices] == ["urban", "insight"]
     assert config.devices[0].effective_config == Path("configs/urban.example.toml")
     assert config.devices[1].effective_config == Path("configs/insight.example.toml")
+
+
+def test_global_cadence_table_is_rejected_instead_of_silently_ignored(tmp_path):
+    path = tmp_path / "profile.toml"
+    path.write_text('[cadence]\nexpected_interval = "5m"\n')
+    with pytest.raises(ConfigError, match="per-sensor"):
+        load_tester_config(path)

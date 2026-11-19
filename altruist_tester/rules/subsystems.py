@@ -10,6 +10,26 @@ from altruist_tester.rules.severity import severity_for_subsystem_event
 
 SubsystemStatus = Literal["ok", "warn", "fail"]
 
+# Only measurement/init diagnostics corroborated by v2 enter its recovery
+# policy. Serialization, crashes and unrelated subsystem failures keep FAIL.
+_SENSOR_READING_REASONS = {
+    "bmx280_bus_lock_failed",
+    "bmx280_not_found",
+    "bmx280_read_failed",
+    "bme680_bus_lock_failed",
+    "bme680_not_found",
+    "bme680_read_failed",
+    "scd4x_bus_lock_failed",
+    "scd4x_not_found",
+    "scd4x_read_timeout",
+    "i2s_init_failed",
+    "i2s_read_failed",
+    "gas_invalid",
+    "sds011_not_found",
+    "sds011_recovery",
+    "sds011_command_failed",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SubsystemFinding:
@@ -97,6 +117,8 @@ def _event_message(
 
 def check_subsystem_health(
     records: tuple[dict[str, object], ...],
+    *,
+    observation_reasons: frozenset[str] = frozenset(),
 ) -> SubsystemHealthReport:
     """Evaluate parsed firmware subsystem events."""
 
@@ -124,6 +146,12 @@ def check_subsystem_health(
     findings = []
     for (level, subsystem, reason), group_records in sorted(grouped.items()):
         status = _status_for_event(level, subsystem, reason)
+        if (
+            subsystem == "sensor"
+            and reason in _SENSOR_READING_REASONS
+            and reason in observation_reasons
+        ):
+            status = "warn"
         count = len(group_records)
         findings.append(
             SubsystemFinding(

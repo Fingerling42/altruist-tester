@@ -4,6 +4,7 @@ from pathlib import Path
 
 from altruist_tester.artifacts import create_run_artifacts
 from altruist_tester.serial_logger import capture_raw_serial
+from tests.helpers import uart_snapshot
 
 # Fixed artifact timestamps keep JSON/report assertions stable.
 STARTED_AT = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
@@ -304,13 +305,12 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
             b"prev_uptime=0 prev_heap=0 last_section_id=0 "
             b"last_section=Idle/MainLoop\n",
             b"[123] [INFO] [PAYLOAD] channel=datalog encoding=cps "
-            b"encrypted=1 payload_len=324 sample_available=1 "
+            b"encrypted=1 payload_len=324 "
             b"sample=h:65.15,t:25.84,co2:723 e1=999\n",
             b"[PAYLOAD] channel=sensors-connectivity encoding=mixed "
-            b"encrypted=1 payload_len=360 sample_available=1 "
+            b"encrypted=1 payload_len=360 "
             b"sample=h:65.15,t:25.84 e1=999\n",
-            b"[PAYLOAD] channel=custom-http encoding=cps encrypted=1 "
-            b"payload_len=128 sample_available=0\n",
+            b"[PAYLOAD] channel=custom-http encoding=cps encrypted=1 payload_len=128\n",
             b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
             b"[DATALOG] failed reason=encryption_failed\n",
             b"[DATALOG] attempt payload_len=324 encoding=cps owner_self_fallback=0\n",
@@ -349,26 +349,16 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
             event["encoding"],
             event["encrypted"],
             event["payload_len"],
-            event["sample_available"],
         )
         for event in payload_events
     ] == [
-        ("datalog", "cps", True, 324, True),
-        ("sensors-connectivity", "mixed", True, 360, True),
-        ("custom-http", "cps", True, 128, False),
+        ("datalog", "cps", True, 324),
+        ("sensors-connectivity", "mixed", True, 360),
+        ("custom-http", "cps", True, 128),
     ]
     assert "sample" not in payload_events[0]["raw_fields"]
 
-    samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["metric"], sample["value"], sample["source"]) for sample in samples
-    ] == [
-        ("humidity", 65.15, "serial_payload_datalog"),
-        ("temperature", 25.84, "serial_payload_datalog"),
-        ("co2", 723.0, "serial_payload_datalog"),
-        ("humidity", 65.15, "serial_payload_connectivity"),
-        ("temperature", 25.84, "serial_payload_connectivity"),
-    ]
+    assert _read_jsonl(artifacts.samples_jsonl) == []
 
     assert [event["status"] for event in upload_events] == [
         "attempt",
@@ -392,7 +382,7 @@ def test_capture_raw_serial_regresses_current_uart_contract(tmp_path):
     assert stats.boot_events.count == 1
     assert stats.dev_metrics.count == 1
     assert stats.payload_observations.count == 3
-    assert stats.sensor_samples_count == 5
+    assert stats.sensor_samples_count == 0
     assert stats.upload_stats.channel("datalog").attempts == 2
     assert stats.upload_stats.channel("datalog").failure_reasons == {
         "encryption_failed": 1
@@ -465,45 +455,30 @@ def test_capture_raw_serial_records_device_identity(tmp_path):
     assert stats.serial_device_ids == ("1051DB010C70",)
 
 
-def test_capture_raw_serial_writes_sensor_samples(tmp_path):
+def test_capture_raw_serial_writes_only_versioned_sensor_samples(tmp_path):
     clock = FakeClock()
     artifacts = _create_artifacts(tmp_path)
-    serial = FakeSerial(
-        [
-            (
-                b'{"service_data":{"signal_strength":-38},'
-                b'"BME280":{"temperature":{"value":25.5,"units":"C"}},'
-                b'"SDS":{"P1":{"value":16.3,"units":"ppm"}}}\n'
-            ),
-            (
-                b"[123] [INFO] [PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=24 sample_available=1 "
-                b"sample=h:65.99,t:25.51,p1:16.33\n"
-            ),
-        ],
-        clock,
-    )
-
-    stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
-
+    lines = [
+        json.dumps({"BME280": {"temperature": {"value": 99}}}),
+        "[PAYLOAD] channel=sensors-connectivity encoding=plain encrypted=0 "
+        "payload_len=4 sample=t:77",
+        json.dumps(uart_snapshot("BME280", {"temperature": 25.5})),
+        json.dumps(uart_snapshot("SDS", {"P1": 16.3})),
+    ]
+    raw = [(line + "\n").encode() for line in lines]
+    stats = capture_raw_serial(FakeSerial(raw, clock), artifacts, 2, clock=clock)
     samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["sensor"], sample["metric"], sample["value"]) for sample in samples
-    ] == [
+    assert [(s["sensor"], s["metric"], s["value"]) for s in samples] == [
         ("BME280", "temperature", 25.5),
         ("SDS", "P1", 16.3),
-        ("sensors-connectivity", "humidity", 65.99),
-        ("sensors-connectivity", "temperature", 25.51),
-        ("sensors-connectivity", "P1", 16.33),
     ]
-    assert stats.sensor_samples_count == 5
-    assert stats.sensor_series.latest(("BME280", "temperature")).value == 25.5
-    assert (
-        stats.sensor_series.latest(("sensors-connectivity", "humidity")).value == 65.99
-    )
+    assert {s["source"] for s in samples} == {"serial_observation_v2"}
+    assert stats.sensor_samples_count == 2
+    assert stats.payload_observations.count == 1
+    assert artifacts.serial_log.read_bytes() == b"".join(raw)
 
 
-def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel(
+def test_capture_records_payload_metadata_without_measurements(
     tmp_path,
 ):
     clock = FakeClock()
@@ -512,12 +487,12 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
         [
             (
                 b"[PAYLOAD] channel=sensors-connectivity encoding=plain "
-                b"encrypted=0 payload_len=15 sample_available=1 "
+                b"encrypted=0 payload_len=15 "
                 b"sample=h:65.99,t:25.51\n"
             ),
             (
                 b"[PAYLOAD] channel=datalog encoding=plain encrypted=0 "
-                b"payload_len=15 sample_available=1 "
+                b"payload_len=15 "
                 b"sample=h:65.99,t:25.51\n"
             ),
         ],
@@ -526,21 +501,14 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
 
     stats = capture_raw_serial(serial, artifacts, 1, clock=clock)
 
-    samples = _read_jsonl(artifacts.samples_jsonl)
-    assert [
-        (sample["metric"], sample["value"], sample["source"]) for sample in samples
-    ] == [
-        ("humidity", 65.99, "serial_payload_connectivity"),
-        ("temperature", 25.51, "serial_payload_connectivity"),
-    ]
-    assert stats.sensor_samples_count == 2
+    assert _read_jsonl(artifacts.samples_jsonl) == []
+    assert stats.sensor_samples_count == 0
     assert stats.payload_observations.count == 2
     assert stats.payload_observations.by_channel == {
         "datalog": 1,
         "sensors-connectivity": 1,
     }
     assert stats.payload_observations.by_encoding == {"plain": 2}
-    assert stats.payload_observations.sample_available_count == 2
     assert stats.payload_observation_records == (
         {
             "ts": stats.payload_observation_records[0]["ts"],
@@ -548,13 +516,11 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 15,
-            "sample_available": True,
             "raw_fields": {
                 "channel": "sensors-connectivity",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "15",
-                "sample_available": "1",
             },
         },
         {
@@ -563,13 +529,11 @@ def test_capture_raw_serial_does_not_duplicate_payload_samples_by_upload_channel
             "encoding": "plain",
             "encrypted": False,
             "payload_len": 15,
-            "sample_available": True,
             "raw_fields": {
                 "channel": "datalog",
                 "encoding": "plain",
                 "encrypted": "0",
                 "payload_len": "15",
-                "sample_available": "1",
             },
         },
     )
@@ -593,7 +557,9 @@ def test_capture_raw_serial_reports_progress(tmp_path):
     )
     serial = FakeSerial(
         [
-            b'{"BME280":{"temperature":{"value":25.5,"units":"C"}}}\n',
+            (
+                json.dumps(uart_snapshot("BME280", {"temperature": 25.5})) + "\n"
+            ).encode(),
             b"Guru Meditation Error: Core 0 panic'ed\n",
             b"[HEALTH] uptime=3600 boot=4 heap=219584 rssi=-62 tx=12 "
             b"errors=0 wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
@@ -671,20 +637,17 @@ def test_capture_raw_serial_writes_dev_metrics_events(tmp_path):
     assert stats.dev_metrics.max_uptime_sec == 124
     assert stats.dev_metrics.min_rssi == -81
     assert stats.dev_metrics.max_rssi == -79
-    assert stats.dev_metrics.min_esp_temp_c is None
-    assert stats.dev_metrics.max_esp_temp_c is None
     assert stats.dev_metrics.max_errors == {"wifi": 3, "sensor": 1, "sd": 2}
+    assert "min_esp_temp_c" not in stats.dev_metrics.as_dict()
+    assert "max_esp_temp_c" not in stats.dev_metrics.as_dict()
     assert stats.dev_metrics.last_metrics == {
-        "model": None,
         "status": "ERROR",
         "uptime_sec": 124,
         "boot": 7,
         "wifi_state": "OK",
         "rssi": -79,
         "tx": 2,
-        "last_tx_age_sec": None,
         "errors": {"wifi": 3, "sensor": 0, "sd": 1},
-        "esp_temp_c": None,
         "free_heap": 219584,
         "error_count": 4,
         "reset_reason": "power_on_reset",
@@ -745,3 +708,174 @@ def test_capture_raw_serial_writes_health_event_with_reset_context(tmp_path):
     assert metrics_events[0]["reset_reason"] == "power_on_reset"
     assert metrics_events[0]["last_section"] == "Idle/MainLoop"
     assert stats.dev_metrics.max_errors == {"wifi": 1, "sensor": 2, "sd": 0}
+
+
+def test_progress_exposes_structured_telemetry_and_wifi_observation_age(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    serial = FakeSerial(
+        [
+            b"noise\n",
+            b"[HEALTH] uptime=10 boot=1 heap=10000 rssi=-50 tx=0 errors=0 "
+            b"wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0\n",
+        ],
+        clock,
+    )
+    progress = []
+    capture_raw_serial(
+        serial,
+        artifacts,
+        1,
+        clock=clock,
+        progress_interval_seconds=0,
+        progress_callback=progress.append,
+    )
+    assert progress[0].bytes_read > 0
+    assert progress[0].structured_events_count == 0
+    assert progress[0].first_byte_elapsed_seconds == 0.25
+    assert progress[-1].structured_events_count == 1
+    assert progress[-1].wifi_state == "OK"
+    assert progress[-1].wifi_observed_elapsed_seconds == 0.5
+
+
+def test_expected_uart_identity_mismatch_preserves_raw_evidence(tmp_path):
+    import pytest
+
+    from altruist_tester.serial_logger import SerialIdentityError
+
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    line = b"ChipId: 11:22:33:44:55:66\n"
+    serial = FakeSerial([line], clock)
+    with pytest.raises(SerialIdentityError, match="UART reports 112233445566"):
+        capture_raw_serial(
+            serial, artifacts, 1, clock=clock, expected_device_id="AABBCCDDEEFF"
+        )
+    assert artifacts.serial_log.read_bytes() == line
+    events = _read_jsonl(artifacts.events_jsonl)
+    assert any(event.get("device_id") == "112233445566" for event in events)
+
+
+def test_capture_preserves_numeric_voc_diagnostics_in_sample_artifacts(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    values = {
+        "voc_ppb": 0,
+        "voc_index": 0,
+        "voc_level": -1,
+        "voc_spikes_today": 7,
+        "gas_resistance": 0,
+        "gas_baseline": 120000,
+    }
+    snapshot = uart_snapshot("BME680", values)
+    snapshot["BME680"]["voc_phrase"] = {"value": "No VOC detected"}
+    raw_line = (json.dumps(snapshot) + "\n").encode()
+    stats = capture_raw_serial(FakeSerial([raw_line], clock), artifacts, 1, clock=clock)
+    samples = _read_jsonl(artifacts.samples_jsonl)
+    assert {sample["metric"]: sample["value"] for sample in samples} == values
+    assert stats.sensor_series.count() == 6
+    assert artifacts.serial_log.read_bytes() == raw_line
+
+
+def test_capture_quarantines_unknown_payload_channel(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    raw = (
+        b"[PAYLOAD] channel=sensors-connectivit encoding=plain encrypted=0 "
+        b"payload_len=4 sample=t:20\n"
+    )
+    stats = capture_raw_serial(FakeSerial([raw], clock), artifacts, 1, clock=clock)
+    assert artifacts.serial_log.read_bytes() == raw
+    assert stats.payload_observations.count == 0
+    assert stats.payload_observation_records == ()
+    assert stats.sensor_samples_count == 0
+    assert stats.payload_observations.malformed_count == 1
+
+
+def test_malformed_payload_examples_are_bounded_and_do_not_reset_valid_counts(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="10s", duration_seconds=10)
+    invalid = (
+        "[PAYLOAD] channel="
+        + "界" * 1000
+        + " encoding="
+        + "界" * 1000
+        + " encrypted=0 payload_len=5 sample=t:999 wire=SECRET\n"
+    ).encode()
+    lines = [invalid] * 7 + [
+        b"[PAYLOAD]\n",
+        b"[PAYLOAD] channel=custom-http encoding=plain\n",
+    ]
+    stats = capture_raw_serial(FakeSerial(lines, clock), artifacts, 10, clock=clock)
+    payloads = stats.payload_observations
+    assert artifacts.serial_log.read_bytes() == b"".join(lines)
+    assert payloads.count == 1
+    assert payloads.by_channel == {"custom-http": 1}
+    assert payloads.by_encoding == {"plain": 1}
+    assert payloads.encrypted_count == 0
+    assert len(stats.payload_observation_records) == 1
+    assert payloads.malformed_count == 8
+    assert payloads.malformed_by_reason == {"unknown_channel": 7, "missing_channel": 1}
+    assert stats.sensor_samples_count == 0
+    assert len(payloads.malformed_examples) == 5
+    events = _read_jsonl(artifacts.events_jsonl)
+    malformed = [e for e in events if e["type"] == "malformed_payload_observation"]
+    assert malformed == list(payloads.malformed_examples)
+    assert [e["line_number"] for e in malformed] == list(range(1, 6))
+    for example in malformed:
+        assert example["truncated"] is True
+        assert len(json.dumps(example, sort_keys=True).encode()) <= 1024
+        assert all(len(v) <= 128 for v in example["metadata"].values())
+        assert "sample" not in example["metadata"]
+        assert "wire" not in example["metadata"]
+        assert "SECRET" not in json.dumps(example)
+    assert payloads.as_dict()["malformed_payload_observations_count"] == 8
+
+
+def test_invalid_payload_cannot_smuggle_json_samples(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    line = b'[PAYLOAD] channel=broken sample={"bme280":{"temperature":{"value":25}}}\n'
+    stats = capture_raw_serial(FakeSerial([line], clock), artifacts, 1, clock=clock)
+    assert stats.sensor_samples_count == 0
+    assert stats.payload_observations.malformed_count == 1
+
+
+def test_malformed_payload_references_physical_uart_line_after_partial_read(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    chunks = [b"partial prefix ", b"[PAYLOAD] channel=broken\n"]
+    stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 1, clock=clock)
+    assert artifacts.serial_log.read_bytes() == b"".join(chunks)
+    assert stats.payload_observations.malformed_examples[0]["line_number"] == 1
+
+
+def test_capture_preserves_health_evidence_without_delivery_failure(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
+    lines = [
+        (
+            b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
+            b"stage=health reason=health_get_failed host=probe code=-1\n"
+        ),
+        (
+            b"[CONNECTIVITY] failed channel=sensors-connectivity seq=7 "
+            b"stage=health reason=health_begin_failed host=probe code=0\n"
+        ),
+        b"[CONNECTIVITY] attempt channel=sensors-connectivity seq=7\n",
+        b"[CONNECTIVITY] success channel=sensors-connectivity seq=7 code=200\n",
+    ]
+    stats = capture_raw_serial(FakeSerial(lines, clock), artifacts, 2, clock=clock)
+    events = [
+        event
+        for event in _read_jsonl(artifacts.events_jsonl)
+        if event["type"] == "upload_event"
+    ]
+    assert len(events) == 4
+    assert events[1]["raw_fields"]["stage"] == "health"
+    assert events[0]["raw_fields"]["reason"] == "health_get_failed"
+    assert artifacts.serial_log.read_bytes() == b"".join(lines)
+    channel = stats.upload_stats.channel("connectivity")
+    assert channel.health_checks == 2
+    assert channel.failures == 0
+    assert channel.success_rate == 1.0

@@ -70,7 +70,7 @@ def _check(stats: SerialLogStats, **kwargs):
     )
 
 
-def test_log_contract_passes_with_required_release_telemetry():
+def test_log_contract_passes_with_required_debug_uart_telemetry():
     report = _check(
         SerialLogStats(
             lines_read=10,
@@ -101,6 +101,9 @@ def test_log_contract_fails_without_health_and_sensor_samples():
         "LOG_CONTRACT_BOOT_CONTEXT_MISSING",
         "LOG_CONTRACT_BUILD_INFO_MISSING",
     ]
+    assert report.findings[1].message == (
+        "Sensor measurements from debug UART were not observed"
+    )
     assert [finding.status for finding in report.findings] == [
         "fail",
         "fail",
@@ -172,7 +175,7 @@ def test_log_contract_requires_upload_telemetry_only_for_enabled_channels():
     assert observed_report.status == "ok"
 
 
-def test_log_contract_flags_late_release_telemetry():
+def test_log_contract_flags_late_debug_uart_telemetry():
     report = _check(
         SerialLogStats(
             lines_read=10,

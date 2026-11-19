@@ -1,7 +1,37 @@
 # Raspberry Pi 24-hour Runbook
 
-This runbook describes the first real 24-hour Altruist burn-in test on a
+This runbook describes a 24-hour Altruist burn-in test on a
 Raspberry Pi or another Linux host.
+
+Use `_debug` firmware for USB sensor acceptance and diagnostic burn-in.
+Detailed sensor/protocol diagnostics and diagnostic SD files are debug-only.
+Release, including Testing/release, retains a bounded operational USB/web log
+with named Off / Errors only / Events modes, BUILD identity and an explicit
+status snapshot that preserves the mode. Release has no acceptance sensor JSON
+or periodic HEALTH. Mode changes are live; Save and restart persists the current
+mode and reboots. There is no separate numeric input. Debug exposes only modes
+allowed by its forced minimum (normally Detailed and Most detailed).
+
+USB acceptance checks the firmware contract after the complete capture, before
+sensor rules. A BUILD `profile=release` exits **2** (unsuitable configuration), with no sensor verdict.
+Debug with missing signals remains **FAIL / exit 1**. Missing
+BUILD does not imply release: normal strict rules and the existing missing-BUILD
+warning apply. Missing profile metadata also warns; unknown explicit profiles
+or conflicting BUILD identity fields exit 2. Stable/Testing never selects a
+profile. Late BUILD is used for this decision and retains the startup warning
+when normal rules run. Prepare debug firmware before a new acceptance capture;
+use the diagnostic procedures for release logging checks. Batch isolates workers,
+continues other slots, and exits 2 if any worker has a configuration/serial error
+(otherwise 1 for health FAIL, 0 without FAIL). A failed batch aggregate is an
+execution result; consult each slot's worker error before diagnosing hardware.
+
+Keep the exact commit, target, language, channel and profile with each capture.
+A successful debug run does not validate release firmware.
+
+The [maintained diagnostic procedures](diagnostic-procedures.md) provide safe
+summaries, explicit startup/cadence windows, bounded HTTP checks and durable
+per-attempt checkpoints. Raw startup logs may contain credentials; use safe
+extraction instead of printing matching configuration lines.
 
 ## Goals
 
@@ -10,6 +40,11 @@ Raspberry Pi or another Linux host.
 - Verify expected sensor data, value ranges, flatlines, update cadence, runtime
   counters, serial silence, and crash/error keywords.
 - Preserve artifacts that are easy to inspect over SSH after the run.
+
+Exact EPD maintenance messages do not trigger WATCHDOG alerts. Real watchdog
+and other runtime keyword failures produce FAIL/exit 1 in summary/report;
+see the [keyword contract](sensor-log-patterns.md#runtime-keyword-alerts).
+Keep serial.log for the original evidence.
 
 ## Hardware Setup
 
@@ -130,6 +165,11 @@ uv run altruist-tester run \
   --output-dir ~/altruist-runs
 ```
 
+Map health GET probes select a server and do not count as upload attempts or
+failures. `health_checks` and `health_check_reasons` preserve them separately
+in summaries/reports; real POST/local failures retain their configured severity.
+See the [health-probe and upload classification](sensor-log-patterns.md#map-server-selection-and-upload-outcomes).
+
 If upload access was configured before the burn-in run, edit the profile or use
 a copied profile with:
 
@@ -139,11 +179,112 @@ connectivity = "required"
 datalog = "required"
 ```
 
-Use `connectivity = "required"` only after the device address was added through
-Robonomics `setDevices`. Use `datalog = "required"` only when there is an active
-Robonomics subscription and the device address was added to it.
+For legacy delivery, use `connectivity = "required"` only after the device
+address was added through Robonomics `setDevices`. Use `datalog = "required"`
+only when there is an active Robonomics subscription and the device address
+was added to it.
+
+C6 Map sending prefers protobuf; an empty custom protobuf URL uses a
+built-in endpoint. Success skips legacy JSON and its `[PAYLOAD]` metadata;
+both Map toggles mean JSON fallback, not unconditional dual-send. Confirm
+debug sensor snapshots with `_observations` v2 and `[HEALTH]` during a preflight
+run before starting 24 hours, including Insight VOC/gas when applicable. BME680 and
+SCD4x have a minimum 300-second fetch interval; cover the configured interval
+with a margin; for example, allow at least 330 seconds for a 300-second interval.
+Datalog upload observations depend on configuration/encryption. Release
+intentionally lacks this debug UART contract and exits 2 when identified by
+BUILD. Debug with missing measurements fails acceptance (exit 1), regardless
+of upload success.
+
+The tester combines legacy/protobuf CONNECTIVITY results. Treat a successful
+required connectivity check as aggregate firmware HTTP evidence. It does not
+prove legacy delivery, CPS finalization, or map visibility; cloud `202` is
+Kafka ingress acceptance. CPS endpoint authorization and NodeId/anchor
+provisioning differ from legacy `setDevices`. Route-specific acceptance is
+not supported. C3 uses legacy uplink only.
+
+For observed Insight BME680 JSON, constant `voc_ppb`, `voc_index`, `voc_level`,
+and `voc_spikes_today` are allowed; do not provoke pollution to make them change.
+Default ranges require integer `voc_ppb` 0–10000, index 0–100, level 0–3, and
+daily count 0–65535. Bounds use the existing `sensor_ranges` configuration.
+`voc_ppb` (JSON unit `ppb`) is a relative MOS/ABC scale, not laboratory TVOC.
+Diagnostic procedures require all six VOC/gas fields, including `voc_ppb`.
+The ordinary Insight presence preset requires temperature, humidity and pressure.
+Level -1 gives WARN for unavailable VOC (invalid gas reading), including a
+transient occurrence; inspect raw evidence and gas resistance/baseline.
+Late UART capture cannot prove warmup completion or ABC readiness. The daily count may reset
+at the device's local midnight/time synchronization or survive a reboot;
+no monotonicity is required. Runtime reboot failures and gas diagnostic
+flatline/cadence checks still apply. These rules do not add readable release
+VOC samples; confirm the available measurement source during preflight.
 
 ## Start a Multi-device Batch
+
+The same CLI workflow works over SSH on other supported hosts and ordinary
+powered USB hubs. The host model and hub model are not configuration requirements.
+Keep device profiles on the host and generate each new batch there, without
+copying TOML device sections or transferring a new batch from another computer:
+
+```bash
+uv run altruist-tester batch-generate --output batch.toml \
+  --output-dir /home/pi/altruist-runs --baud 115200 \
+  --urban-profile configs/urban.example.toml \
+  --insight-profile configs/insight.example.toml \
+  --urban-mac 10:51:DB:01:0D:54 --urban-mac 10:51:DB:01:0D:55 \
+  --insight-mac 10:51:DB:01:0C:70 --insight-mac 10:51:DB:01:0C:71 \
+  --insight-mac 10:51:DB:01:0C:72 --insight-mac 10:51:DB:01:0C:73 \
+  --insight-mac 10:51:DB:01:0C:74 --insight-mac 10:51:DB:01:0C:75
+```
+
+Replace these sample MACs with the actual devices. For six Urban or three Insight,
+repeat only that model's MAC option and supply only that model's profile.
+Generation matches connected USB identities and rejects missing/ambiguous matches,
+duplicate MACs, and existing output files. Add `--dry-run` to review the TOML
+without writing it. Neither generation nor preview opens serial ports.
+
+`--output` names the new configuration file; `--output-dir` names the directory
+for the whole batch, including reports, worker logs and device evidence. The
+generator always writes `output_dir` and `baud` into `[batch]`; omitted options
+use `runs` and `115200`. `--baud` accepts positive integers and applies to every
+slot. A relative `output_dir` is resolved from the working directory where you
+launch `batch`, whereas profile paths are relative to the TOML directory. Prefer
+an absolute output directory when launching from different SSH/tmux directories.
+Generation and preview do not create the artifact directory. Check the loaded
+values with `batch --config batch.toml --dry-run` before starting capture.
+
+To prepare before connecting devices, add an explicit `--port-template` matching
+your stand, for example
+`--port-template '/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_{mac}-if00'`.
+This particular example applies only when actual USB/by-id metadata has that
+format. Use `ports` and `/dev/serial/by-id` to verify it. `{mac_lower}`, `{id}`
+and `{id_lower}` are also supported. Review `UNVERIFIED` pending paths before
+saving. The generated `expected_mac` requires real matching USB serial metadata
+at startup; a path string alone is insufficient. Bridges with an unrelated USB
+serial need a manual configuration instead. Relative profile paths are generated
+from the output TOML directory. The destination directory must already exist.
+
+Start and observe a generated batch in the SSH `tmux` session:
+
+```bash
+uv run altruist-tester batch --config batch.toml --require-expected-mac --dry-run
+uv run altruist-tester batch --config batch.toml --require-expected-mac \
+  --wait-port --wait-port-timeout infinite
+```
+
+`--require-expected-mac` rejects the whole batch with code `2` if any slot lacks
+`expected_mac`, listing every missing slot before any worker or run artifact is
+created. Preview works while devices are absent; a declared MAC is not a physical
+USB verification. Real workers still check USB/UART identity at capture time.
+Use TOML for this mode; explicit `--port` slots have no expected MACs. Omit the
+flag for the existing manual workflow with bridges that cannot expose a MAC.
+
+Plug expected devices in at any pace. Each slot waits independently and receives
+the full configured capture duration after its port opens. Other USB devices are
+not added. An absent expected device keeps the batch unfinished; Ctrl+C/SIGTERM
+stops waiting and capturing workers and retains completed workers' results.
+Interrupted raw captures remain on disk but have not completed acceptance.
+No automatic reset or Wi-Fi preparation/retry is enabled. Existing finite wait
+timeouts remain available, with two minutes as the default.
 
 Create a batch config that maps each physical hub slot to a `by-path` port and
 to the correct tester profile:
@@ -191,8 +332,51 @@ tmux new -s altruist-batch
 uv run altruist-tester batch --config /home/pi/batch.toml
 ```
 
-The command prints live batch progress with elapsed time, worker counts,
-per-slot state, and the batch artifact directory.
+In a TTY the command updates a screen about once a second, showing total
+elapsed time, worker counts, the artifact directory and compact aligned rows
+for slots. Devices appear consecutively below shared column headings; narrow
+windows split metric columns into groups with repeated slot/state columns.
+Color distinguishes states, errors and observations; use `NO_COLOR=1` to
+disable it. Green capture/telemetry/Wi-Fi cells do not establish acceptance.
+It works with the terminal provided by SSH/tmux. Enlarge the terminal if a
+clipping notice appears. On completion or interruption the screen/cursor are
+restored and a compact results table is printed: slot, verdict, worker exit
+code and short finding codes/error reason. Final rows keep configuration order;
+serial errors show the cause without the long port prefix. The full message
+remains in reports. Completed live rows show `—` for STATUS AGE.
+Check WARN even for worker code 0;
+ERROR identifies infrastructure failures and INTERRUPTED cancelled workers.
+Long reasons are abbreviated; use the printed `Report:` path for full details.
+The `Artifacts:` path contains worker logs; full commands are retained in
+`batch_summary.json` instead of long startup lines. `TERM=dumb` uses
+sequential output. With redirected output, counters are printed about every
+ten seconds; state changes, first bytes and first telemetry are polled every
+second and printed when observed.
+`WAIT_PORT` shows elapsed waiting
+and remaining time or `unlimited`; `OPENING` identifies an attempted open;
+`CAPTURE open=yes` shows an open port, capture duration/percentage, received
+bytes/first-byte receipt, UART silence, parsed telemetry and HEALTH/sample counts.
+The single-device progress counter `health` also counts parsed `[HEALTH]` records;
+these counts do not establish sensor validity.
+The last Wi-Fi HEALTH state includes its age; `unknown` means no observation,
+and `OK` does not prove IP readiness or sustained stability. HEALTH contains
+runtime/link counters and optional reset context, as described in the
+[health contract](sensor-log-patterns.md#health-contract). A silent open port
+does not establish AP mode or a Wi-Fi failure. Worker failures include the exit
+code and diagnostics on this console. Snapshots have `status_age` so stale status
+is visible. Total batch time has no percentage because capture starts differ.
+
+Output remains line-oriented when redirected to a file. Each slot's
+`worker.progress.json` is a bounded atomic status snapshot, separate from the
+run's UART/evidence artifacts; it is not a resume checkpoint. USB MAC mismatch,
+unavailable required USB identity, or conflicting observed UART identity stops
+that slot with infrastructure code `2`; neighboring slots continue.
+`batch_report.txt` includes worker exit codes and available error reasons,
+including expected/observed MAC. The reason comes from the failed run summary,
+then an ERROR snapshot or a bounded stderr tail if no usable summary exists;
+worker launch errors are also retained. Full worker stdout/stderr stay in the
+slot directory. `batch_summary.json` exposes `worker_returncode` and
+`worker_error` in `devices` and `device_results`.
 
 Detach from `tmux` with `Ctrl-b`, then `d`.
 
@@ -306,3 +490,99 @@ report.txt
 
 If sending a compact result to chat or an issue, start with `report.txt` and add
 the relevant `summary.json` section.
+
+## Inspect malformed PAYLOAD diagnostics
+
+Check the report's malformed observation count, then
+`summary.json` → `payload_observations` for counts/reasons and the first five
+bounded examples. Use each example's one-based `line_number` to locate the
+original bytes in `serial.log`; do not edit run artifacts. Further malformed
+records still increment counters. Missing/unknown channels are excluded from
+normal payload statistics and readings; this diagnostic alone adds no severity.
+See
+[the parser contract](sensor-log-patterns.md#malformed-payload-diagnostics)
+for the exact fields and bounds.
+
+Physical presence requires each preset's metrics from its named JSON sensor,
+with aliases normalized. PAYLOAD samples are excluded from measurements. Imported Urban readings cannot
+confirm a physical module; missing pairs fail and are listed in summary/report.
+Use `expect.metrics` alone for checks that intentionally accept any source.
+See [presence semantics](sensor-log-patterns.md#physical-sensor-presence).
+
+## Check measurement freshness and deduplication
+
+Use the existing Urban/Insight profiles and expected-MAC guard. The first
+versioned UART stream is required throughout capture; inspect
+`summary.sensor_observations.source` for `serial_observation_v2` and require no
+contract issues. Presence must come from each expected physical sensor. Compare
+duplicate counts with accepted samples: cached observations must not
+increase measurement counts. For each slow sensor, use its explicit profile
+interval T: gap/freshness WARN >=T+60 seconds, FAIL >=2T+300; first wait WARN
+>=T+60, FAIL >=T+300. Global `[cadence]` settings are rejected. Require three
+distinct successful capture measurements per mandatory slow metric; one or two
+are coverage WARN, and missing/failed measurements retain their severity.
+See the [schema and artifact semantics](sensor-log-patterns.md#versioned-debug-uart-observations).
+
+Choose a capture window that covers the configured sensor intervals with a
+margin. Keep measurement intervals and network/encryption settings consistent
+with the intended operating conditions. Short checks do not replace full burn-in
+or long-duration VOC observation.
+
+
+Before opening serial, select an explicit UART v2 profile and review
+`observations.firmware_source`, `observations.settings_rule` and each canonical
+sensor table in `observations.settings`. Adjust expected effective values before
+capture; do not copy observed settings into the profile during acceptance.
+The example profiles assume 30 s send and 300 s SDS settings. For noise without
+active SDS set both SDS timing expectations to zero. Inapplicable null fields
+are omitted from TOML. Standard Urban selects BME280, SDS and ICS43434.
+Other sensors remain diagnostic-only unless their expected settings are explicitly
+added to the profile; inspect `sensor_observations.outside_profile` and raw
+UART/events for those records. Settings mismatch/change for a selected sensor
+stops capture immediately with
+exit 2. Inspect `sensor_observations.profile_error`, expected settings, declared
+settings and BUILD in summary/report, correct the environment/profile, and start
+a new capture. This outcome is a setup problem, not a sensor defect. Missing
+required fields and contradictory counters/history remain FAIL/exit 1.
+
+
+### Interpret UART v2 acceptance evidence
+
+Inspect `sensor_observations.acceptance` in the summary/report for capture
+baselines, measurement counts, retained gaps and per-channel failed cycles.
+A recovered first failed external cycle gives WARN; a second in a rolling
+24-hour device-time window fails for the rest of capture. Unrecovered errors
+fail at capture end. Confirmed historical failures warn without spending the
+capture budget; active old failures still fail. Uncertain attribution and
+missing bounded-history timestamps require coverage WARN unless a budget
+breach is already proven. BME680 gas and environmental budgets are separate.
+
+For microphone frequency, require complete 300-second active-time windows
+starting after its accepted baseline. <2 Hz warns; <1 Hz fails. Partial,
+historical or missing windows cannot establish a frequency PASS. Audio gaps
+warn at 60 seconds and fail at 300 seconds even if average frequency is good
+or HEALTH is still arriving. Only confirmed SDS time up to the profile's
+warmup+collection budget (20 seconds per cycle) is excluded. Overruns and
+network/worker work remain active delays. A still-active SDS flag cannot
+extend the allowance indefinitely.
+
+Choose a capture duration sufficient for the required evidence rather than
+extending it automatically. At T=300 seconds, roughly 20 minutes is a useful
+short-check allowance, but it cannot guarantee three successful measurements
+or replace a separately scheduled burn-in. Short programming checks may
+legitimately retain coverage WARN. Review the selected debug firmware's v2
+and driver-success telemetry before using hardware results for acceptance.
+
+
+## Limited activity checks
+
+For an explicitly reduced sensor check select `configs/urban-activity.example.toml`
+or `configs/insight-activity.example.toml` before starting capture. Set their
+expected effective settings to the actual device configuration. These profiles
+check microphone or gas acquisition activity while preserving the other sensor
+and infrastructure checks. A fresh post-baseline transfer is required; allow at
+least the next scheduled acquisition and publication. A successful limited
+check returns WARN and does not establish measurement validity or full sensor
+acceptance. Use the ordinary profiles for full acceptance. Do not interpret
+exit 0 from an activity profile as a passed burn-in. Review the selected
+activity channels and probe evidence in summary/report.

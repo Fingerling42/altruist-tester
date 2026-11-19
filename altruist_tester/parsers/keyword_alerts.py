@@ -61,7 +61,13 @@ def _rule(
 # patterns kept for failures printed below the firmware layer.
 KEYWORD_RULES = (
     _rule("PANIC", "panic", r"\bpanic\b"),
-    _rule("WATCHDOG", "watchdog", r"\bwatchdog\b|wdt"),
+    _rule(
+        "WATCHDOG",
+        "watchdog",
+        r"\bwatchdog\b|wdt|"
+        r"\breset_reason=(?:task_watchdog_timeout|interrupt_watchdog_timeout|"
+        r"other_watchdog_reset)\b|\bevent=watchdog_restart\b",
+    ),
     _rule("BROWNOUT", "Brownout", r"\bbrownout\b"),
     _rule("POWER_GLITCH", "power glitch", r"\bpower glitch\b"),
     _rule("CPU_LOCKUP", "CPU lock-up", r"\bcpu lock[- ]?up\b"),
@@ -74,6 +80,16 @@ KEYWORD_RULES = (
     _rule("LOAD_ACCESS_FAULT", "Load access fault", r"\bload access fault\b"),
     _rule("STORE_ACCESS_FAULT", "Store access fault", r"\bstore access fault\b"),
     _rule("UNEXPECTED_RESTART", "Unexpected restart", r"\bunexpected restart\b"),
+)
+
+
+# Exact firmware maintenance messages, not a blanket exemption for EPD logs.
+_EPD_MAINTENANCE_LINES = frozenset(
+    message.casefold()
+    for message in (
+        "[EPD] FULL refresh (watchdog/wake/main) pushed to panel",
+        "[EPD] Periodic watchdog: recovering display and scheduling FULL refresh",
+    )
 )
 
 
@@ -104,4 +120,9 @@ def detect_keyword_alerts(
         )
         for rule in rules
         if rule.pattern.search(line)
+        and not (
+            rule.code == "WATCHDOG"
+            and line.strip().casefold().removeprefix("[debug] ")
+            in _EPD_MAINTENANCE_LINES
+        )
     ]

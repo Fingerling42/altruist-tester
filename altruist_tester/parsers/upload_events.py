@@ -35,6 +35,13 @@ class UploadEvent:
     reason: str | None = None
     raw_fields: dict[str, str] | None = None
 
+    @property
+    def is_health_check(self) -> bool:
+        """Identify explicitly marked server-selection health probes."""
+
+        fields = self.raw_fields or {}
+        return self.channel == "connectivity" and fields.get("stage") == "health"
+
     def as_event_payload(self) -> dict[str, object]:
         """Return upload observation as an event payload."""
 

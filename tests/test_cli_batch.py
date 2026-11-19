@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from altruist_tester.cli import app
@@ -7,6 +8,7 @@ from altruist_tester.ports import SerialPortInfo
 from tests.cli_helpers import (
     patch_batch_worker_processes,
     plain_output,
+    worker_arg,
     write_fake_worker_summary,
 )
 
@@ -98,6 +100,121 @@ def test_batch_dry_run_prints_planned_device_runs(monkeypatch, tmp_path):
     assert f"port: {insight_port}" in output
     assert "port_exists: no" in output
     assert f"config: {insight_profile}" in output
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("with_first_mac", [False, True])
+def test_batch_require_expected_mac_rejects_missing_slots_before_side_effects(
+    monkeypatch, tmp_path, dry_run, with_first_mac
+):
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    output_dir = tmp_path / "runs"
+    config = tmp_path / "batch.toml"
+    devices = [
+        {"slot": slot, "port": f"/dev/nonexistent-{slot}"}
+        for slot in ("third", "first", "second")
+    ]
+    if with_first_mac:
+        devices[0]["expected_mac"] = "AA:BB:CC:DD:EE:FF"
+    _write_batch_config(
+        config,
+        batch={"duration": "1s", "device_config": profile, "output_dir": output_dir},
+        devices=devices,
+    )
+    started = []
+    patch_batch_worker_processes(monkeypatch, started=started)
+
+    def unexpected_ports():
+        pytest.fail("Missing expected MACs must fail before USB discovery")
+
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", unexpected_ports)
+    args = ["batch", "--config", str(config), "--require-expected-mac"]
+    if dry_run:
+        args.append("--dry-run")
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 2
+    output = " ".join(plain_output(result).replace("│", " ").split())
+    missing = "first, second" if with_first_mac else "third, first, second"
+    assert f"Missing expected_mac for slots: {missing}." in output
+    assert "--require-expected-mac" in output
+    assert started == []
+    assert not output_dir.exists()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_batch_require_expected_mac_accepts_complete_batch(
+    monkeypatch, tmp_path, dry_run
+):
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    output_dir = tmp_path / "runs"
+    config = tmp_path / "batch.toml"
+    macs = ["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"]
+    _write_batch_config(
+        config,
+        batch={"duration": "1s", "device_config": profile, "output_dir": output_dir},
+        devices=[
+            {"slot": f"slot-{i}", "port": f"/dev/nonexistent-{i}", "expected_mac": mac}
+            for i, mac in enumerate(macs)
+        ],
+    )
+    started = []
+    patch_batch_worker_processes(monkeypatch, started=started)
+    monkeypatch.setattr("altruist_tester.cli.list_serial_ports", lambda: [])
+    args = ["batch", "--config", str(config), "--require-expected-mac"]
+    if dry_run:
+        args.append("--dry-run")
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    if dry_run:
+        assert started == []
+        assert not output_dir.exists()
+        for mac in macs:
+            assert f"expected_mac: {mac}" in plain_output(result)
+    else:
+        assert [worker_arg(worker.args, "--expected-mac") for worker in started] == macs
+        assert output_dir.exists()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_batch_require_expected_mac_rejects_explicit_ports(
+    monkeypatch, tmp_path, dry_run
+):
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    output_dir = tmp_path / "runs"
+    started = []
+    patch_batch_worker_processes(monkeypatch, started=started)
+    args = [
+        "batch",
+        "--port",
+        "/dev/nonexistent-one",
+        "--port",
+        "/dev/nonexistent-two",
+        "--duration",
+        "1s",
+        "--device-config",
+        str(profile),
+        "--output-dir",
+        str(output_dir),
+        "--require-expected-mac",
+    ]
+    if dry_run:
+        args.append("--dry-run")
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 2
+    output = " ".join(plain_output(result).replace("│", " ").split())
+    assert "Missing expected_mac for slots: device-01, device-02." in output
+    assert "Use a TOML batch config" in output
+    assert started == []
+    assert not output_dir.exists()
 
 
 def test_batch_explicit_ports_dry_run_generates_device_slots(monkeypatch, tmp_path):
@@ -272,7 +389,7 @@ def test_batch_runs_workers_as_subprocesses(monkeypatch, tmp_path):
 
     urban_command = started[0].args
     insight_command = started[1].args
-    assert urban_command[1:4] == ["-m", "altruist_tester.cli", "run"]
+    assert urban_command[1:5] == ["-u", "-m", "altruist_tester.cli", "run"]
     assert urban_command[urban_command.index("--port") + 1] == (
         "/dev/serial/by-path/urban"
     )
@@ -420,7 +537,7 @@ def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     output = plain_output(result)
-    assert "Batch   0.0% (00:00/1:00:00)" in output
+    assert "Batch elapsed=00:00 | capture per slot=1:00:00" in output
     assert "running=2 completed=0 failed=0" in output
     assert "Slots: slot-01=running slot-02=running" in output
     assert "running=0 completed=2 failed=0" in output
@@ -895,7 +1012,7 @@ def test_batch_marks_worker_exit_2_as_infrastructure_failure(monkeypatch, tmp_pa
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "slot-01 finished with exit code 2." in result.output
     assert "slot-02 finished with exit code 0." in result.output
     assert "Batch completed: 1/2 workers succeeded." in result.output
@@ -945,7 +1062,7 @@ def test_batch_records_worker_start_failure_and_continues(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "slot-01 could not start: cannot exec worker" in result.output
     assert "slot-02 finished with exit code 0." in result.output
     batch_dir = next(output_dir.iterdir())
@@ -984,3 +1101,52 @@ def test_batch_dry_run_rejects_invalid_config(tmp_path):
 
     assert result.exit_code == 2
     assert "devices[0].config is required" in plain_output(result)
+
+
+def test_batch_unsuitable_firmware_isolated_from_debug_slot(monkeypatch, tmp_path):
+    output_dir = tmp_path / "runs"
+    profile = tmp_path / "profile.toml"
+    profile.touch()
+    config = tmp_path / "batch.toml"
+    _write_batch_config(
+        config,
+        batch={"duration": "5s", "output_dir": output_dir},
+        devices=[
+            {
+                "slot": "release",
+                "model": "urban",
+                "port": "/dev/release",
+                "config": profile,
+            },
+            {
+                "slot": "debug",
+                "model": "insight",
+                "port": "/dev/debug",
+                "config": profile,
+            },
+        ],
+    )
+    started = []
+    patch_batch_worker_processes(
+        monkeypatch,
+        started=started,
+        returncodes_by_port={"/dev/release": 2},
+        summaries_by_port={
+            "/dev/release": {
+                "status": "failed",
+                "message": "Firmware profile release: sensor health was not evaluated",
+            },
+        },
+    )
+    result = CliRunner().invoke(app, ["batch", "--config", str(config)])
+    assert result.exit_code == 2
+    assert len(started) == 2
+    summary = json.loads(
+        (next(output_dir.iterdir()) / "batch_summary.json").read_text()
+    )
+    release, debug = summary["devices"]
+    assert release["worker_returncode"] == 2
+    assert release["verdict"] is None
+    assert "not evaluated" in release["worker_error"]
+    assert debug["worker_returncode"] == 0
+    assert debug["verdict"] == "PASS_CANDIDATE"

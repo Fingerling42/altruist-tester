@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, Protocol
 
 from altruist_tester.artifacts import RunArtifacts, format_timestamp, utc_now
 from altruist_tester.identity import parse_identity_from_serial_line
 from altruist_tester.parsers.boot_events import BootEvent, parse_boot_event
 from altruist_tester.parsers.build_events import BuildEvent, parse_build_event
-from altruist_tester.parsers.dev_metrics import DevMetrics, DevMetricsStreamParser
+from altruist_tester.parsers.dev_metrics import DevMetrics, parse_health_line
 from altruist_tester.parsers.keyword_alerts import KeywordAlert, detect_keyword_alerts
 from altruist_tester.parsers.payload_events import (
     PayloadObservation,
-    parse_payload_metadata,
     parse_payload_observation,
 )
-from altruist_tester.parsers.sensor_values import parse_sensor_values
 from altruist_tester.parsers.subsystem_events import (
     SubsystemEvent,
     parse_subsystem_event,
@@ -28,9 +28,14 @@ from altruist_tester.parsers.upload_events import (
     parse_upload_event,
 )
 from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
+from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.uploads import UploadStats
 
 Number = int | float
+
+
+class SerialIdentityError(ValueError):
+    """UART identifies a different device from the requested batch target."""
 
 
 class SerialReader(Protocol):
@@ -61,8 +66,6 @@ class DevMetricsSummary:
     max_uptime_sec: int | None = None
     min_rssi: int | None = None
     max_rssi: int | None = None
-    min_esp_temp_c: float | None = None
-    max_esp_temp_c: float | None = None
     max_errors: dict[str, int | None] = field(
         default_factory=lambda: {"wifi": None, "sensor": None, "sd": None}
     )
@@ -87,8 +90,6 @@ class DevMetricsSummary:
             "max_uptime_sec": self.max_uptime_sec,
             "min_rssi": self.min_rssi,
             "max_rssi": self.max_rssi,
-            "min_esp_temp_c": self.min_esp_temp_c,
-            "max_esp_temp_c": self.max_esp_temp_c,
             "max_errors": self.max_errors,
         }
 
@@ -186,8 +187,10 @@ class PayloadObservationsSummary:
     by_channel: dict[str, int] = field(default_factory=dict)
     by_encoding: dict[str, int] = field(default_factory=dict)
     encrypted_count: int = 0
-    sample_available_count: int = 0
     last_observation: dict[str, Any] | None = None
+    malformed_count: int = 0
+    malformed_by_reason: dict[str, int] = field(default_factory=dict)
+    malformed_examples: tuple[dict[str, Any], ...] = ()
 
     @property
     def seen(self) -> bool:
@@ -206,10 +209,10 @@ class PayloadObservationsSummary:
             "payload_observations_by_channel": self.by_channel,
             "payload_observations_by_encoding": self.by_encoding,
             "encrypted_payload_observations_count": self.encrypted_count,
-            "sample_available_payload_observations_count": (
-                self.sample_available_count
-            ),
             "last_payload_observation": self.last_observation,
+            "malformed_payload_observations_count": self.malformed_count,
+            "malformed_payload_observations_by_reason": self.malformed_by_reason,
+            "malformed_payload_observation_examples": list(self.malformed_examples),
         }
 
 
@@ -247,6 +250,7 @@ class SerialLogStats:
     sensor_series: SensorSampleSeries = field(default_factory=SensorSampleSeries)
     upload_stats: UploadStats = field(default_factory=UploadStats)
     serial_device_ids: tuple[str, ...] = ()
+    sensor_observations: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +270,10 @@ class SerialLogProgress:
     keyword_alerts_count: int
     sensor_samples_count: int
     complete: bool = False
+    structured_events_count: int = 0
+    first_byte_elapsed_seconds: float | None = None
+    wifi_state: str | None = None
+    wifi_observed_elapsed_seconds: float | None = None
 
     @property
     def percent(self) -> float:
@@ -323,8 +331,6 @@ def _update_dev_metrics_summary(
         max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
         min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
         max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
-        min_esp_temp_c=_min_optional(summary.min_esp_temp_c, metrics.esp_temp_c),
-        max_esp_temp_c=_max_optional(summary.max_esp_temp_c, metrics.esp_temp_c),
         max_errors=_max_error_counters(summary.max_errors, metrics),
     )
 
@@ -391,7 +397,8 @@ def _update_payload_observations_summary(
     if observation.encoding is not None:
         by_encoding = _increment_counter(by_encoding, observation.encoding)
 
-    return PayloadObservationsSummary(
+    return replace(
+        summary,
         count=summary.count + 1,
         first_seen=summary.first_seen or event_ts,
         last_seen=event_ts,
@@ -399,8 +406,6 @@ def _update_payload_observations_summary(
         by_encoding=by_encoding,
         encrypted_count=summary.encrypted_count
         + (1 if observation.encrypted is True else 0),
-        sample_available_count=summary.sample_available_count
-        + (1 if observation.sample_available is True else 0),
         last_observation=payload,
     )
 
@@ -458,7 +463,48 @@ def _append_payload_observation(
     observation: PayloadObservation,
     records: list[dict[str, object]],
     summary: PayloadObservationsSummary,
+    *,
+    line_number: int,
 ) -> PayloadObservationsSummary:
+    reason = observation.malformed_reason
+    if reason is not None:
+        examples = summary.malformed_examples
+        if len(examples) < 5:
+            metadata: dict[str, str] = {}
+            example = {
+                "ts": format_timestamp(utc_now()),
+                "line_number": line_number,
+                "reason": reason,
+                "metadata": metadata,
+                "truncated": False,
+            }
+            for key in (
+                "channel",
+                "encoding",
+                "encrypted",
+                "payload_len",
+            ):
+                value = (observation.raw_fields or {}).get(key)
+                if value is None:
+                    continue
+                metadata[key] = value[:128]
+                if len(value) > 128:
+                    example["truncated"] = True
+                # Bound the serialized event as well as individual text fields;
+                # non-ASCII metadata may expand to six-byte JSON escapes.
+                event = {"type": "malformed_payload_observation", **example}
+                if len(json.dumps(event, sort_keys=True).encode("utf-8")) > 1024:
+                    del metadata[key]
+                    example["truncated"] = True
+            event = artifacts.append_event("malformed_payload_observation", **example)
+            examples = (*examples, event)
+        return replace(
+            summary,
+            malformed_count=summary.malformed_count + 1,
+            malformed_by_reason=_increment_counter(summary.malformed_by_reason, reason),
+            malformed_examples=examples,
+        )
+
     payload = observation.as_event_payload()
     event = artifacts.append_event("payload_observation", **payload)
     records.append({"ts": event["ts"], **payload})
@@ -476,29 +522,6 @@ def _append_sensor_samples(
         series.append(record)
         appended_samples.append(record)
     return tuple(appended_samples)
-
-
-def _select_payload_sensor_samples(
-    line: str,
-    samples: list[SensorSample],
-    *,
-    primary_payload_samples_seen: bool,
-) -> tuple[list[SensorSample], bool]:
-    if not samples:
-        return samples, primary_payload_samples_seen
-
-    fields = parse_payload_metadata(line)
-    if fields is None:
-        return samples, primary_payload_samples_seen
-
-    channel = fields.get("channel")
-    if channel == "sensors-connectivity":
-        return samples, True
-
-    if channel == "datalog" and primary_payload_samples_seen:
-        return [], primary_payload_samples_seen
-
-    return samples, primary_payload_samples_seen
 
 
 def _append_dev_metrics(
@@ -535,6 +558,9 @@ def _build_progress(
     keyword_alerts_count: int,
     sensor_series: SensorSampleSeries,
     complete: bool = False,
+    structured_events_count: int = 0,
+    first_byte_elapsed_seconds: float | None = None,
+    wifi_observed_elapsed_seconds: float | None = None,
 ) -> SerialLogProgress:
     elapsed_seconds = max(0.0, now - started_at)
     if last_line_elapsed_seconds is None:
@@ -552,7 +578,23 @@ def _build_progress(
         keyword_alerts_count=keyword_alerts_count,
         sensor_samples_count=sensor_series.count(),
         complete=complete,
+        structured_events_count=structured_events_count,
+        first_byte_elapsed_seconds=first_byte_elapsed_seconds,
+        wifi_state=(metrics_summary.last_metrics or {}).get("wifi_state"),
+        wifi_observed_elapsed_seconds=wifi_observed_elapsed_seconds,
     )
+
+
+class SerialSettingsError(ValueError):
+    """A declared profile mismatch stops capture without a sensor-defect verdict."""
+
+    def __init__(self, details: dict):
+        self.details = details
+        error = details["sensor_observations"]["profile_error"]
+        super().__init__(
+            f"UART settings {error['reason']} for {error['sensor']}; "
+            "select/correct the expected firmware profile before capture"
+        )
 
 
 def capture_raw_serial(
@@ -564,6 +606,10 @@ def capture_raw_serial(
     mirror_lines_to_events: bool = False,
     progress_callback: Callable[[SerialLogProgress], None] | None = None,
     progress_interval_seconds: float = 1.0,
+    expected_device_id: str | None = None,
+    observation_settings: dict | None = None,
+    observation_rules: dict | None = None,
+    observation_activity_only: tuple[str, ...] = (),
 ) -> SerialLogStats:
     """Capture raw serial output until the requested duration elapses.
 
@@ -589,11 +635,11 @@ def capture_raw_serial(
     deadline = started_at + duration_seconds
     next_progress_at = started_at
     lines_read = 0
+    raw_line_number = 1
     bytes_read = 0
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
     max_interline_gap_seconds: float | None = None
-    metrics_parser = DevMetricsStreamParser()
     metrics_summary = DevMetricsSummary()
     metrics_records: list[dict[str, object]] = []
     boot_events_summary = BootEventsSummary()
@@ -606,9 +652,16 @@ def capture_raw_serial(
     payload_observation_records: list[dict[str, object]] = []
     keyword_alerts: list[dict[str, str]] = []
     sensor_series = SensorSampleSeries()
-    primary_payload_samples_seen = False
+    observation_tracker = SensorObservationTracker(
+        capture_started_at=datetime.fromisoformat(capture_started_at),
+        expected_settings=observation_settings,
+        profile_rules=observation_rules or {},
+        activity_only=observation_activity_only,
+    )
     upload_stats = UploadStats()
     serial_device_ids: list[str] = []
+    structured_events_count = 0
+    wifi_observed_elapsed_seconds: float | None = None
 
     def emit_progress(now: float, *, complete: bool = False) -> None:
         if progress_callback is None:
@@ -625,6 +678,9 @@ def capture_raw_serial(
                 keyword_alerts_count=len(keyword_alerts),
                 sensor_series=sensor_series,
                 complete=complete,
+                structured_events_count=structured_events_count,
+                first_byte_elapsed_seconds=first_line_elapsed_seconds,
+                wifi_observed_elapsed_seconds=wifi_observed_elapsed_seconds,
             )
         )
 
@@ -638,6 +694,8 @@ def capture_raw_serial(
                     next_progress_at = now + progress_interval_seconds
                 continue
 
+            line_number = raw_line_number
+            raw_line_number += line.count(b"\n")
             raw_log.write(line)
             raw_log.flush()
             lines_read += 1
@@ -695,6 +753,16 @@ def capture_raw_serial(
                     device_id=serial_device_id,
                 )
 
+            if (
+                expected_device_id is not None
+                and serial_device_id is not None
+                and serial_device_id != expected_device_id
+            ):
+                raise SerialIdentityError(
+                    f"Expected MAC {expected_device_id}, "
+                    f"UART reports {serial_device_id}"
+                )
+
             keyword_alerts.extend(
                 _append_keyword_alerts(
                     artifacts,
@@ -708,22 +776,47 @@ def capture_raw_serial(
                     payload_observation,
                     payload_observation_records,
                     payload_observations_summary,
+                    line_number=line_number,
                 )
 
-            sensor_samples, primary_payload_samples_seen = (
-                _select_payload_sensor_samples(
-                    decoded_line,
-                    parse_sensor_values(decoded_line),
-                    primary_payload_samples_seen=primary_payload_samples_seen,
-                )
+            observation, sensor_samples = observation_tracker.feed(
+                decoded_line, utc_now()
             )
+            if observation_tracker.selected:
+                if observation is not None:
+                    artifacts.append_event("sensor_observation", **observation)
+                    if observation_tracker.profile_error:
+                        raise SerialSettingsError(
+                            {
+                                "sensor_observations": observation_tracker.as_dict(),
+                                "firmware_build": build_events_summary.as_dict(),
+                                "build_event_records": list(build_event_records),
+                                "serial_lines_read": lines_read,
+                                "serial_bytes_read": bytes_read,
+                                "serial_capture_started_at": capture_started_at,
+                            }
+                        )
+                    observed_id = observation.get("device_id")
+                    if observed_id is not None:
+                        observed_id = str(observed_id).upper()
+                        if (
+                            expected_device_id is not None
+                            and observed_id != expected_device_id
+                        ):
+                            raise SerialIdentityError(
+                                f"Expected MAC {expected_device_id}, "
+                                f"UART reports {observed_id}"
+                            )
+                        if observed_id not in serial_device_ids:
+                            serial_device_ids.append(observed_id)
             _append_sensor_samples(artifacts, sensor_samples, sensor_series)
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
 
-            metrics = metrics_parser.feed(decoded_line)
+            metrics = parse_health_line(decoded_line)
             if metrics is not None:
+                wifi_observed_elapsed_seconds = line_elapsed_seconds
                 metrics_summary = _append_dev_metrics(
                     artifacts,
                     metrics,
@@ -731,6 +824,18 @@ def capture_raw_serial(
                     metrics_summary,
                 )
 
+            if any(
+                item is not None
+                for item in (
+                    boot_event,
+                    build_event,
+                    subsystem_event,
+                    payload_observation,
+                    upload_event,
+                    metrics,
+                )
+            ):
+                structured_events_count += 1
             if now >= next_progress_at:
                 emit_progress(now)
                 next_progress_at = now + progress_interval_seconds
@@ -760,4 +865,5 @@ def capture_raw_serial(
         sensor_series=sensor_series,
         upload_stats=upload_stats,
         serial_device_ids=tuple(serial_device_ids),
+        sensor_observations=observation_tracker.as_dict(),
     )

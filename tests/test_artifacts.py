@@ -286,7 +286,8 @@ def test_write_report_includes_final_pass_details(tmp_path):
     assert "Verdict:" in report
     assert "- verdict: PASS_CANDIDATE" in report
     assert "Findings:\n- none" in report
-    assert "- last dev metrics: status=ALIVE, uptime=300s" in report
+    assert "- HEALTH records seen: True" in report
+    assert "- last HEALTH: status=ALIVE, uptime=300s" in report
     assert "- observed metrics: humidity, temperature" in report
     assert "- urban pm: warn (2 series, 1 warnings)" in report
 
@@ -339,5 +340,60 @@ def test_write_report_includes_final_fail_details(tmp_path):
     report = artifacts.report_txt.read_text(encoding="utf-8")
     assert "- verdict: FAIL" in report
     assert "[FAIL] NO_SERIAL_OUTPUT: No serial output was received" in report
-    assert "- dev metrics seen: False" in report
+    assert "- HEALTH records seen: False" in report
+    assert "- last HEALTH: none" in report
     assert "- missing metrics: temperature" in report
+
+
+def test_payload_report_supports_new_and_older_summary_fields(tmp_path):
+    for malformed_count in (None, 2):
+        artifacts = create_run_artifacts(
+            tmp_path / str(malformed_count),
+            port=Path("/dev/test"),
+            baud=115200,
+            duration_input="1s",
+            duration_seconds=1,
+        )
+        payloads = {"payload_observations_count": 3}
+        if malformed_count is not None:
+            payloads["malformed_payload_observations_count"] = malformed_count
+        artifacts.write_report("completed", details={"payload_observations": payloads})
+        report = artifacts.report_txt.read_text()
+        assert "- observations: 3" in report
+        assert f"- malformed observations: {malformed_count or 0}" in report
+
+
+def test_report_and_summary_separate_health_probes_from_uploads(tmp_path):
+    from altruist_tester.parsers.upload_events import parse_upload_event
+    from altruist_tester.rules.uploads import UploadChannelConfig, check_upload_health
+    from altruist_tester.uploads import UploadStats
+
+    artifacts = create_run_artifacts(
+        tmp_path,
+        port=Path("/dev/ttyACM0"),
+        baud=115200,
+        duration_input="5m",
+        duration_seconds=300,
+    )
+    stats = UploadStats()
+    for tail in [
+        "failed channel=sensors-connectivity seq=1 "
+        "stage=health reason=health_get_failed",
+        "attempt channel=sensors-connectivity seq=1",
+        "success channel=sensors-connectivity seq=1",
+    ]:
+        event = parse_upload_event(f"[CONNECTIVITY] {tail}")
+        assert event is not None
+        stats.append(event)
+    report = check_upload_health(
+        stats, connectivity=UploadChannelConfig(mode="required")
+    )
+    details = {"upload_health": report.as_dict()}
+    artifacts.write_summary("completed", extra=details)
+    artifacts.write_report("completed", details=details)
+    summary = json.loads(artifacts.summary_json.read_text())
+    channel = summary["upload_health"]["channels"]["connectivity"]
+    assert channel["health_checks"] == channel["successes"] == 1
+    assert channel["failures"] == 0
+    assert channel["success_rate"] == 1.0
+    assert "success_rate=100.0%, health_checks=1" in artifacts.report_txt.read_text()

@@ -1,3 +1,6 @@
+# UART v2 uses per-sensor intervals below; repeated cache is not a measurement.
+# Sensor presets require metrics from each named physical JSON source.
+# UART v2 settings below are operator expectations, never learned from the device.
 [expect]
 sensors = ["scd41", "bme680"]
 metrics = []
@@ -26,15 +29,20 @@ name = "co2_ppm"
 minimum = 350.0
 maximum = 10000.0
 
+# BME680 VOC scale/indicator/counter constants are allowed; cadence still applies.
+# Default integer ranges: voc_ppb 0..10000, index 0..100, level 0..3
+# (unavailable -1 warns), daily count 0..65535. voc_ppb is relative MOS/ABC,
+# not laboratory TVOC. UART v2 requires these metrics when gas is enabled.
+# Override these bounds through the existing sensor_ranges mechanism.
+[sensor_ranges.voc_ppb]
+name = "voc_ppb"
+minimum = 0.0
+maximum = 10000.0
+
 [flatline]
 window = "30m"
 fail_after = "1h"
 min_distinct_values = 2
-
-[cadence]
-expected_interval = "5m"
-warn_after_missed = 2
-fail_after_missed = 4
 
 [serial]
 silence_warn_after = "2m"
@@ -56,3 +64,25 @@ max_consecutive_failures = 5
 min_successes = 1
 min_success_rate = 0.8
 max_consecutive_failures = 3
+
+# Select the firmware contract and set effective values before capture.
+# These examples assume send=30000 ms, SDS=300000 ms and enabled gas on Insight.
+# BUILD is saved separately; an unknown BUILD is never mapped to a local checkout.
+[observations]
+firmware_source = "Altruist debug UART v2"
+settings_rule = "BME/SCD max(300000,send); SDS max(30000,SDS); noise fetch=100"
+
+[observations.settings.BME680]
+fetch_wait_ms = 300000
+measurement_interval_ms = 300000
+publication = "on_update"
+publish_interval_ms = 0
+state_min_interval_ms = 1000
+gas_enabled = true
+
+[observations.settings.SCD4x]
+fetch_wait_ms = 300000
+measurement_interval_ms = 300000
+publication = "on_update"
+publish_interval_ms = 0
+state_min_interval_ms = 1000

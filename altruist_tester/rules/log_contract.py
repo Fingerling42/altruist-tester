@@ -1,4 +1,4 @@
-"""Checks that firmware release logs are sufficient for tester rules."""
+"""Checks that firmware debug UART logs are sufficient for tester rules."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ LogContractStatus = Literal["ok", "warn", "fail"]
 
 @dataclass(frozen=True, slots=True)
 class LogContractFinding:
-    """One missing release-log signal finding."""
+    """One missing UART signal finding."""
 
     status: RuleSeverity
     code: str
@@ -142,7 +142,7 @@ def _missing_upload_finding(
         status=severity_for_upload_mode(config.mode),
         code=f"LOG_CONTRACT_{channel.upper()}_UPLOAD_MISSING",
         message=(
-            f"{channel} upload telemetry was not observed; release logs are not "
+            f"{channel} upload telemetry was not observed; debug UART logs are not "
             "showing configured upload activity"
         ),
     )
@@ -164,6 +164,43 @@ def _late_signal_finding(
     )
 
 
+def firmware_profile_error(stats: SerialLogStats) -> str | None:
+    """Validate that captured BUILD metadata identifies a supported debug profile."""
+    builds = list(stats.build_event_records)
+    if stats.build_events.last_build is not None:
+        builds.append(stats.build_events.last_build)
+    for key in (
+        "profile",
+        "commit",
+        "model",
+        "target",
+        "version",
+        "channel",
+        "language",
+    ):
+        values = {str(build[key]) for build in builds if build.get(key)}
+        if len(values) > 1:
+            return (
+                f"Conflicting [BUILD] {key} metadata; USB acceptance was not "
+                "evaluated. Capture one firmware build per run."
+            )
+    profiles = {str(build["profile"]) for build in builds if build.get("profile")}
+    if profiles and not profiles <= {"debug", "release"}:
+        return (
+            "Unknown [BUILD] firmware profile; USB acceptance was not evaluated. "
+            "Use supported debug firmware. Stable/Testing is only a channel."
+        )
+    if profiles == {"release"}:
+        return (
+            "Firmware profile release does not support the HEALTH/sensor "
+            "contract required for USB acceptance. Sensor health was not evaluated; "
+            "this is not evidence of a sensor defect. Prepare debug firmware and "
+            "capture again. Operational LOG/status output cannot replace readings; "
+            "use diagnostics for release logging checks."
+        )
+    return None
+
+
 def check_log_contract(
     stats: SerialLogStats,
     *,
@@ -171,7 +208,7 @@ def check_log_contract(
     connectivity_upload: UploadChannelConfig,
     datalog_upload: UploadChannelConfig,
 ) -> LogContractReport:
-    """Check that release logs expose the minimum tester-facing telemetry."""
+    """Check that debug UART logs expose the minimum tester-facing telemetry."""
 
     signals = {
         "health_telemetry": _has_health_telemetry(stats),
@@ -184,6 +221,17 @@ def check_log_contract(
     }
 
     findings: list[LogContractFinding] = []
+    builds = list(stats.build_event_records)
+    if stats.build_events.last_build is not None:
+        builds.append(stats.build_events.last_build)
+    if builds and not any(build.get("profile") for build in builds):
+        findings.append(
+            LogContractFinding(
+                status="warn",
+                code="LOG_CONTRACT_BUILD_PROFILE_MISSING",
+                message="[BUILD] profile is unknown; strict telemetry checks apply",
+            )
+        )
     if not signals["health_telemetry"]:
         findings.append(
             LogContractFinding(
@@ -197,7 +245,7 @@ def check_log_contract(
             LogContractFinding(
                 status=severity_for_missing_sensor_metrics(),
                 code="LOG_CONTRACT_SENSOR_SAMPLES_MISSING",
-                message="Sensor payload samples were not observed",
+                message="Sensor measurements from debug UART were not observed",
             )
         )
     if not signals["boot_or_reset_context"]:
@@ -245,7 +293,12 @@ def check_log_contract(
                 startup_window_seconds=startup_window_seconds,
             )
         )
-    if signals["sensor_samples"] and samples_in_window is False:
+    # UART v2 has per-metric first-wait windows from the explicit profile.
+    if (
+        signals["sensor_samples"]
+        and samples_in_window is False
+        and not stats.sensor_observations.get("selected")
+    ):
         findings.append(
             _late_signal_finding(
                 signal="sensor_samples",
@@ -298,10 +351,10 @@ def check_log_contract(
         status = "ok"
 
     if status == "ok":
-        message = "Release logs contain the minimum tester-facing telemetry"
+        message = "Debug UART logs contain the minimum tester-facing telemetry"
     else:
         missing = ", ".join(finding.code for finding in findings)
-        message = "Release logs are missing tester-facing telemetry: " + missing
+        message = "Debug UART logs are missing tester-facing telemetry: " + missing
 
     return LogContractReport(
         status=status,

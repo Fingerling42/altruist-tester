@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from altruist_tester.cli import app
@@ -10,8 +11,9 @@ from tests.cli_helpers import (
     plain_output,
     release_log_stats,
     series_with_metrics,
+    uart_cadence_report,
 )
-from tests.helpers import sample_record, sample_series
+from tests.helpers import sample_record, sample_series, uart_snapshot
 
 
 def test_run_rejects_missing_serial_port(tmp_path):
@@ -250,6 +252,7 @@ def test_run_accepts_valid_options(monkeypatch, tmp_path):
                 max_errors={"wifi": 0, "sensor": 0, "sd": 0},
             ),
             sensor_samples_count=2,
+            sensor_observations=uart_cadence_report(0),
             sensor_series=series_with_metrics("temperature", "humidity"),
             serial_device_ids=("1051DB010C70",),
         ),
@@ -434,14 +437,14 @@ def test_run_passes_when_expected_sensors_are_seen(monkeypatch, tmp_path):
         monkeypatch,
         release_log_stats(
             sensor_samples_count=7,
-            sensor_series=series_with_metrics(
-                "temperature",
-                "humidity",
-                "pressure",
-                "P1",
-                "P2",
-                "noiseAvg",
-                "noiseMax",
+            sensor_series=sample_series(
+                sample_record("BME280", "temperature", 24.0, 0),
+                sample_record("BME280", "humidity", 45.0, 0),
+                sample_record("BME280", "pressure", 1013.25, 0),
+                sample_record("SDS", "P1", 10.0, 0),
+                sample_record("SDS", "P2", 5.0, 0),
+                sample_record("ICS43434", "noiseAvg", 45.0, 0),
+                sample_record("ICS43434", "noiseMax", 55.0, 0),
             ),
         ),
     )
@@ -494,14 +497,14 @@ sensors = ["bme280", "sds", "ics-43434"]
         monkeypatch,
         release_log_stats(
             sensor_samples_count=7,
-            sensor_series=series_with_metrics(
-                "temperature",
-                "humidity",
-                "pressure",
-                "P1",
-                "P2",
-                "noiseAvg",
-                "noiseMax",
+            sensor_series=sample_series(
+                sample_record("BME280", "temperature", 24.0, 0),
+                sample_record("BME280", "humidity", 45.0, 0),
+                sample_record("BME280", "pressure", 1013.25, 0),
+                sample_record("SDS", "P1", 10.0, 0),
+                sample_record("SDS", "P2", 5.0, 0),
+                sample_record("ICS43434", "noiseAvg", 45.0, 0),
+                sample_record("ICS43434", "noiseMax", 55.0, 0),
             ),
         ),
     )
@@ -690,6 +693,7 @@ def test_run_fails_when_sensor_values_are_flatlined(monkeypatch, tmp_path):
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
+            sensor_observations={"selected": True},
             sensor_series=sample_series(
                 sample_record("SCD4x", "co2", 612.0, 0),
                 sample_record("SCD4x", "co2", 612.0, 60 * 60),
@@ -735,6 +739,7 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
             lines_read=2,
             bytes_read=20,
             sensor_samples_count=2,
+            sensor_observations=uart_cadence_report(0, 25 * 60),
             sensor_series=sample_series(
                 sample_record("BME280", "temperature", 24.0, 0),
                 sample_record("BME280", "temperature", 24.5, 25 * 60),
@@ -758,14 +763,14 @@ def test_run_fails_when_sensor_update_cadence_is_too_slow(monkeypatch, tmp_path)
     )
 
     assert result.exit_code == 1
-    assert "sensor metric series missed too many updates" in plain_output(result)
+    assert "UART v2 cadence: 3 failures" in plain_output(result)
     run_dir = next(output_dir.iterdir())
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["status"] == "failed"
     assert summary["sensor_presence"]["status"] == "ok"
     assert summary["sensor_flatlines"]["status"] == "ok"
     assert summary["sensor_cadence"]["status"] == "fail"
-    assert summary["sensor_cadence"]["failure_count"] == 1
+    assert summary["sensor_cadence"]["failure_count"] == 3
     # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "sensor_cadence_checked" not in (run_dir / "events.jsonl").read_text()
 
@@ -849,3 +854,131 @@ def test_run_fails_when_serial_output_is_silent(monkeypatch, tmp_path):
     assert "serial_silence" in summary["rules"]["failed_checks"]
     # Final rule payloads stay in summary.json to keep events.jsonl compact.
     assert "serial_silence_checked" not in (run_dir / "events.jsonl").read_text()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "[Watchdog] Main loop stall; rebooting",
+        "Interrupt wdt timeout on CPU0",
+        "[BOOT] reset_reason=interrupt_watchdog_timeout reset_code=5",
+        "[LOG] uptime=60 level=error subsystem=system event=watchdog_restart code=4",
+        "rst:0x10 (RTCWDT_RTC_RESET)",
+        "assert failed: multi_heap_free",
+        "Guru Meditation Error: Core 0 panic'ed",
+        "Brownout detector was triggered",
+    ],
+)
+def test_epd_and_runtime_alerts_flow_through_capture_summary_and_report(
+    monkeypatch, tmp_path, failure
+):
+    from altruist_tester.serial_logger import capture_raw_serial
+    from tests.test_serial_logger import FakeClock, FakeSerial
+
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    clock = FakeClock()
+    lines = [
+        b"[DEBUG] [EPD] FULL refresh (watchdog/wake/main) pushed to panel\r\n",
+        b"[DEBUG] [EPD] Periodic watchdog: recovering display "
+        b"and scheduling FULL refresh\n",
+        b"[HEALTH] uptime=60 boot=1 heap=200000 rssi=-50 tx=1 errors=0 "
+        b"wifi=1 wifi_errors=0 sensor_errors=0 sd_errors=0 "
+        b"reset_reason=power_on_reset\n",
+        (json.dumps(uart_snapshot("BME280", {"temperature": 24})) + "\n").encode(),
+    ]
+    if failure:
+        lines.append(f"{failure}\n".encode())
+    fake_serial = FakeSerial(lines, clock)
+
+    def capture(_serial, artifacts, duration_seconds, **kwargs):
+        return capture_raw_serial(fake_serial, artifacts, duration_seconds, clock=clock)
+
+    patch_cli_capture(monkeypatch, SerialLogStats(lines_read=0, bytes_read=0))
+    monkeypatch.setattr("altruist_tester.cli.capture_raw_serial", capture)
+    output_dir = tmp_path / "runs"
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-metric",
+            "temperature",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+    run_dir = next(output_dir.iterdir())
+    summary = json.loads((run_dir / "summary.json").read_text())
+    report = (run_dir / "report.txt").read_text()
+    events = [
+        json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()
+    ]
+    alerts = [event for event in events if event["type"] == "keyword_alert"]
+    assert (run_dir / "serial.log").read_bytes() == b"".join(lines)
+    assert summary["keyword_alerts_count"] == len(alerts)
+    assert result.exit_code == (1 if failure else 0), plain_output(result)
+    if failure:
+        assert summary["verdict"] == "FAIL"
+        assert summary["rules"]["failed_checks"] == ["keyword_alerts"]
+        assert alerts
+        assert all(alert["line"] == failure for alert in alerts)
+        assert "- verdict: FAIL" in report
+        assert all(alert["code"] in report for alert in alerts)
+        assert "Serial runtime failure detected:" in report
+    else:
+        assert summary["keyword_alerts"] == []
+        assert not alerts
+        assert summary["rules"]["failed_checks"] == []
+        assert summary["verdict"] == "WARN"  # No startup BUILD in this capture.
+        assert "- verdict: WARN" in report
+
+
+def test_run_rejects_foreign_metrics_as_physical_bme680(monkeypatch, tmp_path):
+    port = tmp_path / "ttyACM0"
+    port.touch()
+    output_dir = tmp_path / "runs"
+    patch_cli_capture(
+        monkeypatch,
+        release_log_stats(
+            sensor_samples_count=4,
+            sensor_series=sample_series(
+                sample_record("SCD4x", "temperature", 24.0, 0),
+                sample_record("SCD4x", "humidity", 45.0, 0),
+                sample_record("SCD4x", "co2", 600.0, 0),
+                sample_record("altruist_urban", "pressure", 1013.25, 0),
+            ),
+        ),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--port",
+            str(port),
+            "--duration",
+            "5s",
+            "--expect-sensor",
+            "bme680",
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+    assert result.exit_code == 1
+    (run_dir,) = output_dir.iterdir()
+    summary = json.loads((run_dir / "summary.json").read_text())
+    presence = summary["sensor_presence"]
+    assert presence["status"] == "fail"
+    assert presence["missing_metrics"] == []
+    assert presence["missing_sensor_metrics"] == [
+        {"sensor": "bme680", "metric": metric}
+        for metric in ("humidity", "pressure", "temperature")
+    ]
+    assert "ambiguous_metrics" not in presence
+    report = (run_dir / "report.txt").read_text()
+    for metric in ("humidity", "pressure", "temperature"):
+        assert f"bme680.{metric}" in report

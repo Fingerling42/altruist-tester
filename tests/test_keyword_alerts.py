@@ -1,3 +1,5 @@
+import pytest
+
 from altruist_tester.parsers.keyword_alerts import detect_keyword_alerts
 
 
@@ -136,3 +138,48 @@ def test_ignores_expected_network_error_lines():
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "[EPD] FULL refresh (watchdog/wake/main) pushed to panel",
+        "[EPD] Periodic watchdog: recovering display and scheduling FULL refresh",
+        "  [epd] full refresh (WATCHDOG/wake/main) pushed to panel\r\n",
+    ],
+)
+@pytest.mark.parametrize("prefix", ["", "[DEBUG] ", "[debug] "])
+def test_ignores_exact_epd_maintenance_messages(line, prefix):
+    assert detect_keyword_alerts(prefix + line.strip()) == []
+    assert detect_keyword_alerts(line) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Task watchdog got triggered. The following tasks did not reset the watchdog",
+        "Interrupt wdt timeout on CPU0",
+        "Interrupt watchdog timeout",
+        "Other watchdog reset",
+        "[HEALTH] reset_reason=other_watchdog_reset reset_code=7",
+        "[BOOT] reset_reason=interrupt_watchdog_timeout reset_code=5",
+        "rst:0x8 (TG1WDT_SYS_RESET)",
+        "[BOOT] reset_reason=task_watchdog_timeout reset_code=6",
+        "[LOG] uptime=60 level=error subsystem=system event=watchdog_restart code=4",
+        "[Watchdog] Sensor worker loop timeout; rebooting",
+        "[Watchdog] Main loop stall; rebooting",
+        "[EPD] watchdog timeout; rebooting",
+        "[EPD] FULL refresh (watchdog/wake/main) pushed to panel; "
+        "Task watchdog timeout",
+        "[EPD] FULL refresh (watchdog/wake/main) pushed to panel PANIC",
+        "[EPD] FULL refresh (watchdog/wake/main) pushed to panel\n"
+        "Task watchdog timeout",
+        "[EPD] FULL refresh (watchdog/wake/main) failed",
+        "[DEBUG] [EPD] FULL refresh (watchdog/wake/main) pushed to panel panic",
+        "[DEBUG] [EPD] Task watchdog timeout",
+    ],
+)
+def test_retains_real_watchdogs_and_nearby_messages(line):
+    alerts = detect_keyword_alerts(line)
+    assert "WATCHDOG" in [alert.code for alert in alerts]
+    assert all(alert.severity == "fail" for alert in alerts)
