@@ -27,11 +27,12 @@ from altruist_tester.parsers.upload_events import (
     UploadEvent,
     parse_upload_event,
 )
-from altruist_tester.samples import SensorSample, SensorSampleRecord, SensorSampleSeries
+from altruist_tester.samples import SensorSampleSeries
 from altruist_tester.sensor_observations import SensorObservationTracker
 from altruist_tester.uploads import UploadStats
 
 Number = int | float
+MAX_SERIAL_LINE_BYTES = 65536
 
 
 class SerialIdentityError(ValueError):
@@ -45,8 +46,8 @@ class SerialReader(Protocol):
     object that returns bytes from ``readline``.
     """
 
-    def readline(self) -> bytes:
-        """Read one line from the serial stream."""
+    def readline(self, size: int) -> bytes:
+        """Read up to size bytes, stopping at LF or a read timeout."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,7 +285,7 @@ class SerialLogProgress:
         return min(100.0, (self.elapsed_seconds / self.duration_seconds) * 100.0)
 
 
-def _decode_serial_line(line: bytes) -> str:
+def _decode_serial_line(line: bytes | bytearray) -> str:
     return line.decode("utf-8", errors="replace").rstrip("\r\n")
 
 
@@ -315,54 +316,6 @@ def _max_error_counters(
     }
 
 
-def _update_dev_metrics_summary(
-    summary: DevMetricsSummary,
-    metrics: DevMetrics,
-    event_ts: str,
-) -> DevMetricsSummary:
-    payload = metrics.as_event_payload()
-    return DevMetricsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_metrics=payload,
-        max_boot=_max_optional(summary.max_boot, metrics.boot),
-        min_uptime_sec=_min_optional(summary.min_uptime_sec, metrics.uptime_sec),
-        max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
-        min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
-        max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
-        max_errors=_max_error_counters(summary.max_errors, metrics),
-    )
-
-
-def _update_boot_events_summary(
-    summary: BootEventsSummary,
-    boot_event: BootEvent,
-    event_ts: str,
-) -> BootEventsSummary:
-    payload = boot_event.as_event_payload()
-    return BootEventsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_boot=payload,
-    )
-
-
-def _update_build_events_summary(
-    summary: BuildEventsSummary,
-    build_event: BuildEvent,
-    event_ts: str,
-) -> BuildEventsSummary:
-    payload = build_event.as_event_payload()
-    return BuildEventsSummary(
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        last_build=payload,
-    )
-
-
 def _increment_counter(current: dict[str, int], key: str) -> dict[str, int]:
     updated = dict(current)
     updated[key] = updated.get(key, 0) + 1
@@ -380,33 +333,6 @@ def _update_subsystem_events_summary(
         last_seen=event_ts,
         by_subsystem=_increment_counter(summary.by_subsystem, event.subsystem),
         by_reason=_increment_counter(summary.by_reason, event.reason),
-    )
-
-
-def _update_payload_observations_summary(
-    summary: PayloadObservationsSummary,
-    observation: PayloadObservation,
-    event_ts: str,
-) -> PayloadObservationsSummary:
-    payload = observation.as_event_payload()
-    by_channel = summary.by_channel
-    if observation.channel is not None:
-        by_channel = _increment_counter(by_channel, observation.channel)
-
-    by_encoding = summary.by_encoding
-    if observation.encoding is not None:
-        by_encoding = _increment_counter(by_encoding, observation.encoding)
-
-    return replace(
-        summary,
-        count=summary.count + 1,
-        first_seen=summary.first_seen or event_ts,
-        last_seen=event_ts,
-        by_channel=by_channel,
-        by_encoding=by_encoding,
-        encrypted_count=summary.encrypted_count
-        + (1 if observation.encrypted is True else 0),
-        last_observation=payload,
     )
 
 
@@ -431,7 +357,12 @@ def _append_boot_event(
     payload = boot_event.as_event_payload()
     event = artifacts.append_event("boot_event", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_boot_events_summary(summary, boot_event, event["ts"])
+    return BootEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_boot=payload,
+    )
 
 
 def _append_build_event(
@@ -443,7 +374,12 @@ def _append_build_event(
     payload = build_event.as_event_payload()
     event = artifacts.append_event("build_event", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_build_events_summary(summary, build_event, event["ts"])
+    return BuildEventsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_build=payload,
+    )
 
 
 def _append_subsystem_event(
@@ -508,20 +444,25 @@ def _append_payload_observation(
     payload = observation.as_event_payload()
     event = artifacts.append_event("payload_observation", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_payload_observations_summary(summary, observation, event["ts"])
+    by_channel = summary.by_channel
+    if observation.channel is not None:
+        by_channel = _increment_counter(by_channel, observation.channel)
 
+    by_encoding = summary.by_encoding
+    if observation.encoding is not None:
+        by_encoding = _increment_counter(by_encoding, observation.encoding)
 
-def _append_sensor_samples(
-    artifacts: RunArtifacts,
-    samples: list[SensorSample],
-    series: SensorSampleSeries,
-) -> tuple[SensorSampleRecord, ...]:
-    appended_samples = []
-    for sample in samples:
-        record = artifacts.append_sample(sample)
-        series.append(record)
-        appended_samples.append(record)
-    return tuple(appended_samples)
+    return replace(
+        summary,
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        by_channel=by_channel,
+        by_encoding=by_encoding,
+        encrypted_count=summary.encrypted_count
+        + (1 if observation.encrypted is True else 0),
+        last_observation=payload,
+    )
 
 
 def _append_dev_metrics(
@@ -533,7 +474,18 @@ def _append_dev_metrics(
     payload = metrics.as_event_payload()
     event = artifacts.append_event("dev_metrics", **payload)
     records.append({"ts": event["ts"], **payload})
-    return _update_dev_metrics_summary(summary, metrics, event["ts"])
+    return DevMetricsSummary(
+        count=summary.count + 1,
+        first_seen=summary.first_seen or event["ts"],
+        last_seen=event["ts"],
+        last_metrics=payload,
+        max_boot=_max_optional(summary.max_boot, metrics.boot),
+        min_uptime_sec=_min_optional(summary.min_uptime_sec, metrics.uptime_sec),
+        max_uptime_sec=_max_optional(summary.max_uptime_sec, metrics.uptime_sec),
+        min_rssi=_min_optional(summary.min_rssi, metrics.rssi),
+        max_rssi=_max_optional(summary.max_rssi, metrics.rssi),
+        max_errors=_max_error_counters(summary.max_errors, metrics),
+    )
 
 
 def _append_upload_event(
@@ -614,7 +566,7 @@ def capture_raw_serial(
     """Capture raw serial output until the requested duration elapses.
 
     Every received byte is appended to ``serial.log``. Decoded lines are also
-    parsed for keyword alerts, health telemetry, and sensor samples;
+    parsed only after LF, for keyword alerts, health telemetry, and sensor samples;
     those structured observations are written to ``events.jsonl`` or
     ``samples.jsonl`` as appropriate.
 
@@ -635,7 +587,8 @@ def capture_raw_serial(
     deadline = started_at + duration_seconds
     next_progress_at = started_at
     lines_read = 0
-    raw_line_number = 1
+    pending = bytearray()
+    discarding_line = False
     bytes_read = 0
     first_line_elapsed_seconds: float | None = None
     last_line_elapsed_seconds: float | None = None
@@ -664,8 +617,10 @@ def capture_raw_serial(
     wifi_observed_elapsed_seconds: float | None = None
 
     def emit_progress(now: float, *, complete: bool = False) -> None:
-        if progress_callback is None:
+        nonlocal next_progress_at
+        if progress_callback is None or (not complete and now < next_progress_at):
             return
+        next_progress_at = now + progress_interval_seconds
         progress_callback(
             _build_progress(
                 now=now,
@@ -684,22 +639,17 @@ def capture_raw_serial(
             )
         )
 
-    with artifacts.serial_log.open("ab") as raw_log:
+    with artifacts.serial_log.open("ab") as raw_log, artifacts.capture_jsonl():
         while (now := clock()) < deadline:
-            line = serial_port.readline()
+            chunk = serial_port.readline(MAX_SERIAL_LINE_BYTES + 1)
             now = clock()
-            if not line:
-                if now >= next_progress_at:
-                    emit_progress(now)
-                    next_progress_at = now + progress_interval_seconds
+            if not chunk:
+                emit_progress(now)
                 continue
 
-            line_number = raw_line_number
-            raw_line_number += line.count(b"\n")
-            raw_log.write(line)
+            raw_log.write(chunk)
             raw_log.flush()
-            lines_read += 1
-            bytes_read += len(line)
+            bytes_read += len(chunk)
             line_elapsed_seconds = max(0.0, now - started_at)
             if first_line_elapsed_seconds is None:
                 first_line_elapsed_seconds = line_elapsed_seconds
@@ -710,7 +660,34 @@ def capture_raw_serial(
                     gap_seconds,
                 )
             last_line_elapsed_seconds = line_elapsed_seconds
-            decoded_line = _decode_serial_line(line)
+
+            if (
+                not discarding_line
+                and len(pending) + len(chunk) > MAX_SERIAL_LINE_BYTES
+            ):
+                pending.clear()
+                discarding_line = True
+                observation_tracker.issues["line_too_long"] += 1
+                artifacts.append_event(
+                    "serial_line_too_long", line_number=lines_read + 1
+                )
+            if not chunk.endswith(b"\n"):
+                if not discarding_line:
+                    pending.extend(chunk)
+                emit_progress(now)
+                continue
+
+            lines_read += 1
+            if discarding_line:
+                discarding_line = False
+                emit_progress(now)
+                continue
+            if pending:
+                pending.extend(chunk)
+                decoded_line = _decode_serial_line(pending)
+                pending.clear()
+            else:
+                decoded_line = _decode_serial_line(chunk)
             if mirror_lines_to_events:
                 artifacts.append_event("serial_line", line=decoded_line)
 
@@ -776,7 +753,7 @@ def capture_raw_serial(
                     payload_observation,
                     payload_observation_records,
                     payload_observations_summary,
-                    line_number=line_number,
+                    line_number=lines_read,
                 )
 
             observation, sensor_samples = observation_tracker.feed(
@@ -809,7 +786,8 @@ def capture_raw_serial(
                             )
                         if observed_id not in serial_device_ids:
                             serial_device_ids.append(observed_id)
-            _append_sensor_samples(artifacts, sensor_samples, sensor_series)
+            for sample in sensor_samples:
+                sensor_series.append(artifacts.append_sample(sample))
             upload_event = parse_upload_event(decoded_line)
             if upload_event is not None:
                 _append_upload_event(artifacts, upload_event, upload_stats)
@@ -836,9 +814,7 @@ def capture_raw_serial(
                 )
             ):
                 structured_events_count += 1
-            if now >= next_progress_at:
-                emit_progress(now)
-                next_progress_at = now + progress_interval_seconds
+            emit_progress(now)
 
     emit_progress(clock(), complete=True)
 

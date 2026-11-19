@@ -6,7 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from altruist_tester.parsers.boot_events import parse_key_value_fields
+from altruist_tester.parsers.boot_events import (
+    parse_fields_with_spaces,
+    parse_key_value_fields,
+)
 
 UploadChannel = Literal["connectivity", "datalog"]
 UploadStatus = Literal["attempt", "success", "failure"]
@@ -21,7 +24,6 @@ _DATALOG_RE = re.compile(
     r"^\[DATALOG\]\s+(?P<status>attempt|success|failed)"
     r"(?:\s+(?P<fields>.+?))?\s*$"
 )
-_DATALOG_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,25 +68,6 @@ def _format_fields(
     return " ".join(details)
 
 
-def _parse_datalog_fields(text: str) -> dict[str, str]:
-    """Parse DATALOG fields while preserving whitespace in values.
-
-    Firmware may place a human-readable ``message`` between structured fields.
-    Splitting on whitespace would lose that evidence, while a suffix-specific
-    expression would reject new fields. A value therefore extends to the next
-    ``key=`` token or the end of the line.
-    """
-
-    matches = list(_DATALOG_FIELD_RE.finditer(text))
-    fields: dict[str, str] = {}
-    for index, match in enumerate(matches):
-        value_end = (
-            matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        )
-        fields[match.group("key")] = text[match.end() : value_end].strip()
-    return fields
-
-
 def _parse_connectivity_event(match: re.Match[str]) -> UploadEvent | None:
     fields = parse_key_value_fields(match.group("fields") or "")
     status = match.group("status")
@@ -115,7 +98,7 @@ def _parse_connectivity_event(match: re.Match[str]) -> UploadEvent | None:
 
 
 def _parse_datalog_event(match: re.Match[str]) -> UploadEvent | None:
-    fields = _parse_datalog_fields(match.group("fields") or "")
+    fields = parse_fields_with_spaces(match.group("fields") or "")
     status = match.group("status")
 
     if status == "failed":

@@ -550,12 +550,22 @@ def _finding_messages(
     return messages
 
 
-def _device_result_from_summary(
+def _collect_device_result(
     device_artifacts: BatchDeviceArtifacts,
     worker_result: dict[str, object],
-    summary_path: Path,
-    summary: dict[str, object],
 ) -> dict[str, object]:
+    summary_path = _find_device_summary(device_artifacts.output_dir)
+    summary: dict[str, object] = {}
+    summary_error = None
+    if summary_path is None:
+        summary_error = "summary.json not found"
+    else:
+        try:
+            summary = _load_device_summary(summary_path)
+        except (OSError, ValueError) as exc:
+            summary_error = f"Could not read summary.json: {exc}"
+            summary_path = None
+
     device = device_artifacts.device
     rules = summary.get("rules")
     failed_checks = []
@@ -579,10 +589,14 @@ def _device_result_from_summary(
             and summary.get("message")
             else worker_result.get("error")
         ),
-        "summary_json": str(summary_path),
-        "report_txt": str(summary_path.parent / "report.txt"),
+        "summary_json": str(summary_path) if summary_path is not None else None,
+        "report_txt": (
+            str(summary_path.parent / "report.txt")
+            if summary_path is not None
+            else None
+        ),
         "run_dir": summary.get("run_dir"),
-        "status": summary.get("status"),
+        "status": "failed" if summary_error else summary.get("status"),
         "verdict": summary.get("verdict"),
         "device_identity": _device_identity_from_summary(summary),
         "findings_count": _findings_count(summary),
@@ -591,67 +605,8 @@ def _device_result_from_summary(
         "upload_health": summary.get("upload_health"),
         "subsystem_health": summary.get("subsystem_health"),
         "sensor_presence": summary.get("sensor_presence"),
+        **({"summary_error": summary_error} if summary_error else {}),
     }
-
-
-def _device_result_without_summary(
-    device_artifacts: BatchDeviceArtifacts,
-    worker_result: dict[str, object],
-    reason: str,
-) -> dict[str, object]:
-    device = device_artifacts.device
-    return {
-        "slot": device.slot,
-        "model": device.model,
-        "port": str(device.port),
-        "config": str(device.effective_config) if device.effective_config else None,
-        "worker_status": worker_result.get("status"),
-        "worker_returncode": worker_result.get("returncode"),
-        "failure_kind": worker_result.get("failure_kind"),
-        "worker_error": worker_result.get("error"),
-        "summary_json": None,
-        "report_txt": None,
-        "run_dir": None,
-        "status": "failed",
-        "verdict": None,
-        "device_identity": None,
-        "findings_count": None,
-        "finding_messages": [],
-        "failed_checks": [],
-        "upload_health": None,
-        "subsystem_health": None,
-        "sensor_presence": None,
-        "summary_error": reason,
-    }
-
-
-def _collect_device_result(
-    device_artifacts: BatchDeviceArtifacts,
-    worker_result: dict[str, object],
-) -> dict[str, object]:
-    summary_path = _find_device_summary(device_artifacts.output_dir)
-    if summary_path is None:
-        return _device_result_without_summary(
-            device_artifacts,
-            worker_result,
-            "summary.json not found",
-        )
-
-    try:
-        summary = _load_device_summary(summary_path)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        return _device_result_without_summary(
-            device_artifacts,
-            worker_result,
-            f"Could not read summary.json: {exc}",
-        )
-
-    return _device_result_from_summary(
-        device_artifacts,
-        worker_result,
-        summary_path,
-        summary,
-    )
 
 
 def _collect_device_results(
@@ -822,14 +777,6 @@ def _emit_batch_progress(
     typer.echo(_batch_slot_states(slots, running_slots, worker_results))
 
 
-def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
-    return worker.process.poll()
-
-
-def _process_current_returncode(process: subprocess.Popen[str]) -> int | None:
-    return process.poll()
-
-
 def _interrupted_worker_result(
     worker: BatchWorkerProcess,
     *,
@@ -847,26 +794,20 @@ def _interrupted_worker_result(
     }
 
 
-def _unfinished_workers(
-    workers: list[BatchWorkerProcess],
-    worker_results: list[dict[str, object]],
-) -> list[BatchWorkerProcess]:
-    finished_slots = {
-        str(result["slot"]) for result in worker_results if "slot" in result
-    }
-    return [
-        worker
-        for worker in workers
-        if worker.slot not in finished_slots
-        and _process_current_returncode(worker.process) is None
-    ]
-
-
 def _terminate_batch_workers(
     workers: list[BatchWorkerProcess],
     worker_results: list[dict[str, object]],
 ) -> None:
-    running_workers = _unfinished_workers(workers, worker_results)
+    finished_slots = {result["slot"] for result in worker_results}
+    running_workers = []
+    for worker in workers:
+        if worker.slot in finished_slots:
+            continue
+        returncode = worker.process.poll()
+        if returncode is None:
+            running_workers.append(worker)
+        else:
+            worker_results.append(_batch_worker_result(worker, returncode))
     if not running_workers:
         return
 
@@ -876,18 +817,24 @@ def _terminate_batch_workers(
 
     deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
     while time.monotonic() < deadline:
-        if all(
-            _process_current_returncode(worker.process) is not None
-            for worker in running_workers
-        ):
+        if all(worker.process.poll() is not None for worker in running_workers):
             break
         time.sleep(0.1)
 
     for worker in running_workers:
-        returncode = _process_current_returncode(worker.process)
-        if returncode is None:
+        if worker.process.poll() is None:
             worker.process.kill()
-            returncode = _process_current_returncode(worker.process)
+
+    deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
+    for worker in running_workers:
+        returncode = worker.process.poll()
+        if returncode is None:
+            try:
+                returncode = worker.process.wait(
+                    timeout=max(0.0, deadline - time.monotonic())
+                )
+            except subprocess.TimeoutExpired:
+                pass
         worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
 
 
@@ -1033,7 +980,7 @@ def _monitor_batch_workers(
             )
             if row is not None:
                 slot_rows[worker.slot] = row
-            returncode = _worker_returncode(worker)
+            returncode = worker.process.poll()
             if returncode is None:
                 continue
             result = _batch_worker_result(worker, returncode)
@@ -2129,16 +2076,8 @@ def run(
             duration_seconds=duration_seconds,
         ),
     )
-    sensor_presence = rule_result.reports.sensor_presence
-    sensor_ranges = rule_result.reports.sensor_ranges
-    sensor_flatlines = rule_result.reports.sensor_flatlines
-    sensor_cadence = rule_result.reports.sensor_cadence
-    runtime_counters = rule_result.reports.runtime_counters
-    serial_silence = rule_result.reports.serial_silence
-    log_contract = rule_result.reports.log_contract
-    subsystem_health = rule_result.reports.subsystem_health
-    upload_health = rule_result.reports.upload_health
-    urban_pm = rule_result.reports.urban_pm
+    rules = rule_result.as_dict()
+    reports = rule_result.reports
     message = (
         f"Captured {stats.lines_read} serial lines "
         f"({stats.bytes_read} bytes) from {resolved_port}."
@@ -2170,14 +2109,14 @@ def run(
         "config": str(config) if config is not None else None,
         "metrics_seen": stats.dev_metrics.seen,
         "samples_seen": stats.sensor_samples_count > 0,
-        "findings": [finding.as_dict() for finding in rule_result.findings],
+        "findings": rules["findings"],
         "serial_lines_read": stats.lines_read,
         "serial_bytes_read": stats.bytes_read,
         "serial_capture_started_at": stats.capture_started_at,
         "first_serial_line_elapsed_seconds": stats.first_line_elapsed_seconds,
         "last_serial_line_elapsed_seconds": stats.last_line_elapsed_seconds,
         "max_serial_interline_gap_seconds": stats.max_interline_gap_seconds,
-        "max_serial_silence_seconds": serial_silence.max_silence_seconds,
+        "max_serial_silence_seconds": reports.serial_silence.max_silence_seconds,
         **stats.dev_metrics.as_dict(),
         "boot_reset": stats.boot_events.as_dict(),
         "boot_event_records": list(stats.boot_event_records),
@@ -2191,18 +2130,9 @@ def run(
         "keyword_alerts": list(stats.keyword_alerts),
         "sensor_samples_count": stats.sensor_samples_count,
         "sensor_observations": stats.sensor_observations,
-        "rules": rule_result.as_dict(),
-        "sensor_presence": sensor_presence.as_dict(),
-        "sensor_ranges": sensor_ranges.as_dict(),
-        "sensor_flatlines": sensor_flatlines.as_dict(),
-        "sensor_cadence": sensor_cadence.as_dict(),
-        "runtime_counters": runtime_counters.as_dict(),
-        "serial_silence": serial_silence.as_dict(),
-        "log_contract": log_contract.as_dict(),
-        "subsystem_health": subsystem_health.as_dict(),
+        "rules": rules,
+        **reports.as_dict(),
         "upload_stats": stats.upload_stats.as_dict(),
-        "upload_health": upload_health.as_dict(),
-        "urban_pm": urban_pm.as_dict(),
         "device_identity": final_device_identity,
     }
     artifacts.write_summary(

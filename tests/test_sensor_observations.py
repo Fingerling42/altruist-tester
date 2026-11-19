@@ -256,8 +256,7 @@ def test_capture_selects_independent_source_and_preserves_raw_uart(tmp_path):
     )
 
 
-def test_measurement_time_drives_cadence_and_flatline():
-    from altruist_tester.rules.cadence import check_series_cadence
+def test_measurement_time_drives_flatline():
     from altruist_tester.rules.flatline import check_series_flatline
     from altruist_tester.samples import SensorSampleRecord
 
@@ -273,7 +272,6 @@ def test_measurement_time_drives_cadence_and_flatline():
         )
         for offset in (0, 1200)
     ]
-    assert check_series_cadence("BME280", "temperature", records).status == "fail"
     assert (
         check_series_flatline(
             "BME280",

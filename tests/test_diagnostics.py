@@ -22,6 +22,7 @@ from altruist_tester.diagnostic_checks import (
     safe_fields,
     uart_check,
 )
+from tests.helpers import uart_snapshot
 
 SECRET = "FICTITIOUS_CREDENTIAL_739_DO_NOT_USE"
 ID = "001122334455"
@@ -124,6 +125,20 @@ def test_uart_json_uses_sensor_parser_not_api_shape():
     assert value["sensor_json_records"] == 6
     assert uart_check(value, "debug", "insight", None)["status"] == "PASS"
     assert value["fields"]["boot"] == 1
+
+
+@pytest.mark.parametrize("health", [HEALTH, "[HEALTH] malformed"])
+def test_debug_uart_requires_parsed_health_and_counts_v2(health):
+    snapshot = uart_snapshot("BME680", dict.fromkeys(VOC, 37))
+    snapshot["_observations"]["credential"] = SECRET
+    summary = UartSummary()
+    summary.feed(f"{health}\n{json.dumps(snapshot)}\n".encode())
+    data = summary.finish()
+    assert data["tags"]["HEALTH"] == 1
+    assert data["sensor_json_records"] == len(VOC)
+    assert SECRET not in json.dumps(data)
+    expected = "PASS" if health == HEALTH else "FAIL"
+    assert uart_check(data, "debug", "insight", None)["status"] == expected
 
 
 @pytest.mark.parametrize(

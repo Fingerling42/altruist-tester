@@ -150,86 +150,42 @@ def check_series_flatline(
     canonical_metric = canonical_metric_name(metric)
 
     if samples_count < min_distinct_values:
-        return SensorFlatlineFinding(
-            status="warn",
-            sensor=sensor,
-            metric=metric,
-            canonical_metric=canonical_metric,
-            samples_count=samples_count,
-            distinct_values_count=distinct_values_count,
-            elapsed_seconds=elapsed_seconds,
-            message=f"{sensor}/{metric} has not enough samples for flatline check",
-        )
-
-    # Relative VOC scale, derived status and daily counts need not vary.
-    # Invalid values and the unavailable sentinel are diagnosed by range checks.
-    if canonical_sensor_name(sensor) == "bme680" and canonical_metric in {
+        status: FlatlineStatus = "warn"
+        message = f"{sensor}/{metric} has not enough samples for flatline check"
+    # Relative VOC indicators need no variation. Range rules validate values.
+    elif canonical_sensor_name(sensor) == "bme680" and canonical_metric in {
         "voc_ppb",
         "voc_index",
         "voc_level",
         "voc_spikes_today",
     }:
-        return SensorFlatlineFinding(
-            status="ok",
-            sensor=sensor,
-            metric=metric,
-            canonical_metric=canonical_metric,
-            samples_count=samples_count,
-            distinct_values_count=distinct_values_count,
-            elapsed_seconds=elapsed_seconds,
-            message=(
-                f"{sensor}/{metric} is a VOC indicator/counter; variation is optional"
-            ),
-        )
-
-    if distinct_values_count >= min_distinct_values:
-        return SensorFlatlineFinding(
-            status="ok",
-            sensor=sensor,
-            metric=metric,
-            canonical_metric=canonical_metric,
-            samples_count=samples_count,
-            distinct_values_count=distinct_values_count,
-            elapsed_seconds=elapsed_seconds,
-            message=f"{sensor}/{metric} changed during the run",
-        )
-
-    if (
+        status = "ok"
+        message = f"{sensor}/{metric} is a VOC indicator/counter; variation is optional"
+    elif distinct_values_count >= min_distinct_values:
+        status = "ok"
+        message = f"{sensor}/{metric} changed during the run"
+    elif (
         elapsed_seconds >= flatline_fail_after_seconds
         and not _is_warn_only_zero_flatline(distinct_values, canonical_metric)
     ):
-        return SensorFlatlineFinding(
-            status="fail",
-            sensor=sensor,
-            metric=metric,
-            canonical_metric=canonical_metric,
-            samples_count=samples_count,
-            distinct_values_count=distinct_values_count,
-            elapsed_seconds=elapsed_seconds,
-            message=f"{sensor}/{metric} was flat for {elapsed_seconds:g}s",
-        )
-
-    if elapsed_seconds >= flatline_window_seconds:
-        return SensorFlatlineFinding(
-            status="warn",
-            sensor=sensor,
-            metric=metric,
-            canonical_metric=canonical_metric,
-            samples_count=samples_count,
-            distinct_values_count=distinct_values_count,
-            elapsed_seconds=elapsed_seconds,
-            message=f"{sensor}/{metric} did not change for {elapsed_seconds:g}s",
-        )
+        status = "fail"
+        message = f"{sensor}/{metric} was flat for {elapsed_seconds:g}s"
+    elif elapsed_seconds >= flatline_window_seconds:
+        status = "warn"
+        message = f"{sensor}/{metric} did not change for {elapsed_seconds:g}s"
+    else:
+        status = "warn"
+        message = f"{sensor}/{metric} has limited variation so far"
 
     return SensorFlatlineFinding(
-        status="warn",
+        status=status,
         sensor=sensor,
         metric=metric,
         canonical_metric=canonical_metric,
         samples_count=samples_count,
         distinct_values_count=distinct_values_count,
         elapsed_seconds=elapsed_seconds,
-        message=f"{sensor}/{metric} has limited variation so far",
+        message=message,
     )
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from altruist_tester.config import ConfigError, load_tester_config, parse_mac
 from altruist_tester.identity import (
+    DeviceIdentity,
     detect_device_identity,
     format_device_id_as_mac,
     normalize_device_id,
@@ -37,6 +38,7 @@ def generate_batch_toml(
     ]
     seen_macs: set[str] = set()
     seen_ports: set[Path] = set()
+    identities_by_mac: dict[str, list[DeviceIdentity]] | None = None
     for model, values, profile in groups:
         if not values:
             continue
@@ -48,11 +50,20 @@ def generate_batch_toml(
             if device_id in seen_macs:
                 raise ConfigError(f"Duplicate MAC: {device_id}")
             seen_macs.add(device_id)
-            matches = {}
-            for info in port_infos:
-                identity = detect_device_identity(Path(info.device), port_infos=[info])
-                if identity.usb_device_id == device_id:
-                    matches[Path(info.device).resolve()] = identity
+            if identities_by_mac is None:
+                identities_by_mac = {}
+                for info in port_infos:
+                    identity = detect_device_identity(
+                        Path(info.device), port_infos=[info]
+                    )
+                    if identity.usb_device_id is not None:
+                        identities_by_mac.setdefault(identity.usb_device_id, []).append(
+                            identity
+                        )
+            matches = {
+                Path(identity.port).resolve(): identity
+                for identity in identities_by_mac.get(device_id, ())
+            }
             if len(matches) > 1:
                 raise ConfigError(f"Ambiguous USB ports for MAC {device_id}")
             if matches:

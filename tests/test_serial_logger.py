@@ -1,9 +1,10 @@
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
 from altruist_tester.artifacts import create_run_artifacts
-from altruist_tester.serial_logger import capture_raw_serial
+from altruist_tester.serial_logger import MAX_SERIAL_LINE_BYTES, capture_raw_serial
 from tests.helpers import uart_snapshot
 
 # Fixed artifact timestamps keep JSON/report assertions stable.
@@ -15,12 +16,15 @@ class FakeSerial:
         self._lines = list(lines)
         self._clock = clock
 
-    def readline(self):
+    def readline(self, size):
         # Advance on every read so interline gap and silence calculations are
         # deterministic without sleeping in tests.
         self._clock.advance(0.25)
         if self._lines:
-            return self._lines.pop(0)
+            line = self._lines.pop(0)
+            if len(line) > size:
+                self._lines.insert(0, line[size:])
+            return line[:size]
         return b""
 
 
@@ -848,6 +852,73 @@ def test_malformed_payload_references_physical_uart_line_after_partial_read(tmp_
     stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 1, clock=clock)
     assert artifacts.serial_log.read_bytes() == b"".join(chunks)
     assert stats.payload_observations.malformed_examples[0]["line_number"] == 1
+
+
+def test_capture_reassembles_v2_and_counts_only_complete_uart_lines(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path, duration_input="2s", duration_seconds=2)
+    snapshot = uart_snapshot("BME280", {"temperature": 24})
+    snapshot["BME280"]["temperature"]["units"] = "°C"
+    line = json.dumps(snapshot, ensure_ascii=False).encode() + b"\r\n"
+    split = line.index("°".encode()) + 1
+    tail = b"[PAYLOAD] channel=broken"
+    chunks = [line[:110], b"", line[110:split], line[split:-1], line[-1:], tail]
+    stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 2, clock=clock)
+    assert artifacts.serial_log.read_bytes() == line + tail
+    assert stats.lines_read == 1
+    assert stats.bytes_read == len(line + tail)
+    assert stats.sensor_observations["issues"] == {}
+    assert _read_jsonl(artifacts.samples_jsonl)[0]["unit"] == "°C"
+    assert stats.payload_observations.malformed_count == 0
+
+
+def test_capture_preserves_oversized_line_without_parsing_its_suffix(tmp_path):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    chunks = [
+        b"x" * (MAX_SERIAL_LINE_BYTES + 1),
+        b"[PAYLOAD] channel=not-a-real-record\n",
+        b"[PAYLOAD] channel=broken\n",
+    ]
+    stats = capture_raw_serial(FakeSerial(chunks, clock), artifacts, 1, clock=clock)
+    assert artifacts.serial_log.read_bytes() == b"".join(chunks)
+    assert stats.lines_read == 2
+    assert stats.sensor_observations["issues"] == {"line_too_long": 1}
+    assert stats.payload_observations.malformed_count == 1
+    assert stats.payload_observations.malformed_examples[0]["line_number"] == 2
+
+
+def test_capture_reuses_jsonl_files_and_keeps_each_record_visible(
+    tmp_path, monkeypatch
+):
+    clock = FakeClock()
+    artifacts = _create_artifacts(tmp_path)
+    snapshot = (
+        json.dumps(uart_snapshot("BME280", {"temperature": 24, "humidity": 60})) + "\n"
+    ).encode()
+    original_open = Path.open
+    append_opens = Counter()
+
+    def count_open(path, mode="r", *args, **kwargs):
+        if mode == "a":
+            append_opens[path] += 1
+        return original_open(path, mode, *args, **kwargs)
+
+    def check_progress(progress):
+        assert _read_jsonl(artifacts.events_jsonl)[-1]["type"] == "sensor_observation"
+        assert len(_read_jsonl(artifacts.samples_jsonl)) == 2
+
+    monkeypatch.setattr(Path, "open", count_open)
+    capture_raw_serial(
+        FakeSerial([snapshot], clock),
+        artifacts,
+        1,
+        clock=clock,
+        progress_callback=check_progress,
+    )
+    assert append_opens == {artifacts.events_jsonl: 1, artifacts.samples_jsonl: 1}
+    artifacts.append_event("after_capture")
+    assert _read_jsonl(artifacts.events_jsonl)[-1]["type"] == "after_capture"
 
 
 def test_capture_preserves_health_evidence_without_delivery_failure(tmp_path):

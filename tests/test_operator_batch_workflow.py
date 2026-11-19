@@ -1,10 +1,12 @@
 import json
 import tomllib
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from typer.testing import CliRunner
 
+from altruist_tester import batch_generation
 from altruist_tester.batch_generation import generate_batch_toml
 from altruist_tester.cli import _print_worker_status, _wait_for_explicit_port, app
 from altruist_tester.config import ConfigError, load_batch_config, parse_mac
@@ -205,6 +207,32 @@ def test_generate_resolves_usb_and_rejects_duplicate_and_ambiguous(
     ambiguous = CliRunner().invoke(app, args)
     assert ambiguous.exit_code == 2
     assert "Ambiguous USB" in ambiguous.output
+
+
+def test_generate_resolves_each_usb_port_once(monkeypatch, tmp_path):
+    profile = tmp_path / "urban.toml"
+    profile.touch()
+    macs = ["AABBCC000001", "AABBCC000002"]
+    ports = []
+    for index, mac in enumerate(macs):
+        port = tmp_path / f"ttyACM{index}"
+        port.touch()
+        ports.append(SerialPortInfo(str(port), serial_number=mac))
+
+    detect = Mock(wraps=batch_generation.detect_device_identity)
+    monkeypatch.setattr(batch_generation, "detect_device_identity", detect)
+    result = generate_batch_toml(
+        [("urban", macs, profile)],
+        destination=tmp_path / "batch.toml",
+        duration="24h",
+        port_template=None,
+        port_infos=ports,
+    )
+
+    assert [d["port"] for d in tomllib.loads(result)["devices"]] == [
+        p.device for p in ports
+    ]
+    assert detect.call_count == len(ports)
 
 
 def test_generate_missing_port_and_profile(monkeypatch, tmp_path):

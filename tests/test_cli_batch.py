@@ -544,7 +544,12 @@ def test_batch_prints_live_progress_while_workers_run(monkeypatch, tmp_path):
     assert "Slots: slot-01=completed slot-02=completed" in output
 
 
-def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("complete_on_poll", "stubborn"), [(1, False), (2, False), (2, True)]
+)
+def test_batch_interrupt_terminates_workers_and_writes_summary(
+    monkeypatch, tmp_path, complete_on_poll, stubborn
+):
     profile = tmp_path / "urban.toml"
     profile.touch()
     output_dir = tmp_path / "batch-runs"
@@ -576,14 +581,20 @@ def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_
             self.args = list(args)
             self.port = args[args.index("--port") + 1]
             self.returncode = None
+            self.polls = 0
             self.summary_written = False
             self.terminated = False
+            self.killed = False
             stdout.write("worker stdout\n")
             stderr.write("worker stderr\n")
             processes.append(self)
 
         def poll(self):
-            if self.port == "/dev/serial/by-path/completes":
+            self.polls += 1
+            if (
+                self.port == "/dev/serial/by-path/completes"
+                and self.polls >= complete_on_poll
+            ):
                 if not self.summary_written:
                     write_fake_worker_summary(self.args)
                     self.summary_written = True
@@ -592,10 +603,16 @@ def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_
 
         def terminate(self):
             self.terminated = True
-            self.returncode = -15
+            if not stubborn:
+                self.returncode = -15
 
         def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            assert self.killed and timeout == 0
             self.returncode = -9
+            return self.returncode
 
     sleep_calls = {"count": 0}
 
@@ -608,10 +625,13 @@ def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_
     monkeypatch.setattr("altruist_tester.cli.subprocess.Popen", FakeProcess)
     monkeypatch.setattr("altruist_tester.cli.time.sleep", fake_sleep)
 
+    if stubborn:
+        monkeypatch.setattr("altruist_tester.cli.BATCH_TERMINATE_GRACE_SECONDS", 0)
     result = CliRunner().invoke(app, ["batch", "--config", str(batch_config)])
 
     assert result.exit_code == 130
     assert "Batch interrupted: 1/2 workers completed before shutdown." in result.output
+    assert processes[0].terminated is False
     assert processes[1].terminated is True
     batch_dir = next(output_dir.iterdir())
     summary = json.loads((batch_dir / "batch_summary.json").read_text())
@@ -624,6 +644,7 @@ def test_batch_interrupt_terminates_workers_and_writes_summary(monkeypatch, tmp_
     assert summary["workers"][1]["slot"] == "slot-02"
     assert summary["workers"][1]["status"] == "interrupted"
     assert summary["workers"][1]["failure_kind"] == "interrupted"
+    assert summary["workers"][1]["returncode"] == (-9 if stubborn else -15)
     assert summary["device_results"][0]["slot"] == "slot-01"
     assert summary["device_results"][0]["verdict"] == "PASS_CANDIDATE"
     assert summary["device_results"][1]["slot"] == "slot-02"

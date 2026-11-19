@@ -6,9 +6,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from altruist_tester.parsers.boot_events import (
+    parse_fields_with_spaces,
+    parse_optional_bool,
+    parse_optional_int,
+)
+
 _PAYLOAD_RE = re.compile(r"\[PAYLOAD\](?:\s+(?P<metadata>.*))?$")
 _PAYLOAD_CHANNELS = frozenset({"datalog", "sensors-connectivity", "custom-http"})
-_PAYLOAD_FIELD_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=")
 
 
 def parse_payload_metadata(line: str) -> dict[str, str] | None:
@@ -25,42 +30,7 @@ def parse_payload_metadata(line: str) -> dict[str, str] | None:
     if match is None:
         return None
 
-    metadata = match.group("metadata") or ""
-    field_matches = list(_PAYLOAD_FIELD_RE.finditer(metadata))
-    if not field_matches:
-        return {}
-
-    fields: dict[str, str] = {}
-    for index, field_match in enumerate(field_matches):
-        value_start = field_match.end()
-        value_end = (
-            field_matches[index + 1].start()
-            if index + 1 < len(field_matches)
-            else len(metadata)
-        )
-        fields[field_match.group("key")] = metadata[value_start:value_end].strip()
-    return fields
-
-
-def _parse_bool(fields: dict[str, str], key: str) -> bool | None:
-    value = fields.get(key)
-    if value is None:
-        return None
-    if value in {"0", "false", "False"}:
-        return False
-    if value in {"1", "true", "True"}:
-        return True
-    return None
-
-
-def _parse_int(fields: dict[str, str], key: str) -> int | None:
-    value = fields.get(key)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
+    return parse_fields_with_spaces(match.group("metadata") or "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,8 +73,8 @@ def payload_observation_from_fields(fields: dict[str, str]) -> PayloadObservatio
     return PayloadObservation(
         channel=fields.get("channel"),
         encoding=fields.get("encoding"),
-        encrypted=_parse_bool(fields, "encrypted"),
-        payload_len=_parse_int(fields, "payload_len"),
+        encrypted=parse_optional_bool(fields.get("encrypted")),
+        payload_len=parse_optional_int(fields.get("payload_len")),
         raw_fields=fields,
     )
 

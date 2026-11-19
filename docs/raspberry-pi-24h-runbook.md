@@ -433,6 +433,10 @@ If `serial.log` stays empty for several minutes, check:
 - device Wi-Fi provisioning state;
 - whether another process has the serial port open.
 
+Capture counts complete UART lines for parsing and keeps all received bytes in
+`serial.log`. If the capture ends mid-line, the trailing bytes remain available
+for diagnosis in the raw log.
+
 ## After the Run
 
 The command exits with:

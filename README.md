@@ -414,6 +414,9 @@ runtime/link observations; it does not establish sensor validity or IP readiness
 - `[log_contract]` for debug UART acceptance signal checks;
 - `[uploads]` for sensors-connectivity and Robonomics Datalog delivery checks.
 
+Upload success-rate thresholds and sensor range bounds must be finite
+numbers. Omit an unused bound for a custom metric.
+
 Durations in config files use the same format as CLI durations: `30s`, `10m`,
 `2h`, or raw seconds as a positive integer.
 

@@ -93,14 +93,6 @@ class SubsystemHealthReport:
         }
 
 
-def _status_for_event(level: str, subsystem: str, reason: str) -> SubsystemStatus:
-    return severity_for_subsystem_event(
-        level=level,
-        subsystem=subsystem,
-        reason=reason,
-    )
-
-
 def _event_message(
     *,
     status: SubsystemStatus,
@@ -145,7 +137,9 @@ def check_subsystem_health(
 
     findings = []
     for (level, subsystem, reason), group_records in sorted(grouped.items()):
-        status = _status_for_event(level, subsystem, reason)
+        status = severity_for_subsystem_event(
+            level=level, subsystem=subsystem, reason=reason
+        )
         if (
             subsystem == "sensor"
             and reason in _SENSOR_READING_REASONS
