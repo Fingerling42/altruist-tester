@@ -248,6 +248,12 @@ and the final FAIL verdict (CLI exit 1). Raw serial.log bytes are unchanged.
 
 ## Versioned debug UART observations
 
+Capture assembles LF-terminated UART lines across read timeouts before
+decoding or parsing. An unfinished tail at the deadline stays in `serial.log`.
+A physical line over 65,536 bytes (including LF) is retained there and recorded
+as `serial_line_too_long` without parsing its fragments. A run with UART v2
+observations treats that overrun as a contract failure.
+
 Acceptance requires `_observations.version` as the JSON integer `2` and uses
 only `serial_observation_v2`. One line describes one physical sensor, independent
 of uplink, API and SD. Ordinary full JSON remains available to diagnostic

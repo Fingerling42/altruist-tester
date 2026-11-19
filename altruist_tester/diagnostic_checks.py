@@ -281,6 +281,7 @@ class UartSummary:
         self.fields = {}
         self.conflicts = set()
         self.tags = Counter()
+        self.health_records = 0
         self.series = Counter()
         self.bytes = 0
         self.unexpected_lines = 0
@@ -312,6 +313,7 @@ class UartSummary:
             "fields": dict(self.fields),
             "identity_conflicts": sorted(self.conflicts),
             "tags": {key: self.tags[key] for key in TAGS},
+            "health_records": self.health_records,
             "series": [
                 {"sensor": sensor, "metric": metric, "count": count}
                 for (sensor, metric), count in sorted(self.series.items())
@@ -328,6 +330,8 @@ class UartSummary:
             if key in self.fields and key in fields and self.fields[key] != fields[key]:
                 self.conflicts.add(key)
         self.fields.update(fields)
+        if line.lstrip().startswith("[HEALTH]") and "boot" in fields:
+            self.health_records += 1
         tag = re.match(r"^\[([A-Z]+)\]", line)
         if tag and tag[1] in TAGS:
             self.tags[tag[1]] += 1
@@ -336,9 +340,7 @@ class UartSummary:
         if line.startswith("[LOG] uptime=") and " level=error " not in line:
             self.non_error_logs += 1
         for sample in parse_sensor_values(line):
-            if sample.source == "serial" and sample.metric in SERIES.get(
-                sample.sensor, ()
-            ):
+            if sample.metric in SERIES.get(sample.sensor, ()):
                 self.series[sample.key] += 1
 
 
@@ -372,7 +374,7 @@ def uart_check(summary: dict, profile: str, model: str, mode: str) -> dict:
         if not summary["tags"]["LOG"]:
             return result("NOT_CHECKED", "no_operational_event_observed")
         return result("PASS", "operational_window")
-    if not summary["tags"]["HEALTH"] or not summary["sensor_json_records"]:
+    if not summary["health_records"] or not summary["sensor_json_records"]:
         return result("FAIL", "health_or_sensor_json_missing")
     observed = {
         item["metric"] for item in summary["series"] if item["sensor"] == "BME680"

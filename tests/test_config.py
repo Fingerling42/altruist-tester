@@ -20,6 +20,23 @@ def test_load_tester_config_returns_defaults_without_path():
     assert config.silence_warn_after_seconds == 2 * 60
 
 
+@pytest.mark.parametrize(
+    "value", ["nan", "inf", "-inf", pytest.param("1" + "0" * 400, id="overflow")]
+)
+@pytest.mark.parametrize(
+    ("table", "field"),
+    [
+        ("uploads.datalog_thresholds", "min_success_rate"),
+        ("sensor_ranges.temperature", "minimum"),
+    ],
+)
+def test_profile_rejects_nonfinite_thresholds(tmp_path, value, table, field):
+    path = tmp_path / "profile.toml"
+    path.write_text(f"[{table}]\n{field} = {value}\n")
+    with pytest.raises(ConfigError, match=field):
+        load_tester_config(path)
+
+
 def test_load_tester_config_reads_expected_sensors_and_thresholds(tmp_path):
     path = tmp_path / "profile.toml"
     path.write_text(

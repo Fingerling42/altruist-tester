@@ -169,7 +169,9 @@ Use `--cadence-seconds 0 --margin-seconds 0` for release windows.
 Off requires zero bytes. Errors/Events require structurally valid LOG/BUILD and
 no detailed tags/sensor JSON; Errors forbids non-error automatic events. An
 empty Errors/Events window is NOT_CHECKED, not a vacuous successful test of event
-filtering. Debug requires HEALTH and recognized full sensor JSON; Insight also
+filtering. Debug requires a complete, parseable `[HEALTH]` record and recognized
+sensor measurements from UART v2 or ordinary debug sensor JSON. The summary
+keeps `health_records` separately from raw HEALTH tag counts. Insight also
 requires all six BME680 VOC/gas fields, including `voc_ppb` (current firmware).
 The ordinary Insight presence preset requires temperature, humidity and pressure;
 this diagnostic predicate requires the complete VOC/gas field set. These checks do not run

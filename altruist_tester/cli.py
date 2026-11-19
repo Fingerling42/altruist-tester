@@ -822,14 +822,6 @@ def _emit_batch_progress(
     typer.echo(_batch_slot_states(slots, running_slots, worker_results))
 
 
-def _worker_returncode(worker: BatchWorkerProcess) -> int | None:
-    return worker.process.poll()
-
-
-def _process_current_returncode(process: subprocess.Popen[str]) -> int | None:
-    return process.poll()
-
-
 def _interrupted_worker_result(
     worker: BatchWorkerProcess,
     *,
@@ -847,26 +839,20 @@ def _interrupted_worker_result(
     }
 
 
-def _unfinished_workers(
-    workers: list[BatchWorkerProcess],
-    worker_results: list[dict[str, object]],
-) -> list[BatchWorkerProcess]:
-    finished_slots = {
-        str(result["slot"]) for result in worker_results if "slot" in result
-    }
-    return [
-        worker
-        for worker in workers
-        if worker.slot not in finished_slots
-        and _process_current_returncode(worker.process) is None
-    ]
-
-
 def _terminate_batch_workers(
     workers: list[BatchWorkerProcess],
     worker_results: list[dict[str, object]],
 ) -> None:
-    running_workers = _unfinished_workers(workers, worker_results)
+    finished_slots = {result["slot"] for result in worker_results}
+    running_workers = []
+    for worker in workers:
+        if worker.slot in finished_slots:
+            continue
+        returncode = worker.process.poll()
+        if returncode is None:
+            running_workers.append(worker)
+        else:
+            worker_results.append(_batch_worker_result(worker, returncode))
     if not running_workers:
         return
 
@@ -876,18 +862,24 @@ def _terminate_batch_workers(
 
     deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
     while time.monotonic() < deadline:
-        if all(
-            _process_current_returncode(worker.process) is not None
-            for worker in running_workers
-        ):
+        if all(worker.process.poll() is not None for worker in running_workers):
             break
         time.sleep(0.1)
 
     for worker in running_workers:
-        returncode = _process_current_returncode(worker.process)
-        if returncode is None:
+        if worker.process.poll() is None:
             worker.process.kill()
-            returncode = _process_current_returncode(worker.process)
+
+    deadline = time.monotonic() + BATCH_TERMINATE_GRACE_SECONDS
+    for worker in running_workers:
+        returncode = worker.process.poll()
+        if returncode is None:
+            try:
+                returncode = worker.process.wait(
+                    timeout=max(0.0, deadline - time.monotonic())
+                )
+            except subprocess.TimeoutExpired:
+                pass
         worker_results.append(_interrupted_worker_result(worker, returncode=returncode))
 
 
@@ -1033,7 +1025,7 @@ def _monitor_batch_workers(
             )
             if row is not None:
                 slot_rows[worker.slot] = row
-            returncode = _worker_returncode(worker)
+            returncode = worker.process.poll()
             if returncode is None:
                 continue
             result = _batch_worker_result(worker, returncode)

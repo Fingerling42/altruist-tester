@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import tomllib
 from collections.abc import Mapping
@@ -160,10 +161,9 @@ def _ratio_value(value: object, name: str, default: float) -> float:
         return default
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ConfigError(f"{name} must be a number between 0 and 1")
-    ratio = float(value)
-    if ratio < 0.0 or ratio > 1.0:
+    if not 0.0 <= value <= 1.0:
         raise ConfigError(f"{name} must be between 0 and 1")
-    return ratio
+    return float(value)
 
 
 def _upload_mode(value: object, name: str, default: UploadMode) -> UploadMode:
@@ -182,7 +182,13 @@ def _number_value(value: object, name: str) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ConfigError(f"{name} must be a number")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ConfigError(f"{name} must be finite") from exc
+    if not math.isfinite(number):
+        raise ConfigError(f"{name} must be finite")
+    return number
 
 
 def _duration_value(value: object, name: str, default: int) -> int:
