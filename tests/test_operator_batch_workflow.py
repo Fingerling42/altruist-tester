@@ -11,7 +11,7 @@ from altruist_tester.config import ConfigError, load_batch_config, parse_mac
 from altruist_tester.ports import SerialPortInfo
 from altruist_tester.progress import read_worker_status, write_worker_status
 from altruist_tester.serial_logger import SerialLogProgress
-from tests.cli_helpers import patch_cli_capture, release_log_stats
+from tests.cli_helpers import patch_cli_capture, plain_output, release_log_stats
 
 
 @pytest.mark.parametrize("urban_count,insight_count", [(2, 6), (6, 0), (0, 3)])
@@ -120,14 +120,25 @@ def test_generate_batch_options_round_trip_and_preview(monkeypatch, tmp_path, ab
     assert not output_dir.exists()
 
 
+@pytest.mark.parametrize("force_terminal", [False, True])
 @pytest.mark.parametrize("baud", ["0", "-1", "not-an-integer"])
-def test_generate_rejects_invalid_baud_before_writing(tmp_path, baud):
+def test_generate_rejects_invalid_baud_before_writing(
+    tmp_path, monkeypatch, baud, force_terminal
+):
+    # Typer enables Rich styling in GitHub Actions, splitting option tokens.
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", force_terminal)
+    monkeypatch.setattr(
+        "typer.rich_utils.COLOR_SYSTEM", "standard" if force_terminal else None
+    )
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
     destination = tmp_path / "batch.toml"
     result = CliRunner().invoke(
         app, ["batch-generate", "--output", str(destination), "--baud", baud]
     )
     assert result.exit_code == 2
-    assert "--baud" in result.output
+    assert ("\x1b[" in result.output) == force_terminal
+    assert "--baud" in plain_output(result)
     assert not destination.exists()
 
 
